@@ -35,3 +35,10 @@
 - [ ] 5.1 Subscribe to FamiliarManager events for output and questions
 - [ ] 5.2 Wire notifications to CovenSession events
 - [ ] 5.3 Add keyboard shortcuts for quick response
+
+## 6. E2E Tests
+- [ ] 6.1 Test: Output channel created for working task
+- [ ] 6.2 Test: Question panel opens when agent asks question
+- [ ] 6.3 Test: Responding to question sends response to agent
+- [ ] 6.4 Test: Notification appears when task completes
+- [ ] 6.5 Test: Activity log shows recent events

@@ -9,7 +9,8 @@ Coven is a VSCode extension that provides a visual UI for orchestrating multiple
 - **UI**: VSCode TreeView (sidebar), Webviews (React for complex panels)
 - **Agent Integration**: Claude Code CLI (primary), extensible to other providers
 - **Git**: Native git CLI, GitHub CLI (gh) for PR creation
-- **Build**: esbuild for extension bundling, Vite for webview UI
+- **Build**: esbuild for extension bundling
+- **Webviews**: React + Vite (shared webview infrastructure, built incrementally with features)
 - **Testing**: Vitest for unit tests, VSCode Extension Test framework for integration
 
 ## Project Conventions
@@ -40,10 +41,17 @@ src/
 ```
 
 ### Testing Strategy
-- Unit tests for core business logic (TaskManager, WorktreeManager)
-- Integration tests for provider implementations
-- Manual testing for VSCode UI components
-- Minimum 80% coverage on core layer
+- **Unit tests**: Core business logic (TaskManager, WorktreeManager) via Vitest
+- **E2E tests**: Built alongside each feature using VSCode Extension Test framework
+- **Integration tests**: Provider implementations (GitCLI, ClaudeAgent)
+- E2E tests run the actual extension in a VSCode instance, verify user-facing behavior
+- Each changeset includes E2E tests for its functionality
+
+### Error Handling
+- MVP approach: Surface errors to user via VSCode notifications
+- No silent failures - if something breaks, user sees it
+- Errors include actionable context (what failed, what to try)
+- Complex recovery logic deferred post-MVP
 
 ### Git Workflow
 - Feature branches from main

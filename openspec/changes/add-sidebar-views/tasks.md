@@ -38,3 +38,10 @@
 - [ ] 6.1 Register TreeDataProvider in extension activation
 - [ ] 6.2 Subscribe to CovenSession state changes for refresh
 - [ ] 6.3 Wire up command handlers for tree item actions
+
+## 7. E2E Tests
+- [ ] 7.1 Test: Task groups appear in sidebar when session active
+- [ ] 7.2 Test: Tasks appear under correct status group
+- [ ] 7.3 Test: Status bar updates when task status changes
+- [ ] 7.4 Test: Session setup panel opens on first run
+- [ ] 7.5 Test: Starting session from setup panel works

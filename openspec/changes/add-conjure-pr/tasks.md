@@ -36,3 +36,9 @@
 - [ ] 6.1 Add "Conjure" button to session header
 - [ ] 6.2 Disable conjure when tasks are pending
 - [ ] 6.3 Register conjure command
+
+## 7. E2E Tests
+- [ ] 7.1 Test: Conjure panel shows completed tasks
+- [ ] 7.2 Test: PR title/description generated from tasks
+- [ ] 7.3 Test: PR creation via gh CLI succeeds
+- [ ] 7.4 Test: Conjure disabled when tasks not all done

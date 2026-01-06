@@ -37,3 +37,9 @@
 - [ ] 5.1 Wire WorktreeManager into FamiliarManager spawn flow
 - [ ] 5.2 Wire ConflictResolver into merge flow
 - [ ] 5.3 Add configuration for worktree base path
+
+## 6. E2E Tests
+- [ ] 6.1 Test: Worktree created when agent starts task
+- [ ] 6.2 Test: Worktree cleaned up after task approval
+- [ ] 6.3 Test: Merge to feature branch succeeds
+- [ ] 6.4 Test: Orphan worktrees detected on session recovery

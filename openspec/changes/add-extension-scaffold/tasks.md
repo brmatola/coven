@@ -17,6 +17,9 @@
 - [ ] 3.2 Configure development watch mode
 - [ ] 3.3 Add npm scripts for build, watch, package, lint
 - [ ] 3.4 Set up Vitest for unit testing
+- [ ] 3.5 Set up VSCode Extension Test framework for E2E tests
+- [ ] 3.6 Create test runner script that launches VSCode with extension
+- [ ] 3.7 Add npm script for running E2E tests
 
 ## 4. Extension Entry Point
 - [ ] 4.1 Create `src/extension.ts` with activate/deactivate exports
@@ -54,3 +57,9 @@
 - [ ] 8.1 Add `.vscode/launch.json` for Extension Host debugging
 - [ ] 8.2 Add `.vscode/tasks.json` for build tasks
 - [ ] 8.3 Create README with development instructions
+
+## 9. E2E Tests
+- [ ] 9.1 Test: Extension activates in workspace with .git
+- [ ] 9.2 Test: Sidebar view container appears in activity bar
+- [ ] 9.3 Test: Status bar item shows "Coven: Inactive"
+- [ ] 9.4 Test: Prerequisites panel shows when tools missing

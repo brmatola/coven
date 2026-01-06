@@ -35,3 +35,10 @@
 - [ ] 6.1 Add "Review" command and sidebar action
 - [ ] 6.2 Wire approval to task status transition
 - [ ] 6.3 Wire revert to worktree cleanup
+
+## 7. E2E Tests
+- [ ] 7.1 Test: Review panel opens for task in review status
+- [ ] 7.2 Test: Changed files displayed correctly
+- [ ] 7.3 Test: Approve transitions task to done
+- [ ] 7.4 Test: Revert returns task to ready
+- [ ] 7.5 Test: Diff viewer opens for selected file

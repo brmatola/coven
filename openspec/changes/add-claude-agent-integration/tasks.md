@@ -35,3 +35,9 @@
 - [ ] 5.2 Implement agent availability check (is `claude` command present)
 - [ ] 5.3 Add configuration for Claude model selection
 - [ ] 5.4 Add configuration for allowed tools/permissions
+
+## 6. E2E Tests
+- [ ] 6.1 Test: Agent spawns and produces output
+- [ ] 6.2 Test: Agent output streams to output channel
+- [ ] 6.3 Test: Agent termination works cleanly
+- [ ] 6.4 Test: Question detection triggers notification

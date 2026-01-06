@@ -52,3 +52,10 @@
 - [ ] 6.2 Support creating tasks via UI (title, description, acceptance criteria)
 - [ ] 6.3 Support editing and deleting manual tasks
 - [ ] 6.4 Persist manual tasks to workspace storage
+
+## 7. E2E Tests
+- [ ] 7.1 Test: Start session creates active session state
+- [ ] 7.2 Test: Session persists across VSCode restart
+- [ ] 7.3 Test: Task status transitions work correctly
+- [ ] 7.4 Test: Manual task creation and persistence
+- [ ] 7.5 Test: Session stop cleans up properly
