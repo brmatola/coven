@@ -12,5 +12,5 @@ Claude Code CLI is the primary AI agent for executing tasks. This integration sp
 
 ## Impact
 - Affected specs: `agent-execution` (new capability)
-- Affected code: `src/providers/agents/AgentProvider.ts`, `src/providers/agents/ClaudeAgent.ts`, `src/providers/agents/prompts.ts`
+- Affected code: `src/agents/AgentProvider.ts`, `src/agents/ClaudeAgent.ts`, `src/agents/prompts.ts`
 - Dependencies: Requires `add-core-session` (FamiliarManager), `add-git-worktree-management` (worktree paths)

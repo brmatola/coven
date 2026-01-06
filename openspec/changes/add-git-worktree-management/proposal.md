@@ -12,5 +12,5 @@ Each agent needs an isolated workspace to make changes without conflicts. Git wo
 
 ## Impact
 - Affected specs: `git-operations` (new capability)
-- Affected code: `src/providers/git/GitProvider.ts`, `src/providers/git/GitCLI.ts`, `src/core/WorktreeManager.ts`, `src/core/ConflictResolver.ts`
+- Affected code: `src/git/GitProvider.ts`, `src/git/GitCLI.ts`, `src/git/WorktreeManager.ts`, `src/git/ConflictResolver.ts`
 - Dependencies: Requires `add-core-session` for integration with FamiliarManager

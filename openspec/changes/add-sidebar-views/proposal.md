@@ -12,5 +12,5 @@ Users need a visual overview of their Coven session - seeing all tasks grouped b
 
 ## Impact
 - Affected specs: `sidebar-ui` (new capability)
-- Affected code: `src/views/sidebar/`, `src/views/statusBar/`, `src/views/webviews/sessionSetup/`
+- Affected code: `src/tasks/TaskTreeProvider.ts`, `src/session/StatusBar.ts`, `src/session/SessionSetupPanel.ts`
 - Dependencies: Requires `add-core-session` for state access

@@ -11,5 +11,5 @@ When all tasks on a feature branch are complete, users need to promote the work 
 
 ## Impact
 - Affected specs: `pr-creation` (new capability)
-- Affected code: `src/views/webviews/conjure/`, `src/providers/git/GitHubCLI.ts`
+- Affected code: `src/conjure/ConjurePanel.ts`, `src/conjure/GitHubCLI.ts`
 - Dependencies: Requires `add-review-workflow` for completed task data, `add-sidebar-views` for trigger

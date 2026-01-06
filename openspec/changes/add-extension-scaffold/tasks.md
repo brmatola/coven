@@ -25,11 +25,13 @@
 - [ ] 4.4 Create placeholder TreeDataProvider for sidebar
 
 ## 5. Directory Structure
-- [ ] 5.1 Create `src/core/` directory for domain logic
-- [ ] 5.2 Create `src/providers/` directory for external integrations
-- [ ] 5.3 Create `src/views/` directory for UI components
-- [ ] 5.4 Create `src/commands/` directory for command handlers
-- [ ] 5.5 Create `src/utils/` directory for shared utilities
+- [ ] 5.1 Create `src/shared/` directory for cross-cutting concerns (types, config, utils)
+- [ ] 5.2 Create `src/session/` directory for session lifecycle
+- [ ] 5.3 Create `src/tasks/` directory for task management
+- [ ] 5.4 Create `src/agents/` directory for agent/familiar lifecycle
+- [ ] 5.5 Create `src/git/` directory for worktree and git operations
+- [ ] 5.6 Create `src/review/` directory for review workflow
+- [ ] 5.7 Create `src/conjure/` directory for PR creation
 
 ## 6. Development Setup
 - [ ] 6.1 Add `.vscode/launch.json` for Extension Host debugging

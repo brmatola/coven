@@ -22,11 +22,22 @@ Coven is a VSCode extension that provides a visual UI for orchestrating multiple
 - Event-driven architecture using Node.js EventEmitter pattern
 
 ### Architecture Patterns
-- **Core Layer**: Domain logic (CovenSession, TaskManager, FamiliarManager)
-- **Provider Layer**: Abstractions over external systems (agents, git, task sources)
-- **View Layer**: VSCode UI components (TreeView providers, Webview panels)
-- **Command Layer**: VSCode command handlers bound to UI actions
-- Providers implement interfaces allowing multiple implementations (e.g., ClaudeAgent, future OpenAI)
+- **Feature folders (vertical slices)**: Each feature owns its domain logic, UI, and commands together
+- **Shared folder**: Only truly cross-cutting concerns (base types, config, utilities)
+- **Co-location**: If code is only used by one feature, it lives in that feature's folder
+- Interfaces for extensibility where needed (e.g., AgentProvider for multiple AI backends)
+
+```
+src/
+├── shared/          # Cross-cutting: types, config, utils
+├── session/         # Session lifecycle, setup UI
+├── tasks/           # Task management, task list UI
+├── agents/          # Agent lifecycle, output, questions
+├── git/             # Worktrees, merging, conflicts
+├── review/          # Review workflow, diff viewing
+├── conjure/         # PR creation flow
+└── extension.ts     # Entry point, wires features
+```
 
 ### Testing Strategy
 - Unit tests for core business logic (TaskManager, WorktreeManager)

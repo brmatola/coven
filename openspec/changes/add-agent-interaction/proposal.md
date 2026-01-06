@@ -11,5 +11,5 @@ Users need to see what agents are doing in real-time and respond to their questi
 
 ## Impact
 - Affected specs: `agent-communication` (new capability)
-- Affected code: `src/views/output/`, `src/views/webviews/divination/`, `src/utils/notifications.ts`
+- Affected code: `src/agents/OutputChannel.ts`, `src/agents/QuestionPanel.ts`, `src/shared/notifications.ts`
 - Dependencies: Requires `add-claude-agent-integration` for output streaming, `add-sidebar-views` for integration
