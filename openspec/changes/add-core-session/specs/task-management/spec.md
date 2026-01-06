@@ -54,6 +54,24 @@ The system SHALL track dependencies between tasks and enforce execution order.
 - **THEN** the task automatically transitions to "ready"
 - **THEN** a "taskUnblocked" event is emitted
 
+### Requirement: Task Priority
+The system SHALL support task prioritization for controlling execution order.
+
+#### Scenario: Priority field
+- **WHEN** a task is created or updated
+- **THEN** task can have a priority: critical, high, medium, low (default: medium)
+- **THEN** priority is persisted with task data
+
+#### Scenario: Priority display
+- **WHEN** tasks are displayed in sidebar
+- **THEN** priority is indicated visually (icon or color)
+- **THEN** tasks are grouped or sorted by priority within status groups
+
+#### Scenario: Priority from external source
+- **WHEN** task is synced from external source (e.g., Beads)
+- **THEN** external priority is mapped to Coven priority levels
+- **THEN** priority changes in source are reflected on sync
+
 ### Requirement: Task Querying
 The system SHALL support filtering and querying tasks by various criteria.
 
@@ -63,7 +81,8 @@ The system SHALL support filtering and querying tasks by various criteria.
 
 #### Scenario: Get next ready task
 - **WHEN** the system requests the next task to work on
-- **THEN** the oldest "ready" task without blocked dependencies is returned
+- **THEN** the highest priority "ready" task without blocked dependencies is returned
+- **THEN** within same priority, oldest task is returned first
 
 ### Requirement: Task Persistence
 The system SHALL persist task data to survive extension restarts.

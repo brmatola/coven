@@ -71,3 +71,44 @@ The system SHALL attempt to recover orphaned familiars from crashed or restarted
 - **WHEN** session recovers and detects a worktree with no uncommitted or unmerged changes
 - **THEN** worktree is cleaned up automatically
 - **THEN** task status is determined by last persisted state
+
+### Requirement: Session Event Logging
+The system SHALL maintain a structured log of session events for debugging and auditability.
+
+#### Scenario: Event logging on state change
+- **WHEN** any significant event occurs (task state change, agent spawn, question, merge, error)
+- **THEN** event is logged to `.coven/logs/{date}.jsonl`
+- **THEN** log entry includes timestamp, event type, and relevant context
+
+#### Scenario: Log levels
+- **WHEN** events are logged
+- **THEN** each event has a level: debug, info, warn, or error
+- **THEN** debug events include verbose details for troubleshooting
+
+#### Scenario: Log persistence
+- **WHEN** session is active
+- **THEN** logs are written to disk immediately (no buffering loss on crash)
+- **THEN** logs persist across VSCode restarts
+
+#### Scenario: Log viewer access
+- **WHEN** user wants to inspect logs
+- **THEN** logs are accessible via sidebar activity section
+- **THEN** clicking a log entry reveals related context (task, output channel, etc.)
+
+### Requirement: Robust Process Tracking
+The system SHALL track agent processes with sufficient information to reliably detect and reconnect to orphaned processes.
+
+#### Scenario: Process info persistence
+- **WHEN** an agent is spawned
+- **THEN** process info is stored: `{ pid, startTime, command, worktreePath }`
+- **THEN** info is persisted to `.coven/familiars/{taskId}.json`
+
+#### Scenario: Process identity verification
+- **WHEN** session recovers and attempts to reconnect to a process
+- **THEN** system verifies: process exists AND start time matches AND command contains "claude"
+- **THEN** only verified processes are reconnected
+
+#### Scenario: Stale PID detection
+- **WHEN** stored PID exists but process identity verification fails
+- **THEN** process is treated as dead
+- **THEN** orphan recovery flow is initiated based on worktree state

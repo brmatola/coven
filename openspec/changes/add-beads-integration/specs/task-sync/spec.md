@@ -47,6 +47,17 @@ The system SHALL map Beads task fields to Coven task model seamlessly.
 - **THEN** title and description are preserved
 - **THEN** Beads blockers become Coven dependencies
 
+#### Scenario: Priority mapping
+- **WHEN** task is synced from Beads
+- **THEN** Beads priority is mapped to Coven priority levels
+- **THEN** mapping: Beads P0/P1 → critical, P2 → high, P3 → medium, P4+ → low
+- **THEN** tasks without Beads priority default to medium
+
+#### Scenario: Priority sync on refresh
+- **WHEN** tasks are refreshed from Beads
+- **THEN** priority changes in Beads are reflected in Coven
+- **THEN** priority updates emit taskUpdated event
+
 #### Scenario: Acceptance criteria extraction
 - **WHEN** Beads task body contains acceptance criteria section
 - **THEN** criteria are parsed into Coven acceptanceCriteria array

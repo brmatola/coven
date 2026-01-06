@@ -29,15 +29,38 @@ Tasks follow a strict state machine: ready → working → review → done (with
 - **Rationale**: Clear lifecycle, prevents invalid transitions
 - **Alternatives considered**: Free-form status (harder to reason about)
 
-### Decision: Workspace Storage for Persistence
-Use VSCode workspace storage API for session/task persistence, not filesystem.
-- **Rationale**: Built-in, handles cleanup, workspace-scoped
-- **Alternatives considered**: JSON files in .coven/ (manual cleanup burden)
+### Decision: .coven/ Directory for Persistence
+Use `.coven/` directory with JSON files for session/task persistence, not VSCode workspace storage.
+- **Rationale**: Git-trackable (or .gitignore-able), inspectable/debuggable, exportable, no VSCode API coupling, avoids sync issues between two storage systems
+- **Alternatives considered**: VSCode workspace storage (opaque, not inspectable, API coupling)
+
+**Directory Structure:**
+```
+.coven/
+├── .gitignore        # Excludes ephemeral state from git
+├── session.json      # Current session state
+├── tasks.json        # Task queue and history
+├── config.json       # Session configuration
+├── familiars/        # Per-agent state (gitignored)
+│   └── {taskId}.json # Agent state, PID info, output buffer
+└── logs/             # Debug logs (gitignored)
+    └── {date}.jsonl  # Structured event log (one JSON object per line)
+```
+
+**Default .gitignore:**
+```
+# Ephemeral runtime state
+familiars/
+logs/
+
+# Keep config trackable if user wants
+!config.json
+```
 
 ### Decision: Session Persistence Across Restarts
 Session state survives VSCode restart automatically.
 - **Rationale**: Losing work state on restart would be frustrating; sessions can be long-running
-- **Implementation**: Persist to workspace storage on every state change; restore on activation
+- **Implementation**: Persist to `.coven/` on every state change; restore on activation
 - **User control**: User can explicitly end session to clear state
 
 ### Decision: Orphan Recovery Strategy
@@ -51,9 +74,24 @@ Attempt to rescue orphaned familiars rather than discard them.
   5. If agent dead and worktree clean → task was likely complete, check for unmerged commits
 - **Alternatives considered**: Always clean up orphans (loses work), always restart from scratch (wasteful)
 
+### Decision: Robust Process Tracking
+Store comprehensive process information for reliable orphan detection and reconnection.
+- **Rationale**: PIDs can be reused by OS; need additional signals to verify process identity
+- **Implementation**: Store `{ pid, startTime, command, worktreePath }` in `.coven/familiars/{taskId}.json`
+- **Verification**: On reconnect, check process exists AND start time matches AND command contains "claude"
+- **Alternatives considered**: Just PID (unreliable), process groups (platform-specific complexity)
+
+### Decision: Structured Event Logging
+Maintain a persistent, structured log of session events for debugging and auditability.
+- **Rationale**: Debugging agent orchestration issues requires visibility into state transitions, errors, and timing
+- **Implementation**: JSONL format in `.coven/logs/{date}.jsonl`, one event per line
+- **Log levels**: debug, info, warn, error
+- **Events logged**: state transitions, agent spawns/terminations, questions, merges, errors, sync events
+- **Retention**: Logs persist until session is explicitly ended or cleaned up
+
 ## Risks / Trade-offs
 - **EventEmitter memory leaks** → Ensure proper listener cleanup in dispose methods
 - **Concurrent state mutations** → Use async mutex for critical sections
 - **Large state objects** → Consider pagination for task lists > 100 items
-- **Stale PIDs** → PID could be reused by different process; verify process is actually claude
 - **Partial agent state** → Reconnected agent loses conversation history; may need context re-injection
+- **Log file growth** → Implement log rotation or size limits for long-running sessions

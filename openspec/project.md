@@ -83,6 +83,25 @@ src/
 - `decision` - Multiple valid approaches, need human choice
 - `blocked` - Unable to proceed, needs guidance
 
+## Design Philosophy
+
+### Task Granularity Principle
+Coven assumes tasks are small and well-defined enough that an agent can implement them without extensive human guidance. The quality of task definitions is the primary lever for success. If a task is too large or ambiguous, break it down before assigning an agent.
+
+**Implications:**
+- Human oversight happens at task boundaries (review), not mid-task
+- Well-written acceptance criteria reduce agent confusion and rework
+- Small tasks = faster feedback loops = higher success rate
+- When tasks fail repeatedly, the fix is usually better task definition, not more agent capability
+
+### Opinionated Tooling
+Coven is opinionated about workflow tooling. It integrates with:
+- **Beads** for task/issue tracking (git-backed, lightweight)
+- **OpenSpec** for spec-driven development (requirements traceability)
+- **Claude Code CLI** for AI agent execution (with MCP extensibility)
+
+This opinionation reduces configuration burden and ensures a cohesive experience. The interfaces (TaskSource, AgentProvider) exist for future extensibility, not for MVP customization.
+
 ## Important Constraints
 - Must work offline (no external services required except git remote)
 - Agent processes must be killable/recoverable
