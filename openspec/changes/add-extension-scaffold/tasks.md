@@ -33,7 +33,24 @@
 - [ ] 5.6 Create `src/review/` directory for review workflow
 - [ ] 5.7 Create `src/conjure/` directory for PR creation
 
-## 6. Development Setup
-- [ ] 6.1 Add `.vscode/launch.json` for Extension Host debugging
-- [ ] 6.2 Add `.vscode/tasks.json` for build tasks
-- [ ] 6.3 Create README with development instructions
+## 6. Prerequisites Checking
+- [ ] 6.1 Create `src/shared/prerequisites.ts` for tool detection
+- [ ] 6.2 Implement CLI tool detection (`which` or `where` based on platform)
+- [ ] 6.3 Check for `git`, `claude`, `openspec`, `bd` commands
+- [ ] 6.4 Implement repo initialization detection (openspec/, .beads/)
+- [ ] 6.5 Create `PrerequisitesStatus` type with tool/init states
+- [ ] 6.6 Cache results and expose refresh method
+
+## 7. Setup Panel
+- [ ] 7.1 Create setup panel webview for prerequisites display
+- [ ] 7.2 Show CLI tool status with install links for missing tools
+- [ ] 7.3 Show repo initialization status
+- [ ] 7.4 Implement "Initialize OpenSpec" button (runs `openspec init --tools claude`)
+- [ ] 7.5 Implement "Initialize Beads" button (runs `bd init`)
+- [ ] 7.6 Implement "Check Again" button to refresh status
+- [ ] 7.7 Auto-transition to session setup when all prerequisites met
+
+## 8. Development Setup
+- [ ] 8.1 Add `.vscode/launch.json` for Extension Host debugging
+- [ ] 8.2 Add `.vscode/tasks.json` for build tasks
+- [ ] 8.3 Create README with development instructions

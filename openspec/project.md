@@ -84,7 +84,19 @@ src/
 - Memory efficient - don't hold large diffs/outputs in memory
 
 ## External Dependencies
-- **Claude Code CLI**: Primary agent provider (`claude` command)
-- **Git CLI**: Worktree and branch management
-- **GitHub CLI** (`gh`): PR creation and GitHub operations
-- **Beads** (optional): External task source integration
+
+### Required CLI Tools
+| Tool | Command | Install | Purpose |
+|------|---------|---------|---------|
+| Git | `git` | System package manager | Worktrees, branches, merging |
+| Claude Code | `claude` | `npm i -g @anthropic-ai/claude-code` | AI agent execution |
+| OpenSpec | `openspec` | `npm i -g @fission-ai/openspec` | Spec-driven planning |
+| Beads | `bd` | `npm i -g @beads/bd` | Task/issue tracking |
+| GitHub CLI | `gh` | `brew install gh` / system | PR creation (optional) |
+
+### Per-Repo Initialization
+- **OpenSpec**: `openspec init --tools claude` creates `openspec/` directory
+- **Beads**: `bd init` creates `.beads/` directory
+
+### Design Note
+While MVP assumes OpenSpec + Beads + Claude Code, the architecture uses interfaces (TaskSource, AgentProvider) to allow future alternative implementations.

@@ -25,7 +25,7 @@ The extension SHALL provide a dedicated view container in the VSCode activity ba
 
 #### Scenario: Sidebar content
 - **WHEN** user opens Coven sidebar with no active session
-- **THEN** the sidebar displays session setup options
+- **THEN** the sidebar displays session setup options OR setup required panel if prerequisites missing
 
 ### Requirement: Status Bar Integration
 The extension SHALL display a status bar item showing the current Coven state.
@@ -51,3 +51,38 @@ The extension SHALL register core commands for session lifecycle management.
 - **WHEN** user invokes `coven.stopSession` with active session
 - **THEN** user is prompted to confirm
 - **THEN** active agents are terminated and worktrees cleaned up
+
+### Requirement: Prerequisites Checking
+The extension SHALL verify required CLI tools and repo initialization before allowing session start.
+
+#### Scenario: Check CLI tools on activation
+- **WHEN** extension activates
+- **THEN** system checks for `git`, `claude`, `openspec`, and `bd` CLI commands
+- **THEN** availability status is cached for display
+
+#### Scenario: Check repo initialization
+- **WHEN** extension activates in a git repository
+- **THEN** system checks for `openspec/` directory (OpenSpec initialized)
+- **THEN** system checks for `.beads/` directory (Beads initialized)
+
+#### Scenario: All prerequisites met
+- **WHEN** all CLI tools are available AND repo is initialized
+- **THEN** extension operates normally
+- **THEN** session setup is available
+
+#### Scenario: Missing CLI tools
+- **WHEN** any required CLI tool is missing
+- **THEN** setup panel displays which tools are missing
+- **THEN** install instructions/links are provided for each missing tool
+- **THEN** "Check Again" button re-runs detection
+
+#### Scenario: Repo not initialized
+- **WHEN** CLI tools are present but repo lacks OpenSpec or Beads initialization
+- **THEN** setup panel shows initialization status
+- **THEN** "Initialize OpenSpec" button runs `openspec init --tools claude` with confirmation
+- **THEN** "Initialize Beads" button runs `bd init` with confirmation
+
+#### Scenario: Initialization success
+- **WHEN** user clicks initialize button and command succeeds
+- **THEN** status updates to show initialization complete
+- **THEN** user can proceed to session setup
