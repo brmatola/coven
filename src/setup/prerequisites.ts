@@ -3,31 +3,13 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { SetupState, ToolStatus, InitStatus } from './types';
 
 const execAsync = promisify(exec);
 
-export interface ToolStatus {
-  name: string;
-  available: boolean;
-  version?: string;
-  installUrl?: string;
-}
+let cachedStatus: SetupState | null = null;
 
-export interface InitStatus {
-  name: string;
-  initialized: boolean;
-  path?: string;
-}
-
-export interface PrerequisitesStatus {
-  tools: ToolStatus[];
-  inits: InitStatus[];
-  allMet: boolean;
-}
-
-let cachedStatus: PrerequisitesStatus | null = null;
-
-export async function checkPrerequisites(): Promise<PrerequisitesStatus> {
+export async function checkPrerequisites(): Promise<SetupState> {
   if (cachedStatus) {
     return cachedStatus;
   }
@@ -53,7 +35,11 @@ async function checkTools(): Promise<ToolStatus[]> {
       command: 'openspec --version',
       installUrl: 'https://github.com/openspec/openspec',
     },
-    { name: 'bd', command: 'bd --version', installUrl: 'https://beads.dev' },
+    {
+      name: 'bd',
+      command: 'bd --version',
+      installUrl: 'https://github.com/steveyegge/beads',
+    },
   ];
 
   const results = await Promise.all(
@@ -106,4 +92,20 @@ async function directoryExists(dirPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function initOpenspec(): Promise<void> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    throw new Error('No workspace folder open');
+  }
+  await execAsync('openspec init --tools claude', { cwd: workspaceRoot });
+}
+
+export async function initBeads(): Promise<void> {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) {
+    throw new Error('No workspace folder open');
+  }
+  await execAsync('bd init', { cwd: workspaceRoot });
 }

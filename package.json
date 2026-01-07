@@ -43,29 +43,41 @@
       {
         "command": "coven.stopSession",
         "title": "Coven: Stop Session"
+      },
+      {
+        "command": "coven.showSetup",
+        "title": "Coven: Show Setup"
       }
     ]
   },
   "scripts": {
-    "build": "tsx scripts/build.ts",
+    "build": "tsx scripts/build.ts && npm run build:webviews",
     "build:e2e": "tsc -p src/test/e2e/tsconfig.json",
     "watch": "tsx scripts/build.ts --watch",
     "package": "vsce package",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\"",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
+    "build:webviews": "tsx scripts/build-webviews.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "pretest:e2e": "npm run build && npm run build:e2e",
     "test:e2e": "tsx scripts/run-e2e-tests.ts"
   },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
   "devDependencies": {
     "@types/mocha": "^10.0.6",
     "@types/node": "^20.10.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
+    "@vitejs/plugin-react": "^4.2.1",
     "@vscode/test-electron": "^2.3.8",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.19.8",
@@ -75,6 +87,7 @@
     "prettier": "^3.1.0",
     "tsx": "^4.6.2",
     "typescript": "^5.3.2",
+    "vite": "^5.0.10",
     "vitest": "^1.0.4"
   }
 }

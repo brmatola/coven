@@ -39,26 +39,32 @@ export const window = {
   showInformationMessage: vi.fn(),
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
-  createStatusBarItem: vi.fn((): MockStatusBarItem => ({
-    show: vi.fn(),
-    hide: vi.fn(),
-    dispose: vi.fn(),
-    text: '',
-    tooltip: '',
-    command: '',
-  })),
-  createTreeView: vi.fn((): MockTreeView => ({
-    dispose: vi.fn(),
-  })),
-  createWebviewPanel: vi.fn((): MockWebviewPanel => ({
-    webview: {
-      html: '',
-      onDidReceiveMessage: vi.fn(),
-    },
-    reveal: vi.fn(),
-    dispose: vi.fn(),
-    onDidDispose: vi.fn(),
-  })),
+  createStatusBarItem: vi.fn(
+    (): MockStatusBarItem => ({
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+      text: '',
+      tooltip: '',
+      command: '',
+    })
+  ),
+  createTreeView: vi.fn(
+    (): MockTreeView => ({
+      dispose: vi.fn(),
+    })
+  ),
+  createWebviewPanel: vi.fn(
+    (): MockWebviewPanel => ({
+      webview: {
+        html: '',
+        onDidReceiveMessage: vi.fn(),
+      },
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+      onDidDispose: vi.fn(),
+    })
+  ),
   activeTextEditor: undefined,
 };
 

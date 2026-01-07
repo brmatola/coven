@@ -33,5 +33,6 @@ suite('Extension Test Suite', () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('coven.startSession'), 'startSession command should exist');
     assert.ok(commands.includes('coven.stopSession'), 'stopSession command should exist');
+    assert.ok(commands.includes('coven.showSetup'), 'showSetup command should exist');
   });
 });

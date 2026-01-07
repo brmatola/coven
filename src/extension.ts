@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import { SessionsTreeDataProvider } from './session/sessionsTreeDataProvider';
-import { checkPrerequisites } from './shared/prerequisites';
-import { SetupPanel } from './shared/setupPanel';
+import { checkPrerequisites } from './setup/prerequisites';
+import { SetupPanel } from './setup/SetupPanel';
 
 let statusBarItem: vscode.StatusBarItem;
 let sessionsProvider: SessionsTreeDataProvider;
+let extensionUri: vscode.Uri;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  extensionUri = context.extensionUri;
+
   // Initialize status bar
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.text = '$(circle-outline) Coven: Inactive';
@@ -25,13 +28,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register commands
   context.subscriptions.push(
     vscode.commands.registerCommand('coven.startSession', startSession),
-    vscode.commands.registerCommand('coven.stopSession', stopSession)
+    vscode.commands.registerCommand('coven.stopSession', stopSession),
+    vscode.commands.registerCommand('coven.showSetup', showSetup)
   );
 
   // Check prerequisites and show setup panel if needed
   const prereqs = await checkPrerequisites();
   if (!prereqs.allMet) {
-    SetupPanel.createOrShow(context.extensionUri, prereqs);
+    await SetupPanel.createOrShow(extensionUri);
   }
 }
 
@@ -57,4 +61,8 @@ async function startSession(): Promise<void> {
 function stopSession(): void {
   statusBarItem.text = '$(circle-outline) Coven: Inactive';
   sessionsProvider.refresh();
+}
+
+async function showSetup(): Promise<void> {
+  await SetupPanel.createOrShow(extensionUri);
 }
