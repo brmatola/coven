@@ -126,7 +126,7 @@ describe('ClaudeAgent', () => {
 
       expect(spawn).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['--print', '--dangerously-skip-permissions']),
+        expect.arrayContaining(['--print']),
         expect.objectContaining({
           cwd: '/test/worktree',
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -134,6 +134,21 @@ describe('ClaudeAgent', () => {
       );
       expect(handle.pid).toBe(12345);
       expect(handle.taskId).toBe('task-1');
+    });
+
+    it('should include allowedTools when specified', async () => {
+      const { spawn } = await import('child_process');
+      const config = createMockConfig({
+        allowedTools: ['Read', 'Write', 'Bash(git:*)'],
+      });
+
+      await agent.spawn(config);
+
+      expect(spawn).toHaveBeenCalledWith(
+        'claude',
+        expect.arrayContaining(['--allowedTools', 'Read Write Bash(git:*)']),
+        expect.any(Object)
+      );
     });
 
     it('should throw if agent already running for task', async () => {

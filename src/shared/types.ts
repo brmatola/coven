@@ -168,6 +168,11 @@ export interface SessionConfig {
     conflicts: NotificationLevel;
     errors: NotificationLevel;
   };
+  /** Agent permission configuration */
+  agentPermissions: {
+    /** Tools the agent can use without prompting the user */
+    allowedTools: string[];
+  };
 }
 
 /**
@@ -193,6 +198,20 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
     completions: 'toast',
     conflicts: 'toast',
     errors: 'toast',
+  },
+  agentPermissions: {
+    allowedTools: [
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'Bash(git:*)',
+      'Bash(npm:*)',
+      'Bash(ls:*)',
+      'Bash(cat:*)',
+      'Bash(mkdir:*)',
+    ],
   },
 };
 

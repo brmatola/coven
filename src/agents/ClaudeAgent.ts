@@ -182,9 +182,15 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     // Use the prompt from config or generate from task
     const prompt = config.prompt || this.generatePrompt(config);
 
-    // Pass prompt via argument
-    args.push('--print'); // Print output without interactive mode
-    args.push('--dangerously-skip-permissions'); // Skip permission prompts for automation
+    // Print output without interactive mode
+    args.push('--print');
+
+    // Add allowed tools if specified (enables those tools without prompting)
+    // If no allowed tools specified, Claude will prompt for all tool uses
+    if (config.allowedTools && config.allowedTools.length > 0) {
+      args.push('--allowedTools', config.allowedTools.join(' '));
+    }
+
     args.push(prompt);
 
     return args;

@@ -8,6 +8,20 @@
     "enabled": false,
     "commands": []
   },
+  "agentPermissions": {
+    "allowedTools": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(mkdir:*)"
+    ]
+  },
   "logging": {
     "level": "info",
     "retentionDays": 7

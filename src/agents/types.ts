@@ -12,6 +12,8 @@ export interface AgentSpawnConfig {
   featureBranch: string;
   /** Optional prompt override */
   prompt?: string;
+  /** Tools the agent is allowed to use without prompting */
+  allowedTools?: string[];
   /** Callbacks for agent events */
   callbacks: AgentCallbacks;
 }

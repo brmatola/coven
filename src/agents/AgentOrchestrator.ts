@@ -66,6 +66,9 @@ export class AgentOrchestrator extends EventEmitter {
       maxConcurrentAgents: 3,
       agentTimeoutMs: 600000,
       autoMerge: false,
+      agentPermissions: {
+        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(git:*)', 'Bash(npm:*)'],
+      },
     };
   }
 
@@ -114,6 +117,7 @@ export class AgentOrchestrator extends EventEmitter {
                 featureBranch,
                 allowQuestions: !autoAccept,
               })),
+        allowedTools: this.config.agentPermissions?.allowedTools,
         callbacks: {
           onOutput: (output) => this.handleOutput(taskId, output),
           onQuestion: (question) => this.handleQuestion(taskId, question),

@@ -157,9 +157,10 @@ suite('Agent Integration E2E Tests', function () {
       );
 
       try {
-        // Run claude with a simple prompt
+        // Run claude with allowed tools for the simple file task
+        const allowedTools = 'Read Write';
         const { stdout, stderr } = await execAsync(
-          `claude --print --dangerously-skip-permissions "Read ${taskFile} and complete the task described in it. Work in the directory ${testDir}. When done, just say 'Done.'"`,
+          `claude --print --allowedTools "${allowedTools}" "Read ${taskFile} and complete the task described in it. Work in the directory ${testDir}. When done, just say 'Done.'"`,
           {
             cwd: testDir,
             timeout: 240000, // 4 minute timeout
