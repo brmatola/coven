@@ -13,9 +13,15 @@ export interface InitStatus {
   path?: string | undefined;
 }
 
+export interface WorkspaceStatus {
+  isMultiRoot: boolean;
+  folderCount: number;
+}
+
 export interface SetupState {
   tools: ToolStatus[];
   inits: InitStatus[];
+  workspace: WorkspaceStatus;
   allMet: boolean;
 }
 

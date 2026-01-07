@@ -20,6 +20,10 @@ function createMockState(overrides: Partial<SetupState> = {}): SetupState {
       { name: 'openspec', initialized: false },
       { name: 'beads', initialized: true },
     ],
+    workspace: {
+      isMultiRoot: false,
+      folderCount: 1,
+    },
     allMet: false,
     ...overrides,
   };
@@ -306,6 +310,106 @@ describe('App', () => {
       unmount();
 
       expect(removeEventListenerSpy).toHaveBeenCalledWith('message', expect.any(Function));
+    });
+  });
+
+  describe('multi-root workspace', () => {
+    it('shows error banner when workspace is multi-root', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createMockState({
+          workspace: { isMultiRoot: true, folderCount: 3 },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Multi-root Workspaces Not Supported')).toBeInTheDocument();
+      });
+    });
+
+    it('displays folder count in error message', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createMockState({
+          workspace: { isMultiRoot: true, folderCount: 3 },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/3 workspace folders/)).toBeInTheDocument();
+      });
+    });
+
+    it('shows guidance to open single folder', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createMockState({
+          workspace: { isMultiRoot: true, folderCount: 2 },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(/Please open a single folder workspace/)).toBeInTheDocument();
+      });
+    });
+
+    it('does not show tools or inits sections when multi-root', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createMockState({
+          workspace: { isMultiRoot: true, folderCount: 2 },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Multi-root Workspaces Not Supported')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText('CLI Tools')).not.toBeInTheDocument();
+      expect(screen.queryByText('Repository Initialization')).not.toBeInTheDocument();
+    });
+
+    it('still shows Check Again button when multi-root', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createMockState({
+          workspace: { isMultiRoot: true, folderCount: 2 },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Check Again' })).toBeInTheDocument();
+      });
+    });
+
+    it('sends refresh message when Check Again clicked in multi-root state', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createMockState({
+          workspace: { isMultiRoot: true, folderCount: 2 },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Check Again' })).toBeInTheDocument();
+      });
+
+      mockVsCode.postMessage.mockClear();
+      fireEvent.click(screen.getByRole('button', { name: 'Check Again' }));
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({ type: 'refresh' });
     });
   });
 });

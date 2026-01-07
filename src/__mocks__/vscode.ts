@@ -30,15 +30,26 @@ interface MockWebviewPanel {
   onDidDispose: ReturnType<typeof vi.fn>;
 }
 
+// Mutable workspace state for testing
+let _workspaceFolders: Array<{ uri: { fsPath: string } }> = [
+  { uri: { fsPath: '/mock/workspace' } },
+];
+
 export const workspace = {
-  workspaceFolders: [
-    {
-      uri: {
-        fsPath: '/mock/workspace',
-      },
-    },
-  ],
+  get workspaceFolders() {
+    return _workspaceFolders;
+  },
 };
+
+// Test helper to set workspace folders
+export function __setWorkspaceFolders(folders: Array<{ uri: { fsPath: string } }>): void {
+  _workspaceFolders = folders;
+}
+
+// Test helper to reset to default single folder
+export function __resetWorkspaceFolders(): void {
+  _workspaceFolders = [{ uri: { fsPath: '/mock/workspace' } }];
+}
 
 interface MockOutputChannel {
   appendLine: ReturnType<typeof vi.fn>;

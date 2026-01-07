@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { checkPrerequisites, refreshPrerequisites, initOpenspec, initBeads } from './prerequisites';
+import { __setWorkspaceFolders, __resetWorkspaceFolders } from 'vscode';
 
 // Mock child_process
 vi.mock('child_process', () => ({
@@ -54,6 +55,7 @@ describe('prerequisites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     refreshPrerequisites();
+    __resetWorkspaceFolders();
   });
 
   describe('refreshPrerequisites()', () => {
@@ -188,6 +190,55 @@ describe('prerequisites', () => {
       const result = await checkPrerequisites();
 
       expect(result.allMet).toBe(false);
+    });
+
+    it('includes workspace status with single folder', async () => {
+      mockExecSuccess('version');
+      mockStatSuccess(true);
+
+      const result = await checkPrerequisites();
+
+      expect(result.workspace).toBeDefined();
+      expect(result.workspace.isMultiRoot).toBe(false);
+      expect(result.workspace.folderCount).toBe(1);
+    });
+
+    it('detects multi-root workspace', async () => {
+      __setWorkspaceFolders([
+        { uri: { fsPath: '/mock/workspace1' } },
+        { uri: { fsPath: '/mock/workspace2' } },
+      ]);
+      mockExecSuccess('version');
+      mockStatSuccess(true);
+
+      const result = await checkPrerequisites();
+
+      expect(result.workspace.isMultiRoot).toBe(true);
+      expect(result.workspace.folderCount).toBe(2);
+    });
+
+    it('sets allMet to false when workspace is multi-root', async () => {
+      __setWorkspaceFolders([
+        { uri: { fsPath: '/mock/workspace1' } },
+        { uri: { fsPath: '/mock/workspace2' } },
+      ]);
+      mockExecSuccess('version');
+      mockStatSuccess(true);
+
+      const result = await checkPrerequisites();
+
+      expect(result.allMet).toBe(false);
+    });
+
+    it('handles empty workspace folders', async () => {
+      __setWorkspaceFolders([]);
+      mockExecSuccess('version');
+      mockStatError();
+
+      const result = await checkPrerequisites();
+
+      expect(result.workspace.isMultiRoot).toBe(false);
+      expect(result.workspace.folderCount).toBe(0);
     });
   });
 

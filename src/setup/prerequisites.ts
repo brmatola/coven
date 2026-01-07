@@ -3,7 +3,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { SetupState, ToolStatus, InitStatus } from './types';
+import { SetupState, ToolStatus, InitStatus, WorkspaceStatus } from './types';
 
 const execAsync = promisify(exec);
 
@@ -19,13 +19,25 @@ export async function checkPrerequisites(): Promise<SetupState> {
     return cachedStatus;
   }
 
+  const workspace = checkWorkspace();
   const tools = await checkTools();
   const inits = await checkInits();
-  const allMet = tools.every((t) => t.available) && inits.every((i) => i.initialized);
+  const allMet =
+    !workspace.isMultiRoot &&
+    tools.every((t) => t.available) &&
+    inits.every((i) => i.initialized);
 
-  cachedStatus = { tools, inits, allMet };
+  cachedStatus = { tools, inits, workspace, allMet };
   cacheTimestamp = Date.now();
   return cachedStatus;
+}
+
+function checkWorkspace(): WorkspaceStatus {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  return {
+    isMultiRoot: folders.length > 1,
+    folderCount: folders.length,
+  };
 }
 
 export function refreshPrerequisites(): void {

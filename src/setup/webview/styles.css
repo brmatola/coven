@@ -107,3 +107,27 @@ button:disabled {
   padding: 20px;
   color: var(--vscode-descriptionForeground);
 }
+
+.error-banner {
+  background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+  border: 1px solid var(--vscode-inputValidation-errorBorder, #f44336);
+  border-radius: 4px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.error-banner h2 {
+  margin-top: 0;
+  color: var(--vscode-errorForeground, #f44336);
+}
+
+.error-banner p {
+  margin-bottom: 8px;
+}
+
+.error-banner .hint {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  margin-top: 12px;
+  margin-bottom: 0;
+}

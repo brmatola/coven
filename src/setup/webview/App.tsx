@@ -62,6 +62,29 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     return <div className="loading">Loading...</div>;
   }
 
+  // Show multi-root workspace error
+  if (state.workspace.isMultiRoot) {
+    return (
+      <div className="setup-container">
+        <h1>Coven Setup</h1>
+        <div className="error-banner">
+          <h2>Multi-root Workspaces Not Supported</h2>
+          <p>
+            Coven detected {state.workspace.folderCount} workspace folders. Multi-root workspaces
+            are not currently supported.
+          </p>
+          <p>Please open a single folder workspace to use Coven.</p>
+          <p className="hint">
+            Use <strong>File &gt; Open Folder...</strong> to open a single project folder.
+          </p>
+        </div>
+        <div className="actions">
+          <button onClick={handleRefresh}>Check Again</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="setup-container">
       <h1>Coven Setup</h1>
