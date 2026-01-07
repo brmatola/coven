@@ -32,6 +32,28 @@ This project uses **bd (beads)** for issue tracking. Run `bd prime` for full wor
 - **Beads**: Multi-session work, dependencies, discovered issues, architectural debt
 - **TodoWrite**: Simple single-session execution tracking
 
+## Quality Gates
+
+All code changes MUST pass these gates before completion:
+
+```bash
+npm run lint          # ESLint - no errors
+npm test              # Unit tests with 80% coverage threshold
+npm run build         # TypeScript compilation
+npm run test:e2e      # E2E tests in VS Code
+```
+
+**Test Coverage Requirements:**
+- Minimum 80% coverage for lines, functions, branches, and statements
+- `npm test` will FAIL if coverage drops below threshold
+- New code MUST include tests to maintain coverage
+- Use `npm run test:no-coverage` only for quick iteration during development
+
+**Writing Tests:**
+- Place tests next to source: `foo.ts` → `foo.test.ts`
+- Mock VS Code APIs using `src/__mocks__/vscode.ts`
+- Test behavior, not implementation details
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

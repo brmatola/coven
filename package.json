@@ -60,8 +60,9 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "build:webviews": "tsx scripts/build-webviews.ts",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:no-coverage": "vitest run",
     "pretest:e2e": "npm run build && npm run build:e2e",
     "test:e2e": "tsx scripts/run-e2e-tests.ts"
   },
@@ -88,6 +89,7 @@
     "tsx": "^4.6.2",
     "typescript": "^5.3.2",
     "vite": "^5.0.10",
-    "vitest": "^1.0.4"
+    "vitest": "^1.0.4",
+    "@vitest/coverage-v8": "^1.0.4"
   }
 }
