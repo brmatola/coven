@@ -33,9 +33,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   // Check prerequisites and show setup panel if needed
-  const prereqs = await checkPrerequisites();
-  if (!prereqs.allMet) {
-    await SetupPanel.createOrShow(extensionUri);
+  try {
+    const prereqs = await checkPrerequisites();
+    if (!prereqs.allMet) {
+      await SetupPanel.createOrShow(extensionUri);
+    }
+  } catch (err) {
+    await vscode.window.showErrorMessage(
+      `Coven: Failed to check prerequisites: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
 
@@ -44,7 +50,16 @@ export function deactivate(): void {
 }
 
 async function startSession(): Promise<void> {
-  const prereqs = await checkPrerequisites();
+  let prereqs;
+  try {
+    prereqs = await checkPrerequisites();
+  } catch (err) {
+    await vscode.window.showErrorMessage(
+      `Coven: Failed to check prerequisites: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+
   if (!prereqs.allMet) {
     await vscode.window.showWarningMessage(
       'Coven: Prerequisites not met. Please complete setup first.'

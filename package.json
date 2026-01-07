@@ -51,7 +51,7 @@
     ]
   },
   "scripts": {
-    "build": "tsx scripts/build.ts && npm run build:webviews",
+    "build": "npm run lint && tsx scripts/build.ts && npm run build:webviews",
     "build:e2e": "tsc -p src/test/e2e/tsconfig.json",
     "watch": "tsx scripts/build.ts --watch",
     "package": "vsce package",
