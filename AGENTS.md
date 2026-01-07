@@ -54,6 +54,15 @@ npm run test:e2e      # E2E tests in VS Code
 - Mock VS Code APIs using `src/__mocks__/vscode.ts`
 - Test behavior, not implementation details
 
+**Test Quality Standards (MANDATORY):**
+- Tests MUST verify actual functionality, not just that functions exist
+- BAD: `expect(typeof fn).toBe('function')` - useless, proves nothing
+- GOOD: `expect(fn(input)).toBe(expectedOutput)` - verifies behavior
+- Each test should answer: "What breaks if this code is wrong?"
+- Test edge cases: empty inputs, error conditions, boundary values
+- Test the contract: given X input, expect Y output or Z side effect
+- If a test would still pass with the implementation deleted, it's worthless
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

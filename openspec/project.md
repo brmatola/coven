@@ -147,3 +147,7 @@ While MVP assumes OpenSpec + Beads + Claude Code, the architecture uses interfac
 ### Resource Management
 - **Disk Space Monitoring**: Warn when worktree usage exceeds thresholds
 - **Memory Limits**: Cap output streaming buffer sizes
+
+### Quality Gates
+- We want views into the state of various quality gates from coven
+- Test coverage, test status, etc

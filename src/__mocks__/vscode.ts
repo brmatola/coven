@@ -15,11 +15,16 @@ interface MockTreeView {
   dispose: ReturnType<typeof vi.fn>;
 }
 
+interface MockWebview {
+  html: string;
+  onDidReceiveMessage: ReturnType<typeof vi.fn>;
+  postMessage: ReturnType<typeof vi.fn>;
+  asWebviewUri: ReturnType<typeof vi.fn>;
+  cspSource: string;
+}
+
 interface MockWebviewPanel {
-  webview: {
-    html: string;
-    onDidReceiveMessage: ReturnType<typeof vi.fn>;
-  };
+  webview: MockWebview;
   reveal: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   onDidDispose: ReturnType<typeof vi.fn>;
@@ -35,10 +40,31 @@ export const workspace = {
   ],
 };
 
+interface MockOutputChannel {
+  appendLine: ReturnType<typeof vi.fn>;
+  append: ReturnType<typeof vi.fn>;
+  clear: ReturnType<typeof vi.fn>;
+  show: ReturnType<typeof vi.fn>;
+  hide: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  name: string;
+}
+
 export const window = {
   showInformationMessage: vi.fn(),
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
+  createOutputChannel: vi.fn(
+    (name: string): MockOutputChannel => ({
+      appendLine: vi.fn(),
+      append: vi.fn(),
+      clear: vi.fn(),
+      show: vi.fn(),
+      hide: vi.fn(),
+      dispose: vi.fn(),
+      name,
+    })
+  ),
   createStatusBarItem: vi.fn(
     (): MockStatusBarItem => ({
       show: vi.fn(),
@@ -58,11 +84,14 @@ export const window = {
     (): MockWebviewPanel => ({
       webview: {
         html: '',
-        onDidReceiveMessage: vi.fn(),
+        onDidReceiveMessage: vi.fn((_callback) => ({ dispose: vi.fn() })),
+        postMessage: vi.fn(),
+        asWebviewUri: vi.fn((uri) => uri),
+        cspSource: 'mock-csp-source',
       },
       reveal: vi.fn(),
       dispose: vi.fn(),
-      onDidDispose: vi.fn(),
+      onDidDispose: vi.fn((_callback) => ({ dispose: vi.fn() })),
     })
   ),
   activeTextEditor: undefined,
@@ -107,16 +136,44 @@ export class EventEmitter<T> {
   private listeners: Array<(e: T) => void> = [];
   event = (listener: (e: T) => void): { dispose: () => void } => {
     this.listeners.push(listener);
-    return { dispose: (): void => {} };
+    return {
+      dispose: (): void => {
+        const index = this.listeners.indexOf(listener);
+        if (index >= 0) {
+          this.listeners.splice(index, 1);
+        }
+      },
+    };
   };
   fire(data: T): void {
     this.listeners.forEach((l) => l(data));
   }
+  dispose(): void {
+    this.listeners = [];
+  }
 }
 
-export type Uri = {
+export class Uri {
   fsPath: string;
-};
+  path: string;
+
+  constructor(fsPath: string) {
+    this.fsPath = fsPath;
+    this.path = fsPath;
+  }
+
+  static joinPath(base: Uri, ...pathSegments: string[]): Uri {
+    return new Uri(`${base.fsPath}/${pathSegments.join('/')}`);
+  }
+
+  static file(path: string): Uri {
+    return new Uri(path);
+  }
+
+  toString(): string {
+    return this.fsPath;
+  }
+}
 
 export type Disposable = {
   dispose: () => void;
