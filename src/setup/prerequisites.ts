@@ -3,17 +3,17 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { SetupState, ToolStatus, InitStatus, WorkspaceStatus } from './types';
+import { PrerequisitesState, ToolStatus, InitStatus, WorkspaceStatus } from './types';
 
 const execAsync = promisify(exec);
 
 const EXEC_TIMEOUT_MS = 10000; // 10 second timeout for CLI commands
 const CACHE_TTL_MS = 30000; // Cache expires after 30 seconds
 
-let cachedStatus: SetupState | null = null;
+let cachedStatus: PrerequisitesState | null = null;
 let cacheTimestamp = 0;
 
-export async function checkPrerequisites(): Promise<SetupState> {
+export async function checkPrerequisites(): Promise<PrerequisitesState> {
   const now = Date.now();
   if (cachedStatus && now - cacheTimestamp < CACHE_TTL_MS) {
     return cachedStatus;

@@ -1,0 +1,7 @@
+# Ephemeral runtime state
+familiars/
+logs/
+worktrees/
+
+# Keep config trackable if user wants
+!config.json

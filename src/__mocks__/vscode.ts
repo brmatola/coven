@@ -65,6 +65,7 @@ export const window = {
   showInformationMessage: vi.fn(),
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
+  showInputBox: vi.fn(),
   createOutputChannel: vi.fn(
     (name: string): MockOutputChannel => ({
       appendLine: vi.fn(),
@@ -189,3 +190,34 @@ export class Uri {
 export type Disposable = {
   dispose: () => void;
 };
+
+export class ThemeIcon {
+  id: string;
+  color?: ThemeColor;
+
+  constructor(id: string, color?: ThemeColor) {
+    this.id = id;
+    this.color = color;
+  }
+}
+
+export class ThemeColor {
+  id: string;
+
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
+export class MarkdownString {
+  value: string;
+
+  constructor(value?: string) {
+    this.value = value ?? '';
+  }
+
+  appendMarkdown(value: string): MarkdownString {
+    this.value += value;
+    return this;
+  }
+}

@@ -198,17 +198,27 @@ describe('SetupPanel', () => {
     });
   });
 
-  describe('auto-close behavior', () => {
-    it('disposes panel when all prerequisites are met', async () => {
+  describe('session-config phase transition', () => {
+    it('transitions to session-config phase when all prerequisites are met', async () => {
       mockCheckPrerequisites.mockResolvedValue(createMockPrerequisitesResult(true));
       const extensionUri = new Uri('/mock/extension');
 
       await SetupPanel.createOrShow(extensionUri);
 
-      expect(window.showInformationMessage).toHaveBeenCalledWith(
-        'All prerequisites met! You can now start a session.'
+      const mockPanel = (window.createWebviewPanel as ReturnType<typeof vi.fn>).mock.results[0]
+        ?.value;
+
+      // Panel should remain open and transition to session-config phase
+      expect(SetupPanel.currentPanel).toBeDefined();
+      expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'state',
+          payload: expect.objectContaining({
+            phase: 'session-config',
+            allMet: true,
+          }),
+        })
       );
-      expect(SetupPanel.currentPanel).toBeUndefined();
     });
   });
 });

@@ -1,0 +1,22 @@
+{
+  "maxConcurrentAgents": 3,
+  "worktreeBasePath": ".coven/worktrees",
+  "beadsSyncIntervalMs": 30000,
+  "agentTimeoutMs": 600000,
+  "mergeConflictMaxRetries": 2,
+  "preMergeChecks": {
+    "enabled": false,
+    "commands": []
+  },
+  "logging": {
+    "level": "info",
+    "retentionDays": 7
+  },
+  "outputRetentionDays": 7,
+  "notifications": {
+    "questions": "modal",
+    "completions": "toast",
+    "conflicts": "toast",
+    "errors": "toast"
+  }
+}

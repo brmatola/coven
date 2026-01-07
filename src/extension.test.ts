@@ -24,12 +24,29 @@ import { SetupPanel } from './setup/SetupPanel';
 const mockCheckPrerequisites = checkPrerequisites as ReturnType<typeof vi.fn>;
 const mockSetupPanelCreateOrShow = SetupPanel.createOrShow as ReturnType<typeof vi.fn>;
 
+function createMockWorkspaceState(): vscode.Memento {
+  const storage = new Map<string, unknown>();
+  return {
+    get: <T>(key: string, defaultValue?: T): T | undefined => {
+      return (storage.get(key) as T) ?? defaultValue;
+    },
+    update: (key: string, value: unknown): Thenable<void> => {
+      storage.set(key, value);
+      return Promise.resolve();
+    },
+    keys: () => Array.from(storage.keys()),
+  };
+}
+
 function createMockExtensionContext(): vscode.ExtensionContext {
   return {
     extensionUri: { fsPath: '/mock/extension' } as vscode.Uri,
     subscriptions: [],
-    workspaceState: {} as vscode.Memento,
-    globalState: {} as vscode.Memento & { setKeysForSync: (keys: readonly string[]) => void },
+    workspaceState: createMockWorkspaceState(),
+    globalState: {
+      ...createMockWorkspaceState(),
+      setKeysForSync: vi.fn(),
+    } as vscode.Memento & { setKeysForSync: (keys: readonly string[]) => void },
     extensionPath: '/mock/extension',
     storagePath: '/mock/storage',
     globalStoragePath: '/mock/global-storage',

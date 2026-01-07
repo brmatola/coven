@@ -1,3 +1,8 @@
+# sidebar-ui Specification
+
+## Purpose
+Defines the sidebar tree view and status bar behaviors for displaying Coven session state. While vscode-extension covers extension lifecycle and command registration, this spec focuses on the runtime UI presentation: how tasks are grouped and displayed, how session status is visualized, and how users interact with tasks through the tree view. This separation allows the UI rendering logic to evolve independently of extension infrastructure.
+
 ## ADDED Requirements
 
 ### Requirement: Task List Display

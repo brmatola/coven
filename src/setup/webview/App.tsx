@@ -1,5 +1,12 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { SetupState, ToolStatus, InitStatus, SetupMessageToWebview } from '../types';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import {
+  SetupState,
+  ToolStatus,
+  InitStatus,
+  SetupMessageToWebview,
+  BranchInfo,
+  SessionConfig,
+} from '../types';
 
 // VS Code API type
 export interface VsCodeApi {
@@ -58,6 +65,24 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     vscode.postMessage({ type: 'refresh' });
   };
 
+  const handleSelectBranch = useCallback(
+    (branch: BranchInfo): void => {
+      vscode.postMessage({ type: 'selectBranch', payload: branch });
+    },
+    [vscode]
+  );
+
+  const handleUpdateConfig = useCallback(
+    (config: Partial<SessionConfig>): void => {
+      vscode.postMessage({ type: 'updateConfig', payload: config });
+    },
+    [vscode]
+  );
+
+  const handleBeginSession = useCallback((): void => {
+    vscode.postMessage({ type: 'beginSession' });
+  }, [vscode]);
+
   if (!state) {
     return <div className="loading">Loading...</div>;
   }
@@ -85,6 +110,19 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     );
   }
 
+  // Session config phase
+  if (state.phase === 'session-config') {
+    return (
+      <SessionConfigView
+        state={state}
+        onSelectBranch={handleSelectBranch}
+        onUpdateConfig={handleUpdateConfig}
+        onBegin={handleBeginSession}
+      />
+    );
+  }
+
+  // Prerequisites phase
   return (
     <div className="setup-container">
       <h1>Coven Setup</h1>
@@ -149,6 +187,170 @@ function InitStatusItem({ init, onInit }: InitStatusItemProps): React.ReactEleme
       </span>
       <span className="status-name">{init.name}</span>
       {!init.initialized && <button onClick={onInit}>Initialize</button>}
+    </div>
+  );
+}
+
+// Session configuration view - shown after prerequisites are met
+interface SessionConfigViewProps {
+  state: SetupState;
+  onSelectBranch: (branch: BranchInfo) => void;
+  onUpdateConfig: (config: Partial<SessionConfig>) => void;
+  onBegin: () => void;
+}
+
+function SessionConfigView({
+  state,
+  onSelectBranch,
+  onUpdateConfig,
+  onBegin,
+}: SessionConfigViewProps): React.ReactElement {
+  const [newBranchName, setNewBranchName] = useState('');
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+
+  const handleSelectExisting = (branchName: string): void => {
+    setIsCreatingNew(false);
+    onSelectBranch({ name: branchName, isNew: false });
+  };
+
+  const handleCreateNew = (): void => {
+    if (newBranchName.trim()) {
+      onSelectBranch({ name: newBranchName.trim(), isNew: true });
+    }
+  };
+
+  const canBegin =
+    state.selectedBranch !== null &&
+    (state.selectedBranch.name.length > 0 || newBranchName.trim().length > 0);
+
+  return (
+    <div className="setup-container">
+      <h1>Start Session</h1>
+      <p>Configure your Coven session settings.</p>
+
+      <section>
+        <h2>Feature Branch</h2>
+        <div className="branch-selection">
+          <div className="branch-option">
+            <label>
+              <input
+                type="radio"
+                name="branchType"
+                checked={!isCreatingNew}
+                onChange={() => setIsCreatingNew(false)}
+              />
+              Select existing branch
+            </label>
+            {!isCreatingNew && (
+              <select
+                value={state.selectedBranch?.isNew === false ? state.selectedBranch.name : ''}
+                onChange={(e) => handleSelectExisting(e.target.value)}
+                disabled={isCreatingNew}
+              >
+                <option value="">-- Select a branch --</option>
+                {state.availableBranches.map((branch) => (
+                  <option key={branch} value={branch}>
+                    {branch}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="branch-option">
+            <label>
+              <input
+                type="radio"
+                name="branchType"
+                checked={isCreatingNew}
+                onChange={() => setIsCreatingNew(true)}
+              />
+              Create new branch
+            </label>
+            {isCreatingNew && (
+              <div className="new-branch-input">
+                <input
+                  type="text"
+                  placeholder="feature/my-feature"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  onBlur={handleCreateNew}
+                />
+                <p className="hint">Branch will be created from main</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Task Sources</h2>
+        <div className="task-sources">
+          <div className="task-source-item">
+            <label>
+              <input type="checkbox" checked disabled />
+              Manual Tasks
+            </label>
+            <p className="hint">Create tasks directly in Coven (always enabled)</p>
+          </div>
+          <div className="task-source-item disabled">
+            <label>
+              <input type="checkbox" disabled />
+              Beads Integration
+            </label>
+            <p className="hint">Sync tasks from Beads (requires add-beads-integration)</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Settings</h2>
+        <div className="settings-form">
+          <div className="form-group">
+            <label htmlFor="maxAgents">Max Concurrent Agents</label>
+            <input
+              id="maxAgents"
+              type="number"
+              min={1}
+              max={10}
+              value={state.sessionConfig.maxConcurrentAgents}
+              onChange={(e) =>
+                onUpdateConfig({ maxConcurrentAgents: parseInt(e.target.value, 10) || 1 })
+              }
+            />
+            <p className="hint">Number of agents that can work simultaneously</p>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="worktreePath">Worktree Base Path</label>
+            <input
+              id="worktreePath"
+              type="text"
+              value={state.sessionConfig.worktreeBasePath}
+              onChange={(e) => onUpdateConfig({ worktreeBasePath: e.target.value })}
+            />
+            <p className="hint">Location for git worktrees (relative to workspace)</p>
+          </div>
+
+          <div className="form-group checkbox">
+            <label>
+              <input
+                type="checkbox"
+                checked={state.sessionConfig.autoApprove}
+                onChange={(e) => onUpdateConfig({ autoApprove: e.target.checked })}
+              />
+              Auto-approve agent actions
+            </label>
+            <p className="hint">Skip confirmation for routine operations</p>
+          </div>
+        </div>
+      </section>
+
+      <div className="actions primary-actions">
+        <button className="primary" onClick={onBegin} disabled={!canBegin}>
+          Begin Session
+        </button>
+      </div>
     </div>
   );
 }

@@ -38,17 +38,89 @@
     "commands": [
       {
         "command": "coven.startSession",
-        "title": "Coven: Start Session"
+        "title": "Coven: Start Session",
+        "icon": "$(play)"
       },
       {
         "command": "coven.stopSession",
-        "title": "Coven: Stop Session"
+        "title": "Coven: Stop Session",
+        "icon": "$(stop)"
       },
       {
         "command": "coven.showSetup",
         "title": "Coven: Show Setup"
+      },
+      {
+        "command": "coven.revealSidebar",
+        "title": "Coven: Reveal Sidebar"
+      },
+      {
+        "command": "coven.startTask",
+        "title": "Start Task",
+        "icon": "$(play)"
+      },
+      {
+        "command": "coven.stopTask",
+        "title": "Stop Task",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "coven.showTaskDetail",
+        "title": "View Details",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "coven.viewFamiliarOutput",
+        "title": "View Output",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "coven.createTask",
+        "title": "Create Task",
+        "icon": "$(add)"
+      },
+      {
+        "command": "coven.refreshTasks",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "coven.createTask",
+          "when": "view == coven.sessions",
+          "group": "navigation"
+        },
+        {
+          "command": "coven.refreshTasks",
+          "when": "view == coven.sessions",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "coven.startTask",
+          "when": "view == coven.sessions && viewItem == task.ready",
+          "group": "inline"
+        },
+        {
+          "command": "coven.showTaskDetail",
+          "when": "view == coven.sessions && viewItem =~ /^task\\./",
+          "group": "inline"
+        },
+        {
+          "command": "coven.stopTask",
+          "when": "view == coven.sessions && viewItem == task.working",
+          "group": "inline"
+        },
+        {
+          "command": "coven.viewFamiliarOutput",
+          "when": "view == coven.sessions && viewItem =~ /^familiar\\./",
+          "group": "inline"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "npm run lint && tsx scripts/build.ts && npm run build:webviews",

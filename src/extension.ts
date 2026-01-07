@@ -1,36 +1,55 @@
 import * as vscode from 'vscode';
-import { SessionsTreeDataProvider } from './session/sessionsTreeDataProvider';
+import { CovenSession } from './session/CovenSession';
+import { GrimoireTreeProvider } from './sidebar/GrimoireTreeProvider';
+import { CovenStatusBar } from './sidebar/CovenStatusBar';
 import { checkPrerequisites } from './setup/prerequisites';
 import { SetupPanel } from './setup/SetupPanel';
 import { ExtensionContext } from './shared/extensionContext';
 
-let sessionsProvider: SessionsTreeDataProvider;
+let grimoireProvider: GrimoireTreeProvider;
+let statusBar: CovenStatusBar;
+let covenSession: CovenSession | null = null;
+let treeView: vscode.TreeView<unknown>;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const ctx = ExtensionContext.initialize(context);
   ctx.logger.info('Coven extension activating');
 
+  // Get workspace root
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
   // Initialize status bar
-  ctx.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  ctx.statusBarItem.text = '$(circle-outline) Coven: Inactive';
-  ctx.statusBarItem.tooltip = 'Click to start a Coven session';
-  ctx.statusBarItem.command = 'coven.startSession';
-  ctx.statusBarItem.show();
-  ctx.subscriptions.push(ctx.statusBarItem);
+  statusBar = new CovenStatusBar();
+  ctx.statusBarItem = statusBar.getStatusBarItem();
+  ctx.subscriptions.push(statusBar);
 
   // Initialize sidebar tree view
-  sessionsProvider = new SessionsTreeDataProvider();
-  const treeView = vscode.window.createTreeView('coven.sessions', {
-    treeDataProvider: sessionsProvider,
+  grimoireProvider = new GrimoireTreeProvider(context);
+  treeView = vscode.window.createTreeView('coven.sessions', {
+    treeDataProvider: grimoireProvider,
+    showCollapseAll: true,
   });
   ctx.subscriptions.push(treeView);
+  ctx.subscriptions.push({ dispose: () => grimoireProvider.dispose() });
 
   // Register commands
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('coven.startSession', startSession),
+    vscode.commands.registerCommand('coven.startSession', () => startSession(workspaceRoot)),
     vscode.commands.registerCommand('coven.stopSession', stopSession),
-    vscode.commands.registerCommand('coven.showSetup', showSetup)
+    vscode.commands.registerCommand('coven.showSetup', showSetup),
+    vscode.commands.registerCommand('coven.revealSidebar', revealSidebar),
+    vscode.commands.registerCommand('coven.showTaskDetail', showTaskDetail),
+    vscode.commands.registerCommand('coven.viewFamiliarOutput', viewFamiliarOutput),
+    vscode.commands.registerCommand('coven.createTask', createTask),
+    vscode.commands.registerCommand('coven.startTask', startTask),
+    vscode.commands.registerCommand('coven.stopTask', stopTask),
+    vscode.commands.registerCommand('coven.refreshTasks', refreshTasks)
   );
+
+  // Initialize session if workspace is available
+  if (workspaceRoot) {
+    await initializeSession(workspaceRoot);
+  }
 
   // Check prerequisites and show setup panel if needed
   try {
@@ -52,14 +71,49 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
+  if (covenSession) {
+    covenSession.dispose();
+    covenSession = null;
+  }
   if (ExtensionContext.isInitialized()) {
     ExtensionContext.get().logger.info('Coven extension deactivating');
     ExtensionContext.dispose();
   }
 }
 
-async function startSession(): Promise<void> {
+/**
+ * Initialize the CovenSession and connect it to UI components.
+ */
+async function initializeSession(workspaceRoot: string): Promise<void> {
   const ctx = ExtensionContext.get();
+
+  try {
+    covenSession = new CovenSession(workspaceRoot);
+    await covenSession.initialize();
+
+    // Connect session to UI components
+    grimoireProvider.setSession(covenSession);
+    statusBar.setSession(covenSession);
+
+    ctx.logger.info('CovenSession initialized', {
+      status: covenSession.getStatus(),
+      featureBranch: covenSession.getFeatureBranch(),
+    });
+  } catch (err) {
+    ctx.logger.error('Failed to initialize CovenSession', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    // Continue without session - user can start one manually
+  }
+}
+
+async function startSession(workspaceRoot: string | undefined): Promise<void> {
+  const ctx = ExtensionContext.get();
+
+  if (!workspaceRoot) {
+    await vscode.window.showErrorMessage('Coven: No workspace folder open');
+    return;
+  }
 
   let prereqs;
   try {
@@ -75,26 +129,206 @@ async function startSession(): Promise<void> {
     await vscode.window.showWarningMessage(
       'Coven: Prerequisites not met. Please complete setup first.'
     );
+    await SetupPanel.createOrShow(ctx.extensionUri);
     return;
   }
 
-  if (ctx.statusBarItem) {
-    ctx.statusBarItem.text = '$(sync~spin) Coven: Starting...';
-    // Session start logic will be implemented in add-core-session
-    ctx.statusBarItem.text = '$(circle-filled) Coven: Active';
+  // Prompt for feature branch name
+  const branchName = await vscode.window.showInputBox({
+    prompt: 'Enter feature branch name',
+    placeHolder: 'feature/my-feature',
+    validateInput: (value) => {
+      if (!value.trim()) {
+        return 'Branch name is required';
+      }
+      if (!/^[\w\-/]+$/.test(value)) {
+        return 'Branch name contains invalid characters';
+      }
+      return undefined;
+    },
+  });
+
+  if (!branchName) {
+    return; // User cancelled
   }
-  sessionsProvider.refresh();
+
+  try {
+    // Initialize session if not already done
+    if (!covenSession) {
+      await initializeSession(workspaceRoot);
+    }
+
+    if (covenSession) {
+      await covenSession.start(branchName);
+      ctx.logger.info('Session started', { branchName });
+    }
+  } catch (err) {
+    ctx.logger.error('Failed to start session', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await vscode.window.showErrorMessage(
+      `Coven: Failed to start session: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
-function stopSession(): void {
+async function stopSession(): Promise<void> {
   const ctx = ExtensionContext.get();
-  if (ctx.statusBarItem) {
-    ctx.statusBarItem.text = '$(circle-outline) Coven: Inactive';
+
+  if (!covenSession || covenSession.getStatus() === 'inactive') {
+    await vscode.window.showInformationMessage('Coven: No active session to stop');
+    return;
   }
-  sessionsProvider.refresh();
+
+  const confirm = await vscode.window.showWarningMessage(
+    'Stop the current Coven session? Active agents will be terminated.',
+    { modal: true },
+    'Stop Session'
+  );
+
+  if (confirm !== 'Stop Session') {
+    return;
+  }
+
+  try {
+    await covenSession.stop();
+    ctx.logger.info('Session stopped');
+  } catch (err) {
+    ctx.logger.error('Failed to stop session', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await vscode.window.showErrorMessage(
+      `Coven: Failed to stop session: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 async function showSetup(): Promise<void> {
   const ctx = ExtensionContext.get();
-  await SetupPanel.createOrShow(ctx.extensionUri);
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  await SetupPanel.createOrShow(ctx.extensionUri, workspaceRoot, handleSessionBegin);
+}
+
+async function handleSessionBegin(
+  branchName: string,
+  config: { maxConcurrentAgents: number; worktreeBasePath: string; autoApprove: boolean }
+): Promise<void> {
+  const ctx = ExtensionContext.get();
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  if (!workspaceRoot) {
+    await vscode.window.showErrorMessage('Coven: No workspace folder open');
+    return;
+  }
+
+  try {
+    // Initialize session if not already done
+    if (!covenSession) {
+      await initializeSession(workspaceRoot);
+    }
+
+    if (covenSession) {
+      // Apply config to session before starting
+      await covenSession.updateConfig({
+        maxConcurrentAgents: config.maxConcurrentAgents,
+        worktreeBasePath: config.worktreeBasePath,
+      });
+
+      await covenSession.start(branchName);
+      ctx.logger.info('Session started from setup panel', { branchName, config });
+    }
+  } catch (err) {
+    ctx.logger.error('Failed to start session from setup', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
+function revealSidebar(): void {
+  void vscode.commands.executeCommand('coven.sessions.focus');
+}
+
+function showTaskDetail(taskId: string): void {
+  // Task detail panel - will be implemented in add-task-detail-view
+  void vscode.window.showInformationMessage(`Task detail: ${taskId} (not yet implemented)`);
+}
+
+function viewFamiliarOutput(taskId: string): void {
+  // Familiar output - will be implemented in add-agent-interaction
+  void vscode.window.showInformationMessage(`Familiar output: ${taskId} (not yet implemented)`);
+}
+
+async function createTask(): Promise<void> {
+  // Create task dialog - will be implemented in add-task-detail-view
+  const title = await vscode.window.showInputBox({
+    prompt: 'Enter task title',
+    placeHolder: 'Fix login bug',
+  });
+
+  if (!title) {
+    return;
+  }
+
+  if (!covenSession) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  const taskManager = covenSession.getTaskManager();
+  taskManager.createTask({
+    title,
+    description: '',
+    priority: 'medium',
+    sourceId: 'manual',
+  });
+}
+
+async function startTask(taskId: string): Promise<void> {
+  if (!covenSession) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  try {
+    const taskManager = covenSession.getTaskManager();
+    taskManager.transitionStatus(taskId, 'working');
+    // Agent spawning will be implemented in add-claude-agent-integration
+    void vscode.window.showInformationMessage(`Started task: ${taskId} (agent spawning not yet implemented)`);
+  } catch (err) {
+    await vscode.window.showErrorMessage(
+      `Failed to start task: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+async function stopTask(taskId: string): Promise<void> {
+  if (!covenSession) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  const confirm = await vscode.window.showWarningMessage(
+    'Stop this task? The agent will be terminated.',
+    { modal: true },
+    'Stop Task'
+  );
+
+  if (confirm !== 'Stop Task') {
+    return;
+  }
+
+  try {
+    const taskManager = covenSession.getTaskManager();
+    taskManager.transitionStatus(taskId, 'ready');
+    // Agent termination will be implemented in add-claude-agent-integration
+  } catch (err) {
+    await vscode.window.showErrorMessage(
+      `Failed to stop task: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+function refreshTasks(): void {
+  grimoireProvider.refresh();
 }
