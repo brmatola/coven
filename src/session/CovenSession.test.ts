@@ -21,6 +21,38 @@ vi.mock('fs', async () => {
   };
 });
 
+// Mock GitCLI to prevent real git commands
+vi.mock('../git/GitCLI', () => ({
+  GitCLI: vi.fn().mockImplementation(() => ({
+    listWorktrees: vi.fn().mockResolvedValue([]),
+    createWorktree: vi.fn().mockResolvedValue({
+      path: '/test/worktree',
+      branch: 'test-branch',
+      head: 'abc123',
+      isMain: false,
+      isBare: false,
+    }),
+    deleteWorktree: vi.fn().mockResolvedValue(undefined),
+    merge: vi.fn().mockResolvedValue({ success: true, conflicts: [], mergedFiles: [] }),
+    getStatus: vi.fn().mockResolvedValue({
+      staged: [],
+      modified: [],
+      untracked: [],
+      deleted: [],
+      branch: 'main',
+      ahead: 0,
+      behind: 0,
+    }),
+    isAvailable: vi.fn().mockResolvedValue(true),
+  })),
+  GitCLIError: class extends Error {
+    constructor(message: string, public cause?: unknown) {
+      super(message);
+      this.name = 'GitCLIError';
+    }
+  },
+}));
+
 // Mock BeadsClient to return empty tasks
 vi.mock('../tasks/BeadsClient', () => ({
   BeadsClient: vi.fn().mockImplementation(() => ({

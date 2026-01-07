@@ -257,6 +257,13 @@ export interface SessionEvents {
   'orphan:uncommittedChanges': { taskId: string; worktreePath: string };
   'orphan:cleanedUp': { taskId: string };
 
+  // Worktree events
+  'worktree:created': { taskId: string; worktree: { path: string; branch: string } };
+  'worktree:deleted': { taskId: string; path: string };
+  'worktree:merged': { taskId: string; result: { success: boolean; conflicts: unknown[] } };
+  'worktree:conflict': { taskId: string; conflicts: unknown[] };
+  'worktree:orphan': { path: string; branch: string };
+
   // Config events
   'config:changed': { config: SessionConfig };
 

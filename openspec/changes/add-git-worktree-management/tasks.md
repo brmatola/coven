@@ -1,5 +1,10 @@
 # Tasks: Add Git Worktree Management
 
+## Implementation
+Epic: `coven-zxt` (add-git-worktree-management)
+Track progress: `bd epic status coven-zxt`
+List tasks: `bd list --parent coven-zxt`
+
 ## 1. GitProvider Interface
 - [ ] 1.1 Define `GitProvider` interface with worktree, branch, and diff operations
 - [ ] 1.2 Define `Worktree` interface (path, branch, isMain)

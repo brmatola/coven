@@ -1,9 +1,12 @@
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 import { FamiliarManager } from '../agents/FamiliarManager';
 import { OrphanRecovery, OrphanState } from './OrphanRecovery';
+import { WorktreeManager } from '../git/WorktreeManager';
+import { Worktree } from '../git/types';
 import {
   CovenState,
   SessionConfig,
@@ -28,11 +31,13 @@ export class CovenSession extends EventEmitter {
   private beadsTaskSource: BeadsTaskSource;
   private familiarManager: FamiliarManager;
   private orphanRecovery: OrphanRecovery;
+  private worktreeManager: WorktreeManager;
   private workspaceRoot: string;
   private covenDir: string;
   private sessionFilePath: string;
   private configFilePath: string;
   private configWatcher: fs.FSWatcher | null = null;
+  private sessionId: string;
 
   constructor(workspaceRoot: string) {
     super();
@@ -41,11 +46,17 @@ export class CovenSession extends EventEmitter {
     this.sessionFilePath = path.join(this.covenDir, 'session.json');
     this.configFilePath = path.join(this.covenDir, 'config.json');
     this.config = { ...DEFAULT_SESSION_CONFIG };
+    this.sessionId = randomBytes(8).toString('hex');
     this.beadsTaskSource = new BeadsTaskSource(workspaceRoot, {
       syncIntervalMs: this.config.beadsSyncIntervalMs,
       autoWatch: false, // We'll start watching when session starts
     });
     this.familiarManager = new FamiliarManager(workspaceRoot, this.config);
+    this.worktreeManager = new WorktreeManager(
+      workspaceRoot,
+      this.config.worktreeBasePath,
+      this.sessionId
+    );
     this.orphanRecovery = new OrphanRecovery(
       workspaceRoot,
       this.config.worktreeBasePath,
@@ -62,8 +73,10 @@ export class CovenSession extends EventEmitter {
     await this.ensureCovenDir();
     await this.loadConfig();
     await this.familiarManager.initialize();
+    await this.worktreeManager.initialize();
     await this.loadSession();
     this.watchConfigFile();
+    this.setupWorktreeEventForwarding();
 
     // Check if Beads is available
     const beadsAvailable = await this.beadsTaskSource.isAvailable();
@@ -109,6 +122,27 @@ export class CovenSession extends EventEmitter {
     });
     this.orphanRecovery.on('orphan:cleanedUp', (event) => {
       this.emit('orphan:cleanedUp', event);
+    });
+  }
+
+  private setupWorktreeEventForwarding(): void {
+    this.worktreeManager.on('worktree:created', (event) => {
+      this.emit('worktree:created', event);
+      this.emitStateChange();
+    });
+    this.worktreeManager.on('worktree:deleted', (event) => {
+      this.emit('worktree:deleted', event);
+      this.emitStateChange();
+    });
+    this.worktreeManager.on('worktree:merged', (event) => {
+      this.emit('worktree:merged', event);
+      this.emitStateChange();
+    });
+    this.worktreeManager.on('worktree:conflict', (event) => {
+      this.emit('worktree:conflict', event);
+    });
+    this.worktreeManager.on('worktree:orphan', (event) => {
+      this.emit('worktree:orphan', event);
     });
   }
 
@@ -277,6 +311,44 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
+   * Create a worktree for a task.
+   * Returns the created worktree with its isolated working directory.
+   */
+  async createWorktreeForTask(taskId: string): Promise<Worktree> {
+    if (!this.featureBranch) {
+      throw new Error('Cannot create worktree without an active session');
+    }
+    return this.worktreeManager.createForTask(taskId, this.featureBranch);
+  }
+
+  /**
+   * Get the worktree for a task if it exists.
+   */
+  getWorktreeForTask(taskId: string): Worktree | undefined {
+    return this.worktreeManager.getWorktree(taskId);
+  }
+
+  /**
+   * Merge a task's worktree back to the feature branch and clean up.
+   */
+  async mergeAndCleanupWorktree(taskId: string): Promise<void> {
+    if (!this.featureBranch) {
+      throw new Error('Cannot merge worktree without an active session');
+    }
+    const result = await this.worktreeManager.mergeToFeature(taskId, this.featureBranch);
+    if (result.success) {
+      await this.worktreeManager.cleanupForTask(taskId);
+    }
+  }
+
+  /**
+   * Get the WorktreeManager instance.
+   */
+  getWorktreeManager(): WorktreeManager {
+    return this.worktreeManager;
+  }
+
+  /**
    * Get the BeadsTaskSource instance.
    */
   getBeadsTaskSource(): BeadsTaskSource {
@@ -307,6 +379,7 @@ export class CovenSession extends EventEmitter {
     }
     this.beadsTaskSource.dispose();
     this.familiarManager.dispose();
+    this.worktreeManager.dispose();
     this.removeAllListeners();
   }
 
