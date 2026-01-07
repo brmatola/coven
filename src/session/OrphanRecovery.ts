@@ -143,12 +143,14 @@ export class OrphanRecovery extends EventEmitter {
 
   /**
    * Verify that a running process matches our expected process.
+   * Checks both the command name and process start time.
    */
   private async verifyProcess(processInfo: ProcessInfo): Promise<boolean> {
     try {
       // On macOS/Linux, use ps to get process info
+      // Format: etime (elapsed time in seconds), command
       const { stdout } = await execAsync(
-        `ps -p ${processInfo.pid} -o lstart=,command=`
+        `ps -p ${processInfo.pid} -o etimes=,command=`
       );
 
       // Check if command contains "claude"
@@ -156,8 +158,20 @@ export class OrphanRecovery extends EventEmitter {
         return false;
       }
 
-      // Note: Full start time verification would require parsing the ps output
-      // For now, command matching is sufficient as a heuristic
+      // Parse elapsed time to verify start time
+      const match = stdout.trim().match(/^\s*(\d+)\s+/);
+      if (match) {
+        const elapsedSeconds = parseInt(match[1], 10);
+        const estimatedStartTime = Date.now() - elapsedSeconds * 1000;
+
+        // Allow 5 second tolerance for timing differences
+        const timeDiff = Math.abs(estimatedStartTime - processInfo.startTime);
+        if (timeDiff > 5000) {
+          // Start time doesn't match - different process reusing PID
+          return false;
+        }
+      }
+
       return true;
     } catch {
       return false;

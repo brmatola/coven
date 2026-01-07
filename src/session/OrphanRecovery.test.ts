@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
+import * as child_process from 'child_process';
 import { OrphanRecovery } from './OrphanRecovery';
 import { FamiliarManager } from '../agents/FamiliarManager';
 import { TaskManager } from '../tasks/TaskManager';
@@ -14,10 +15,19 @@ vi.mock('fs', async () => {
       mkdir: vi.fn().mockResolvedValue(undefined),
       readdir: vi.fn().mockResolvedValue([]),
       readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      unlink: vi.fn().mockResolvedValue(undefined),
       rm: vi.fn().mockResolvedValue(undefined),
     },
-    writeFileSync: vi.fn(),
-    unlinkSync: vi.fn(),
+  };
+});
+
+// Mock child_process.exec
+vi.mock('child_process', async () => {
+  const actual = await vi.importActual<typeof import('child_process')>('child_process');
+  return {
+    ...actual,
+    exec: vi.fn(),
   };
 });
 
@@ -82,19 +92,90 @@ describe('OrphanRecovery', () => {
   });
 
   describe('hasUncommittedChanges', () => {
-    it('should return false when mocked', async () => {
-      // Since we can't easily mock promisified exec, we test via spying
-      vi.spyOn(orphanRecovery, 'hasUncommittedChanges').mockResolvedValue(true);
+    it('should return true when git status has output', async () => {
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          if (callback) {
+            callback(null, { stdout: 'M  file.txt\n', stderr: '' });
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
       const result = await orphanRecovery.hasUncommittedChanges('/test/worktree');
       expect(result).toBe(true);
+    });
+
+    it('should return false when git status is empty', async () => {
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          if (callback) {
+            callback(null, { stdout: '', stderr: '' });
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
+      const result = await orphanRecovery.hasUncommittedChanges('/test/worktree');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when git command fails', async () => {
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          if (callback) {
+            callback(new Error('Not a git repo'), { stdout: '', stderr: '' });
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
+      const result = await orphanRecovery.hasUncommittedChanges('/test/worktree');
+      expect(result).toBe(false);
     });
   });
 
   describe('hasUnmergedCommits', () => {
-    it('should return value when mocked', async () => {
-      vi.spyOn(orphanRecovery, 'hasUnmergedCommits').mockResolvedValue(true);
+    it('should return true when there are commits ahead', async () => {
+      let callCount = 0;
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          callCount++;
+          if (callback) {
+            if (callCount === 1) {
+              // First call: git rev-parse --abbrev-ref HEAD
+              callback(null, { stdout: 'feature-branch\n', stderr: '' });
+            } else {
+              // Second call: git log origin/branch..HEAD
+              callback(null, { stdout: 'abc123 commit message\n', stderr: '' });
+            }
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
       const result = await orphanRecovery.hasUnmergedCommits('/test/worktree');
       expect(result).toBe(true);
+    });
+
+    it('should return false when no commits ahead', async () => {
+      let callCount = 0;
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          callCount++;
+          if (callback) {
+            if (callCount === 1) {
+              callback(null, { stdout: 'main\n', stderr: '' });
+            } else {
+              callback(null, { stdout: '', stderr: '' });
+            }
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
+      const result = await orphanRecovery.hasUnmergedCommits('/test/worktree');
+      expect(result).toBe(false);
     });
   });
 
@@ -121,11 +202,39 @@ describe('OrphanRecovery', () => {
   });
 
   describe('cleanupWorktree', () => {
-    it('should attempt cleanup without error', async () => {
-      // The cleanupWorktree method handles errors gracefully
-      // We can test by spying and verifying no exception propagates
-      vi.spyOn(orphanRecovery, 'cleanupWorktree').mockResolvedValue();
-      await expect(orphanRecovery.cleanupWorktree('/test/worktree')).resolves.toBeUndefined();
+    it('should call git worktree remove', async () => {
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          if (callback) {
+            callback(null, { stdout: '', stderr: '' });
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
+      await orphanRecovery.cleanupWorktree('/test/worktree');
+
+      expect(child_process.exec).toHaveBeenCalledWith(
+        expect.stringContaining('git worktree remove'),
+        expect.any(Object),
+        expect.any(Function)
+      );
+    });
+
+    it('should fallback to rm if git worktree remove fails', async () => {
+      vi.mocked(child_process.exec).mockImplementation(
+        (_cmd: string, _opts: child_process.ExecOptions | undefined, callback?: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+          if (callback) {
+            callback(new Error('worktree not found'), { stdout: '', stderr: '' });
+          }
+          return {} as child_process.ChildProcess;
+        }
+      );
+
+      await orphanRecovery.cleanupWorktree('/test/worktree');
+
+      // Should try rm as fallback
+      expect(fs.promises.rm).toHaveBeenCalledWith('/test/worktree', { recursive: true, force: true });
     });
   });
 

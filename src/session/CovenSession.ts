@@ -3,12 +3,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TaskManager } from '../tasks/TaskManager';
 import { FamiliarManager } from '../agents/FamiliarManager';
+import { OrphanRecovery, OrphanState } from './OrphanRecovery';
 import {
   CovenState,
   SessionConfig,
   SessionStatus,
   SessionEvents,
   DEFAULT_SESSION_CONFIG,
+  validateSessionConfig,
 } from '../shared/types';
 
 /**
@@ -22,6 +24,8 @@ export class CovenSession extends EventEmitter {
   private config: SessionConfig;
   private taskManager: TaskManager;
   private familiarManager: FamiliarManager;
+  private orphanRecovery: OrphanRecovery;
+  private workspaceRoot: string;
   private covenDir: string;
   private sessionFilePath: string;
   private configFilePath: string;
@@ -29,12 +33,19 @@ export class CovenSession extends EventEmitter {
 
   constructor(workspaceRoot: string) {
     super();
+    this.workspaceRoot = workspaceRoot;
     this.covenDir = path.join(workspaceRoot, '.coven');
     this.sessionFilePath = path.join(this.covenDir, 'session.json');
     this.configFilePath = path.join(this.covenDir, 'config.json');
     this.config = { ...DEFAULT_SESSION_CONFIG };
     this.taskManager = new TaskManager(workspaceRoot);
     this.familiarManager = new FamiliarManager(workspaceRoot, this.config);
+    this.orphanRecovery = new OrphanRecovery(
+      workspaceRoot,
+      this.config.worktreeBasePath,
+      this.familiarManager,
+      this.taskManager
+    );
     this.setupEventForwarding();
   }
 
@@ -48,6 +59,44 @@ export class CovenSession extends EventEmitter {
     await this.familiarManager.initialize();
     await this.loadSession();
     this.watchConfigFile();
+
+    // Perform orphan recovery if session was active
+    if (this.status === 'active') {
+      await this.recoverOrphans();
+    }
+  }
+
+  /**
+   * Perform orphan recovery for familiars from a previous session.
+   * Returns the recovery results for each orphaned familiar.
+   */
+  async recoverOrphans(): Promise<OrphanState[]> {
+    this.setupOrphanRecoveryEvents();
+    return this.orphanRecovery.recover();
+  }
+
+  /**
+   * Set up event forwarding from orphan recovery.
+   */
+  private setupOrphanRecoveryEvents(): void {
+    this.orphanRecovery.on('orphan:reconnecting', (event) => {
+      this.emit('orphan:reconnecting', event);
+    });
+    this.orphanRecovery.on('orphan:reconnected', (event) => {
+      this.emit('orphan:reconnected', event);
+      this.emitStateChange();
+    });
+    this.orphanRecovery.on('orphan:needsReview', (event) => {
+      this.emit('orphan:needsReview', event);
+      this.emitStateChange();
+    });
+    this.orphanRecovery.on('orphan:uncommittedChanges', (event) => {
+      this.emit('orphan:uncommittedChanges', event);
+      this.emitStateChange();
+    });
+    this.orphanRecovery.on('orphan:cleanedUp', (event) => {
+      this.emit('orphan:cleanedUp', event);
+    });
   }
 
   /**
@@ -76,10 +125,48 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
+   * Pause the current session.
+   * Paused sessions don't spawn new agents but keep existing ones running.
+   */
+  async pause(): Promise<void> {
+    if (this.status !== 'active') {
+      return;
+    }
+
+    this.status = 'paused';
+    await this.persistSession();
+
+    this.emit('session:paused', undefined satisfies SessionEvents['session:paused']);
+    this.emitStateChange();
+  }
+
+  /**
+   * Resume a paused session.
+   */
+  async resume(): Promise<void> {
+    if (this.status !== 'paused') {
+      return;
+    }
+
+    this.status = 'active';
+    await this.persistSession();
+
+    this.emit('session:resumed', undefined satisfies SessionEvents['session:resumed']);
+    this.emitStateChange();
+  }
+
+  /**
+   * Check if the session is paused.
+   */
+  isPaused(): boolean {
+    return this.status === 'paused';
+  }
+
+  /**
    * Stop the current session.
    */
   async stop(): Promise<void> {
-    if (this.status !== 'active') {
+    if (this.status !== 'active' && this.status !== 'paused') {
       return;
     }
 
@@ -271,9 +358,9 @@ worktrees/
   private async loadConfig(): Promise<void> {
     try {
       const data = await fs.promises.readFile(this.configFilePath, 'utf-8');
-      const loaded = JSON.parse(data) as Partial<SessionConfig>;
-      // Merge with defaults to handle missing fields
-      this.config = { ...DEFAULT_SESSION_CONFIG, ...loaded };
+      const parsed: unknown = JSON.parse(data);
+      // Validate and merge with defaults for any missing/invalid fields
+      this.config = validateSessionConfig(parsed);
     } catch {
       // File doesn't exist, use defaults and create it
       this.config = { ...DEFAULT_SESSION_CONFIG };

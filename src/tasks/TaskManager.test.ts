@@ -11,8 +11,8 @@ vi.mock('fs', async () => {
     promises: {
       mkdir: vi.fn().mockResolvedValue(undefined),
       readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      writeFile: vi.fn().mockResolvedValue(undefined),
     },
-    writeFileSync: vi.fn(),
   };
 });
 
@@ -309,6 +309,18 @@ describe('TaskManager', () => {
       expect(updated.status).toBe('working');
     });
 
+    it('should allow working to ready (agent gave up)', () => {
+      const task = taskManager.createTask({
+        title: 'Test',
+        description: 'Test',
+        sourceId: 'manual',
+      });
+
+      taskManager.transitionStatus(task.id, 'working');
+      const updated = taskManager.transitionStatus(task.id, 'ready');
+      expect(updated.status).toBe('ready');
+    });
+
     it('should unblock dependent tasks when dependency completes', () => {
       const dep = taskManager.createTask({
         title: 'Dependency',
@@ -525,17 +537,34 @@ describe('TaskManager', () => {
   });
 
   describe('persistence', () => {
-    it('should call writeFileSync on task creation', () => {
+    it('should call async writeFile on task creation after flush', async () => {
       taskManager.createTask({
         title: 'Test',
         description: 'Test',
         sourceId: 'manual',
       });
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
+      // Flush pending writes
+      await taskManager.flush();
+
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
         path.join(workspaceRoot, '.coven', 'tasks.json'),
         expect.any(String)
       );
+    });
+
+    it('should debounce multiple rapid writes', async () => {
+      vi.mocked(fs.promises.writeFile).mockClear();
+
+      // Create multiple tasks rapidly
+      taskManager.createTask({ title: 'Task 1', description: 'T1', sourceId: 'manual' });
+      taskManager.createTask({ title: 'Task 2', description: 'T2', sourceId: 'manual' });
+      taskManager.createTask({ title: 'Task 3', description: 'T3', sourceId: 'manual' });
+
+      // Flush and check that only one write occurred
+      await taskManager.flush();
+
+      expect(fs.promises.writeFile).toHaveBeenCalledTimes(1);
     });
   });
 });

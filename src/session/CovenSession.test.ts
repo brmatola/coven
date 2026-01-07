@@ -15,9 +15,8 @@ vi.mock('fs', async () => {
       writeFile: vi.fn().mockResolvedValue(undefined),
       readdir: vi.fn().mockResolvedValue([]),
       access: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      unlink: vi.fn().mockResolvedValue(undefined),
     },
-    writeFileSync: vi.fn(),
-    unlinkSync: vi.fn(),
     watch: vi.fn().mockReturnValue({ close: vi.fn() }),
   };
 });
@@ -114,6 +113,72 @@ describe('CovenSession', () => {
     });
   });
 
+  describe('pause', () => {
+    it('should pause an active session', async () => {
+      await session.start('feature/test');
+      await session.pause();
+
+      expect(session.getStatus()).toBe('paused');
+      expect(session.isPaused()).toBe(true);
+      expect(session.isActive()).toBe(false);
+    });
+
+    it('should emit session:paused event', async () => {
+      await session.start('feature/test');
+
+      const handler = vi.fn();
+      session.on('session:paused', handler);
+
+      await session.pause();
+
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should do nothing if session is not active', async () => {
+      const handler = vi.fn();
+      session.on('session:paused', handler);
+
+      await session.pause();
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resume', () => {
+    it('should resume a paused session', async () => {
+      await session.start('feature/test');
+      await session.pause();
+      await session.resume();
+
+      expect(session.getStatus()).toBe('active');
+      expect(session.isPaused()).toBe(false);
+      expect(session.isActive()).toBe(true);
+    });
+
+    it('should emit session:resumed event', async () => {
+      await session.start('feature/test');
+      await session.pause();
+
+      const handler = vi.fn();
+      session.on('session:resumed', handler);
+
+      await session.resume();
+
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should do nothing if session is not paused', async () => {
+      await session.start('feature/test');
+
+      const handler = vi.fn();
+      session.on('session:resumed', handler);
+
+      await session.resume();
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
   describe('stop', () => {
     it('should stop an active session', async () => {
       await session.start('feature/test');
@@ -122,6 +187,15 @@ describe('CovenSession', () => {
       expect(session.getStatus()).toBe('inactive');
       expect(session.getFeatureBranch()).toBeNull();
       expect(session.isActive()).toBe(false);
+    });
+
+    it('should stop a paused session', async () => {
+      await session.start('feature/test');
+      await session.pause();
+      await session.stop();
+
+      expect(session.getStatus()).toBe('inactive');
+      expect(session.getFeatureBranch()).toBeNull();
     });
 
     it('should emit session:stopping and session:stopped events', async () => {
@@ -139,7 +213,7 @@ describe('CovenSession', () => {
       expect(stoppedHandler).toHaveBeenCalled();
     });
 
-    it('should do nothing if session is not active', async () => {
+    it('should do nothing if session is not active or paused', async () => {
       const stoppingHandler = vi.fn();
       session.on('session:stopping', stoppingHandler);
 

@@ -126,7 +126,7 @@ export interface PendingQuestion {
 /**
  * Session lifecycle states.
  */
-export type SessionStatus = 'inactive' | 'starting' | 'active' | 'stopping';
+export type SessionStatus = 'inactive' | 'starting' | 'active' | 'paused' | 'stopping';
 
 /**
  * Notification level for different event types.
@@ -231,6 +231,8 @@ export interface SessionEvents {
   // Session lifecycle
   'session:starting': { featureBranch: string };
   'session:started': { featureBranch: string };
+  'session:paused': undefined;
+  'session:resumed': undefined;
   'session:stopping': undefined;
   'session:stopped': undefined;
   'session:error': { error: Error };
@@ -247,6 +249,13 @@ export interface SessionEvents {
   'familiar:output': { familiarId: string; line: string };
   'familiar:terminated': { familiarId: string; reason: string };
   'familiar:question': { question: PendingQuestion };
+
+  // Orphan recovery events
+  'orphan:reconnecting': { taskId: string };
+  'orphan:reconnected': { taskId: string };
+  'orphan:needsReview': { taskId: string };
+  'orphan:uncommittedChanges': { taskId: string; worktreePath: string };
+  'orphan:cleanedUp': { taskId: string };
 
   // Config events
   'config:changed': { config: SessionConfig };
@@ -272,4 +281,160 @@ export const VALID_TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
  */
 export function isValidTaskTransition(from: TaskStatus, to: TaskStatus): boolean {
   return VALID_TASK_TRANSITIONS[from].includes(to);
+}
+
+// ============================================================================
+// Validation Helpers
+// ============================================================================
+
+const TASK_STATUSES: TaskStatus[] = ['ready', 'working', 'review', 'done', 'blocked'];
+const TASK_PRIORITIES: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
+const FAMILIAR_STATUSES: FamiliarStatus[] = ['working', 'waiting', 'merging', 'complete', 'failed'];
+
+/**
+ * Validate that a value is a valid Task object.
+ * Returns the task if valid, null if invalid.
+ */
+export function validateTask(value: unknown): Task | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const obj = value as Record<string, unknown>;
+
+  // Required string fields
+  if (typeof obj.id !== 'string' || !obj.id) return null;
+  if (typeof obj.title !== 'string') return null;
+  if (typeof obj.description !== 'string') return null;
+  if (typeof obj.sourceId !== 'string') return null;
+
+  // Required status field
+  if (!TASK_STATUSES.includes(obj.status as TaskStatus)) return null;
+
+  // Required priority field
+  if (!TASK_PRIORITIES.includes(obj.priority as TaskPriority)) return null;
+
+  // Required dependencies array
+  if (!Array.isArray(obj.dependencies)) return null;
+  if (!obj.dependencies.every((d) => typeof d === 'string')) return null;
+
+  // Required timestamp fields
+  if (typeof obj.createdAt !== 'number') return null;
+  if (typeof obj.updatedAt !== 'number') return null;
+
+  // Optional fields
+  if (obj.acceptanceCriteria !== undefined && typeof obj.acceptanceCriteria !== 'string') return null;
+  if (obj.externalId !== undefined && typeof obj.externalId !== 'string') return null;
+
+  return value as Task;
+}
+
+/**
+ * Validate that a value is a valid Familiar object.
+ * Returns the familiar if valid, null if invalid.
+ */
+export function validateFamiliar(value: unknown): Familiar | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const obj = value as Record<string, unknown>;
+
+  // Required fields
+  if (typeof obj.taskId !== 'string' || !obj.taskId) return null;
+  if (!FAMILIAR_STATUSES.includes(obj.status as FamiliarStatus)) return null;
+  if (typeof obj.spawnedAt !== 'number') return null;
+  if (!Array.isArray(obj.outputBuffer)) return null;
+
+  // Validate processInfo
+  if (!obj.processInfo || typeof obj.processInfo !== 'object') return null;
+  const processInfo = obj.processInfo as Record<string, unknown>;
+  if (typeof processInfo.pid !== 'number') return null;
+  if (typeof processInfo.startTime !== 'number') return null;
+  if (typeof processInfo.command !== 'string') return null;
+  if (typeof processInfo.worktreePath !== 'string') return null;
+
+  return value as Familiar;
+}
+
+/**
+ * Validate that a value is a valid SessionConfig object.
+ * Returns the merged config with defaults for missing fields.
+ */
+export function validateSessionConfig(value: unknown): SessionConfig {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_SESSION_CONFIG };
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  return {
+    maxConcurrentAgents:
+      typeof obj.maxConcurrentAgents === 'number'
+        ? obj.maxConcurrentAgents
+        : DEFAULT_SESSION_CONFIG.maxConcurrentAgents,
+    worktreeBasePath:
+      typeof obj.worktreeBasePath === 'string'
+        ? obj.worktreeBasePath
+        : DEFAULT_SESSION_CONFIG.worktreeBasePath,
+    beadsSyncIntervalMs:
+      typeof obj.beadsSyncIntervalMs === 'number'
+        ? obj.beadsSyncIntervalMs
+        : DEFAULT_SESSION_CONFIG.beadsSyncIntervalMs,
+    agentTimeoutMs:
+      typeof obj.agentTimeoutMs === 'number'
+        ? obj.agentTimeoutMs
+        : DEFAULT_SESSION_CONFIG.agentTimeoutMs,
+    mergeConflictMaxRetries:
+      typeof obj.mergeConflictMaxRetries === 'number'
+        ? obj.mergeConflictMaxRetries
+        : DEFAULT_SESSION_CONFIG.mergeConflictMaxRetries,
+    preMergeChecks: {
+      enabled:
+        typeof (obj.preMergeChecks as Record<string, unknown>)?.enabled === 'boolean'
+          ? (obj.preMergeChecks as Record<string, unknown>).enabled as boolean
+          : DEFAULT_SESSION_CONFIG.preMergeChecks.enabled,
+      commands: Array.isArray((obj.preMergeChecks as Record<string, unknown>)?.commands)
+        ? ((obj.preMergeChecks as Record<string, unknown>).commands as string[])
+        : DEFAULT_SESSION_CONFIG.preMergeChecks.commands,
+    },
+    logging: {
+      level:
+        ['debug', 'info', 'warn', 'error'].includes(
+          (obj.logging as Record<string, unknown>)?.level as string
+        )
+          ? ((obj.logging as Record<string, unknown>).level as 'debug' | 'info' | 'warn' | 'error')
+          : DEFAULT_SESSION_CONFIG.logging.level,
+      retentionDays:
+        typeof (obj.logging as Record<string, unknown>)?.retentionDays === 'number'
+          ? ((obj.logging as Record<string, unknown>).retentionDays as number)
+          : DEFAULT_SESSION_CONFIG.logging.retentionDays,
+    },
+    outputRetentionDays:
+      typeof obj.outputRetentionDays === 'number'
+        ? obj.outputRetentionDays
+        : DEFAULT_SESSION_CONFIG.outputRetentionDays,
+    notifications: {
+      questions:
+        ['modal', 'toast', 'statusbar', 'none'].includes(
+          (obj.notifications as Record<string, unknown>)?.questions as string
+        )
+          ? ((obj.notifications as Record<string, unknown>).questions as NotificationLevel)
+          : DEFAULT_SESSION_CONFIG.notifications.questions,
+      completions:
+        ['modal', 'toast', 'statusbar', 'none'].includes(
+          (obj.notifications as Record<string, unknown>)?.completions as string
+        )
+          ? ((obj.notifications as Record<string, unknown>).completions as NotificationLevel)
+          : DEFAULT_SESSION_CONFIG.notifications.completions,
+      conflicts:
+        ['modal', 'toast', 'statusbar', 'none'].includes(
+          (obj.notifications as Record<string, unknown>)?.conflicts as string
+        )
+          ? ((obj.notifications as Record<string, unknown>).conflicts as NotificationLevel)
+          : DEFAULT_SESSION_CONFIG.notifications.conflicts,
+      errors:
+        ['modal', 'toast', 'statusbar', 'none'].includes(
+          (obj.notifications as Record<string, unknown>)?.errors as string
+        )
+          ? ((obj.notifications as Record<string, unknown>).errors as NotificationLevel)
+          : DEFAULT_SESSION_CONFIG.notifications.errors,
+    },
+  };
 }

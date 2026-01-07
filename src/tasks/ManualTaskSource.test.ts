@@ -10,8 +10,8 @@ vi.mock('fs', async () => {
     promises: {
       mkdir: vi.fn().mockResolvedValue(undefined),
       readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      writeFile: vi.fn().mockResolvedValue(undefined),
     },
-    writeFileSync: vi.fn(),
   };
 });
 

@@ -6,6 +6,7 @@ import {
   TaskStatus,
   TaskPriority,
   isValidTaskTransition,
+  validateTask,
   SessionEvents,
 } from '../shared/types';
 
@@ -17,6 +18,8 @@ export class TaskManager extends EventEmitter {
   private tasks: Map<string, Task> = new Map();
   private covenDir: string;
   private tasksFilePath: string;
+  private persistTimeout: ReturnType<typeof setTimeout> | null = null;
+  private persistPromise: Promise<void> | null = null;
 
   constructor(workspaceRoot: string) {
     super();
@@ -284,6 +287,10 @@ export class TaskManager extends EventEmitter {
    * Dispose of resources.
    */
   dispose(): void {
+    if (this.persistTimeout) {
+      clearTimeout(this.persistTimeout);
+      this.persistTimeout = null;
+    }
     this.removeAllListeners();
   }
 
@@ -311,6 +318,7 @@ export class TaskManager extends EventEmitter {
 
   private checkUnblockedTasks(): void {
     const blockedTasks = this.getTasksByStatus('blocked');
+    let anyUnblocked = false;
 
     for (const task of blockedTasks) {
       const allDepsComplete = task.dependencies.every((depId) => {
@@ -326,10 +334,15 @@ export class TaskManager extends EventEmitter {
         };
         this.tasks.set(task.id, updatedTask);
         this.emit('task:unblocked', { task: updatedTask } satisfies SessionEvents['task:unblocked']);
+        anyUnblocked = true;
       }
     }
 
-    this.persistTasks();
+    // Only persist if we actually unblocked something
+    // (callers already persist for their own changes)
+    if (anyUnblocked) {
+      this.persistTasks();
+    }
   }
 
   private wouldCreateCycle(taskId: string, dependsOnId: string): boolean {
@@ -367,10 +380,26 @@ export class TaskManager extends EventEmitter {
   private async loadTasks(): Promise<void> {
     try {
       const data = await fs.promises.readFile(this.tasksFilePath, 'utf-8');
-      const tasksArray = JSON.parse(data) as Task[];
+      const parsed: unknown = JSON.parse(data);
+
+      if (!Array.isArray(parsed)) {
+        throw new Error('Tasks file is not an array');
+      }
+
       this.tasks.clear();
-      for (const task of tasksArray) {
-        this.tasks.set(task.id, task);
+      let skipped = 0;
+
+      for (const item of parsed) {
+        const task = validateTask(item);
+        if (task) {
+          this.tasks.set(task.id, task);
+        } else {
+          skipped++;
+        }
+      }
+
+      if (skipped > 0) {
+        this.emit('error', new Error(`Skipped ${skipped} invalid tasks during load`));
       }
     } catch {
       // File doesn't exist or is invalid, start with empty tasks
@@ -378,12 +407,49 @@ export class TaskManager extends EventEmitter {
     }
   }
 
+  /**
+   * Schedule an async persist with debouncing.
+   * Multiple rapid changes will be batched into a single write.
+   */
   private persistTasks(): void {
+    // Clear any pending timeout
+    if (this.persistTimeout) {
+      clearTimeout(this.persistTimeout);
+    }
+
+    // Debounce writes by 10ms to batch rapid changes
+    this.persistTimeout = setTimeout(() => {
+      this.persistTimeout = null;
+      this.persistPromise = this.doPersist();
+      this.persistPromise.catch((error) => {
+        this.emit('error', error);
+      });
+    }, 10);
+  }
+
+  /**
+   * Actually write tasks to disk.
+   */
+  private async doPersist(): Promise<void> {
     const tasksArray = Array.from(this.tasks.values());
     try {
-      fs.writeFileSync(this.tasksFilePath, JSON.stringify(tasksArray, null, 2));
+      await fs.promises.writeFile(this.tasksFilePath, JSON.stringify(tasksArray, null, 2));
     } catch (error) {
       this.emit('error', error);
+    }
+  }
+
+  /**
+   * Flush any pending persist operations.
+   * Useful for tests and ensuring data is written before shutdown.
+   */
+  async flush(): Promise<void> {
+    if (this.persistTimeout) {
+      clearTimeout(this.persistTimeout);
+      this.persistTimeout = null;
+      await this.doPersist();
+    } else if (this.persistPromise) {
+      await this.persistPromise;
     }
   }
 }

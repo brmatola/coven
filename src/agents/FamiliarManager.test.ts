@@ -13,9 +13,9 @@ vi.mock('fs', async () => {
       mkdir: vi.fn().mockResolvedValue(undefined),
       readdir: vi.fn().mockResolvedValue([]),
       readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      unlink: vi.fn().mockResolvedValue(undefined),
     },
-    writeFileSync: vi.fn(),
-    unlinkSync: vi.fn(),
   };
 });
 
@@ -83,10 +83,13 @@ describe('FamiliarManager', () => {
       );
     });
 
-    it('should persist familiar to disk', () => {
+    it('should persist familiar to disk', async () => {
       familiarManager.spawnFamiliar('task-1', mockProcessInfo);
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
+      // Flush pending writes
+      await familiarManager.flush();
+
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
         path.join(workspaceRoot, '.coven', 'familiars', 'task-1.json'),
         expect.any(String)
       );
@@ -207,13 +210,16 @@ describe('FamiliarManager', () => {
       });
     });
 
-    it('should remove persistence file', () => {
+    it('should remove persistence file', async () => {
       familiarManager.spawnFamiliar('task-1', mockProcessInfo);
       familiarManager.terminateFamiliar('task-1', 'completed');
 
-      expect(fs.unlinkSync).toHaveBeenCalledWith(
-        path.join(workspaceRoot, '.coven', 'familiars', 'task-1.json')
-      );
+      // Wait for async cleanup
+      await vi.waitFor(() => {
+        expect(fs.promises.unlink).toHaveBeenCalledWith(
+          path.join(workspaceRoot, '.coven', 'familiars', 'task-1.json')
+        );
+      });
     });
 
     it('should remove pending questions for terminated familiar', () => {
@@ -390,6 +396,28 @@ describe('FamiliarManager', () => {
 
       expect(familiarManager.getFamiliar('task-1')).toBeDefined();
       expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('timeout handling', () => {
+    it('should return remaining time for active familiar', () => {
+      familiarManager.spawnFamiliar('task-1', mockProcessInfo);
+
+      const remaining = familiarManager.getRemainingTime('task-1');
+      expect(remaining).toBeDefined();
+      expect(remaining).toBeLessThanOrEqual(config.agentTimeoutMs);
+      expect(remaining).toBeGreaterThan(0);
+    });
+
+    it('should return null for non-existent familiar', () => {
+      expect(familiarManager.getRemainingTime('non-existent')).toBeNull();
+    });
+
+    it('should return null for completed familiar', () => {
+      familiarManager.spawnFamiliar('task-1', mockProcessInfo);
+      familiarManager.updateStatus('task-1', 'complete');
+
+      expect(familiarManager.getRemainingTime('task-1')).toBeNull();
     });
   });
 });
