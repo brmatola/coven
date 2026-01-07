@@ -22,6 +22,10 @@ export function App(): React.ReactElement {
     };
 
     window.addEventListener('message', handleMessage);
+
+    // Request initial state on mount
+    vscode.postMessage({ type: 'refresh' });
+
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 

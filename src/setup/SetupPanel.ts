@@ -1,10 +1,13 @@
 import * as vscode from 'vscode';
 import { WebviewPanel } from '../shared/webview/WebviewPanel';
+import { MessageRouter } from '../shared/messageRouter';
 import { SetupState, SetupMessageToExtension } from './types';
 import { checkPrerequisites, refreshPrerequisites, initOpenspec, initBeads } from './prerequisites';
+import { getLogger } from '../shared/logger';
 
 export class SetupPanel extends WebviewPanel<SetupState, SetupMessageToExtension> {
   public static currentPanel: SetupPanel | undefined;
+  private readonly router: MessageRouter<SetupMessageToExtension>;
 
   public static async createOrShow(extensionUri: vscode.Uri): Promise<SetupPanel> {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -28,6 +31,10 @@ export class SetupPanel extends WebviewPanel<SetupState, SetupMessageToExtension
 
   private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
     super(panel, extensionUri);
+    this.router = new MessageRouter<SetupMessageToExtension>()
+      .on('initOpenspec', () => this.handleInitOpenspec())
+      .on('initBeads', () => this.handleInitBeads())
+      .on('refresh', () => this.refreshState());
   }
 
   protected getWebviewName(): string {
@@ -35,16 +42,9 @@ export class SetupPanel extends WebviewPanel<SetupState, SetupMessageToExtension
   }
 
   protected async onMessage(message: SetupMessageToExtension): Promise<void> {
-    switch (message.type) {
-      case 'initOpenspec':
-        await this.handleInitOpenspec();
-        break;
-      case 'initBeads':
-        await this.handleInitBeads();
-        break;
-      case 'refresh':
-        await this.refreshState();
-        break;
+    const handled = await this.router.route(message);
+    if (!handled) {
+      getLogger().warn('Unhandled message type in SetupPanel', { type: message.type });
     }
   }
 

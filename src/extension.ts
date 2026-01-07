@@ -2,31 +2,31 @@ import * as vscode from 'vscode';
 import { SessionsTreeDataProvider } from './session/sessionsTreeDataProvider';
 import { checkPrerequisites } from './setup/prerequisites';
 import { SetupPanel } from './setup/SetupPanel';
+import { ExtensionContext } from './shared/extensionContext';
 
-let statusBarItem: vscode.StatusBarItem;
 let sessionsProvider: SessionsTreeDataProvider;
-let extensionUri: vscode.Uri;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  extensionUri = context.extensionUri;
+  const ctx = ExtensionContext.initialize(context);
+  ctx.logger.info('Coven extension activating');
 
   // Initialize status bar
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  statusBarItem.text = '$(circle-outline) Coven: Inactive';
-  statusBarItem.tooltip = 'Click to start a Coven session';
-  statusBarItem.command = 'coven.startSession';
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
+  ctx.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  ctx.statusBarItem.text = '$(circle-outline) Coven: Inactive';
+  ctx.statusBarItem.tooltip = 'Click to start a Coven session';
+  ctx.statusBarItem.command = 'coven.startSession';
+  ctx.statusBarItem.show();
+  ctx.subscriptions.push(ctx.statusBarItem);
 
   // Initialize sidebar tree view
   sessionsProvider = new SessionsTreeDataProvider();
   const treeView = vscode.window.createTreeView('coven.sessions', {
     treeDataProvider: sessionsProvider,
   });
-  context.subscriptions.push(treeView);
+  ctx.subscriptions.push(treeView);
 
   // Register commands
-  context.subscriptions.push(
+  ctx.subscriptions.push(
     vscode.commands.registerCommand('coven.startSession', startSession),
     vscode.commands.registerCommand('coven.stopSession', stopSession),
     vscode.commands.registerCommand('coven.showSetup', showSetup)
@@ -35,21 +35,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Check prerequisites and show setup panel if needed
   try {
     const prereqs = await checkPrerequisites();
+    ctx.logger.info('Prerequisites check complete', { allMet: prereqs.allMet });
     if (!prereqs.allMet) {
-      await SetupPanel.createOrShow(extensionUri);
+      await SetupPanel.createOrShow(ctx.extensionUri);
     }
   } catch (err) {
+    ctx.logger.error('Failed to check prerequisites', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     await vscode.window.showErrorMessage(
       `Coven: Failed to check prerequisites: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+
+  ctx.logger.info('Coven extension activated');
 }
 
 export function deactivate(): void {
-  // Cleanup handled by disposables
+  if (ExtensionContext.isInitialized()) {
+    ExtensionContext.get().logger.info('Coven extension deactivating');
+    ExtensionContext.dispose();
+  }
 }
 
 async function startSession(): Promise<void> {
+  const ctx = ExtensionContext.get();
+
   let prereqs;
   try {
     prereqs = await checkPrerequisites();
@@ -67,17 +78,23 @@ async function startSession(): Promise<void> {
     return;
   }
 
-  statusBarItem.text = '$(sync~spin) Coven: Starting...';
-  // Session start logic will be implemented in add-core-session
-  statusBarItem.text = '$(circle-filled) Coven: Active';
+  if (ctx.statusBarItem) {
+    ctx.statusBarItem.text = '$(sync~spin) Coven: Starting...';
+    // Session start logic will be implemented in add-core-session
+    ctx.statusBarItem.text = '$(circle-filled) Coven: Active';
+  }
   sessionsProvider.refresh();
 }
 
 function stopSession(): void {
-  statusBarItem.text = '$(circle-outline) Coven: Inactive';
+  const ctx = ExtensionContext.get();
+  if (ctx.statusBarItem) {
+    ctx.statusBarItem.text = '$(circle-outline) Coven: Inactive';
+  }
   sessionsProvider.refresh();
 }
 
 async function showSetup(): Promise<void> {
-  await SetupPanel.createOrShow(extensionUri);
+  const ctx = ExtensionContext.get();
+  await SetupPanel.createOrShow(ctx.extensionUri);
 }
