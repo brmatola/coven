@@ -1,0 +1,77 @@
+{
+  "name": "coven",
+  "displayName": "Coven",
+  "description": "Agent orchestration system for VSCode",
+  "version": "0.0.1",
+  "publisher": "coven",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.git"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "coven",
+          "title": "Coven",
+          "icon": "resources/coven.svg"
+        }
+      ]
+    },
+    "views": {
+      "coven": [
+        {
+          "id": "coven.sessions",
+          "name": "Sessions",
+          "type": "tree"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "coven.startSession",
+        "title": "Coven: Start Session"
+      },
+      {
+        "command": "coven.stopSession",
+        "title": "Coven: Stop Session"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "watch": "tsx scripts/build.ts --watch",
+    "package": "vsce package",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "tsx scripts/run-e2e-tests.ts"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.3.8",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.19.8",
+    "eslint": "^8.55.0",
+    "glob": "^10.3.10",
+    "mocha": "^10.2.0",
+    "prettier": "^3.1.0",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2",
+    "vitest": "^1.0.4"
+  }
+}
