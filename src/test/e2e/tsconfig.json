@@ -14,5 +14,8 @@
     "sourceMap": true,
     "types": ["mocha", "node"]
   },
-  "include": ["./**/*"]
+  "files": [
+    "index.ts",
+    "extension.test.ts"
+  ]
 }

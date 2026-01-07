@@ -30,7 +30,8 @@
         {
           "id": "coven.sessions",
           "name": "Sessions",
-          "type": "tree"
+          "type": "tree",
+          "icon": "resources/coven.svg"
         }
       ]
     },

@@ -22,5 +22,5 @@
     "noUncheckedIndexedAccess": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/test/e2e/**/*"]
+  "exclude": ["node_modules", "dist", "src/test/e2e"]
 }
