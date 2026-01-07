@@ -32,6 +32,59 @@ This project uses **bd (beads)** for issue tracking. Run `bd prime` for full wor
 - **Beads**: Multi-session work, dependencies, discovered issues, architectural debt
 - **TodoWrite**: Simple single-session execution tracking
 
+## OpenSpec + Beads Workflow
+
+OpenSpec and Beads serve complementary roles:
+- **OpenSpec** = Planning ("what" and "why") — proposals, specs, approval gates
+- **Beads** = Execution ("doing") — task tracking, dependencies, progress
+
+### The Gate: No Beads Before Approval
+
+**Critical Rule:** Do NOT create beads for an OpenSpec change until the proposal is approved.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  PLANNING (OpenSpec only)                           │
+│  - /openspec:proposal creates proposal.md, tasks.md │
+│  - openspec validate --strict                       │
+│  - Human reviews and approves                       │
+│                      ↓                              │
+│               [APPROVAL GATE]                       │
+│                      ↓                              │
+├─────────────────────────────────────────────────────┤
+│  EXECUTION (Beads takes over)                       │
+│  - /openspec:apply creates epic + child beads       │
+│  - Work tracked via bd commands                     │
+│  - New discoveries → new beads                      │
+│                      ↓                              │
+│              [ALL BEADS CLOSED]                     │
+│                      ↓                              │
+├─────────────────────────────────────────────────────┤
+│  ARCHIVE                                            │
+│  - /openspec:archive moves change + closes epic     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Linking Beads to OpenSpec Changes
+
+Every bead for an OpenSpec change uses:
+- **Label:** `openspec:<change-id>` (e.g., `openspec:add-core-session`)
+- **Epic parent:** All task beads are children of the change's epic bead
+
+**Find all beads for a change:**
+```bash
+bd list --label openspec:add-core-session
+bd epic status <epic-id>
+```
+
+### Skill Reference
+
+| Skill | When | Beads Action |
+|-------|------|--------------|
+| `/openspec:proposal` | Planning new change | None (no beads yet) |
+| `/openspec:apply` | After approval | Create epic + task beads |
+| `/openspec:archive` | After deployment | Close epic bead |
+
 ## Quality Gates
 
 All code changes MUST pass these gates before completion:

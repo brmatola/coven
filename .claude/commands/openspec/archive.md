@@ -17,11 +17,25 @@ tags: [openspec, archive]
    - Otherwise, review the conversation, run `openspec list`, and ask the user which change to archive; wait for a confirmed change ID before proceeding.
    - If you still cannot identify a single change ID, stop and tell the user you cannot archive anything yet.
 2. Validate the change ID by running `openspec list` (or `openspec show <id>`) and stop if the change is missing, already archived, or otherwise not ready to archive.
-3. Run `openspec archive <id> --yes` so the CLI moves the change and applies spec updates without prompts (use `--skip-specs` only for tooling-only work).
-4. Review the command output to confirm the target specs were updated and the change landed in `changes/archive/`.
-5. Validate with `openspec validate --strict` and inspect with `openspec show <id>` if anything looks off.
+3. Check for associated beads epic:
+   ```bash
+   bd list --label "openspec:<change-id>" --type epic
+   ```
+   If an epic exists, verify all child beads are closed:
+   ```bash
+   bd epic status <epic-id>
+   ```
+   If any beads remain open, list them and ask before proceeding—archiving with incomplete work may indicate missing tasks.
+4. Run `openspec archive <id> --yes` so the CLI moves the change and applies spec updates without prompts (use `--skip-specs` only for tooling-only work).
+5. Close the epic bead (if one exists):
+   ```bash
+   bd close <epic-id>
+   ```
+6. Review the command output to confirm the target specs were updated and the change landed in `changes/archive/`.
+7. Validate with `openspec validate --strict` and inspect with `openspec show <id>` if anything looks off.
 
 **Reference**
 - Use `openspec list` to confirm change IDs before archiving.
+- Use `bd list --label openspec:<change-id>` to find all beads associated with this change.
 - Inspect refreshed specs with `openspec list --specs` and address any validation issues before handing off.
 <!-- OPENSPEC:END -->
