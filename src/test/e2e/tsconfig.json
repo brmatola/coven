@@ -16,6 +16,7 @@
   },
   "files": [
     "index.ts",
-    "extension.test.ts"
+    "extension.test.ts",
+    "beads.test.ts"
   ]
 }

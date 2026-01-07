@@ -21,6 +21,25 @@ vi.mock('fs', async () => {
   };
 });
 
+// Mock BeadsClient to return empty tasks
+vi.mock('../tasks/BeadsClient', () => ({
+  BeadsClient: vi.fn().mockImplementation(() => ({
+    isAvailable: vi.fn().mockResolvedValue(true),
+    isInitialized: vi.fn().mockResolvedValue(true),
+    listReady: vi.fn().mockResolvedValue([]),
+    getTask: vi.fn().mockResolvedValue(null),
+    createTask: vi.fn().mockResolvedValue({ success: true, id: 'test-id' }),
+    updateStatus: vi.fn().mockResolvedValue({ success: true }),
+    closeTask: vi.fn().mockResolvedValue({ success: true }),
+  })),
+  BeadsClientError: class extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'BeadsClientError';
+    }
+  },
+}));
+
 describe('CovenSession', () => {
   let session: CovenSession;
   const workspaceRoot = '/test/workspace';
@@ -55,14 +74,9 @@ describe('CovenSession', () => {
     });
 
     it('should restore active session from file', async () => {
-      // Mock all readFile calls in order:
-      // 1. loadConfig reads config.json
-      // 2. TaskManager.loadTasks reads tasks.json
-      // 3. FamiliarManager.loadPersistedFamiliars reads directory (handled by readdir mock)
-      // 4. loadSession reads session.json
+      // Mock readFile to return active session
       vi.mocked(fs.promises.readFile)
         .mockResolvedValueOnce(JSON.stringify(DEFAULT_SESSION_CONFIG)) // config.json
-        .mockRejectedValueOnce(new Error('ENOENT')) // tasks.json
         .mockResolvedValueOnce(JSON.stringify({ status: 'active', featureBranch: 'feature/test' })); // session.json
 
       const newSession = new CovenSession(workspaceRoot);
@@ -280,9 +294,9 @@ describe('CovenSession', () => {
   });
 
   describe('manager access', () => {
-    it('should provide access to TaskManager', () => {
-      const taskManager = session.getTaskManager();
-      expect(taskManager).toBeDefined();
+    it('should provide access to BeadsTaskSource', () => {
+      const beadsTaskSource = session.getBeadsTaskSource();
+      expect(beadsTaskSource).toBeDefined();
     });
 
     it('should provide access to FamiliarManager', () => {
@@ -292,46 +306,6 @@ describe('CovenSession', () => {
   });
 
   describe('event forwarding', () => {
-    it('should forward task:created event', () => {
-      const handler = vi.fn();
-      session.on('task:created', handler);
-
-      session.getTaskManager().createTask({
-        title: 'Test',
-        description: 'Test',
-        sourceId: 'manual',
-      });
-
-      expect(handler).toHaveBeenCalled();
-    });
-
-    it('should forward task:updated event', () => {
-      const handler = vi.fn();
-      session.on('task:updated', handler);
-
-      const task = session.getTaskManager().createTask({
-        title: 'Test',
-        description: 'Test',
-        sourceId: 'manual',
-      });
-      session.getTaskManager().transitionStatus(task.id, 'working');
-
-      expect(handler).toHaveBeenCalled();
-    });
-
-    it('should emit state:changed on task events', () => {
-      const handler = vi.fn();
-      session.on('state:changed', handler);
-
-      session.getTaskManager().createTask({
-        title: 'Test',
-        description: 'Test',
-        sourceId: 'manual',
-      });
-
-      expect(handler).toHaveBeenCalled();
-    });
-
     it('should forward familiar:spawned event', () => {
       const handler = vi.fn();
       session.on('familiar:spawned', handler);
@@ -349,13 +323,13 @@ describe('CovenSession', () => {
 
   describe('dispose', () => {
     it('should dispose all resources', () => {
-      const taskManager = session.getTaskManager();
+      const beadsTaskSource = session.getBeadsTaskSource();
       const familiarManager = session.getFamiliarManager();
 
       session.dispose();
 
       // Verify that event listeners are removed by checking no error when emitting
-      expect(() => taskManager.emit('test', {})).not.toThrow();
+      expect(() => beadsTaskSource.emit('test', {})).not.toThrow();
       expect(() => familiarManager.emit('test', {})).not.toThrow();
     });
   });

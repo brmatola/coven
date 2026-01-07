@@ -260,7 +260,7 @@ function viewFamiliarOutput(taskId: string): void {
 }
 
 async function createTask(): Promise<void> {
-  // Create task dialog - will be implemented in add-task-detail-view
+  // Create task via Beads
   const title = await vscode.window.showInputBox({
     prompt: 'Enter task title',
     placeHolder: 'Fix login bug',
@@ -275,13 +275,13 @@ async function createTask(): Promise<void> {
     return;
   }
 
-  const taskManager = covenSession.getTaskManager();
-  taskManager.createTask({
-    title,
-    description: '',
-    priority: 'medium',
-    sourceId: 'manual',
-  });
+  const beadsTaskSource = covenSession.getBeadsTaskSource();
+  const task = await beadsTaskSource.createTask(title);
+  if (task) {
+    void vscode.window.showInformationMessage(`Created task: ${task.id}`);
+  } else {
+    await vscode.window.showErrorMessage('Failed to create task in Beads');
+  }
 }
 
 async function startTask(taskId: string): Promise<void> {
@@ -291,8 +291,8 @@ async function startTask(taskId: string): Promise<void> {
   }
 
   try {
-    const taskManager = covenSession.getTaskManager();
-    taskManager.transitionStatus(taskId, 'working');
+    const beadsTaskSource = covenSession.getBeadsTaskSource();
+    await beadsTaskSource.updateTaskStatus(taskId, 'working');
     // Agent spawning will be implemented in add-claude-agent-integration
     void vscode.window.showInformationMessage(`Started task: ${taskId} (agent spawning not yet implemented)`);
   } catch (err) {
@@ -319,8 +319,8 @@ async function stopTask(taskId: string): Promise<void> {
   }
 
   try {
-    const taskManager = covenSession.getTaskManager();
-    taskManager.transitionStatus(taskId, 'ready');
+    const beadsTaskSource = covenSession.getBeadsTaskSource();
+    await beadsTaskSource.updateTaskStatus(taskId, 'ready');
     // Agent termination will be implemented in add-claude-agent-integration
   } catch (err) {
     await vscode.window.showErrorMessage(
@@ -329,6 +329,9 @@ async function stopTask(taskId: string): Promise<void> {
   }
 }
 
-function refreshTasks(): void {
+async function refreshTasks(): Promise<void> {
+  if (covenSession) {
+    await covenSession.refreshTasks();
+  }
   grimoireProvider.refresh();
 }

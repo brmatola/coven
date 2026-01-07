@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as child_process from 'child_process';
 import { OrphanRecovery } from './OrphanRecovery';
 import { FamiliarManager } from '../agents/FamiliarManager';
-import { TaskManager } from '../tasks/TaskManager';
+import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 import { Familiar, ProcessInfo, DEFAULT_SESSION_CONFIG } from '../shared/types';
 
 // Mock fs
@@ -31,10 +31,29 @@ vi.mock('child_process', async () => {
   };
 });
 
+// Mock BeadsClient
+vi.mock('../tasks/BeadsClient', () => ({
+  BeadsClient: vi.fn().mockImplementation(() => ({
+    isAvailable: vi.fn().mockResolvedValue(true),
+    isInitialized: vi.fn().mockResolvedValue(true),
+    listReady: vi.fn().mockResolvedValue([]),
+    getTask: vi.fn().mockResolvedValue(null),
+    createTask: vi.fn().mockResolvedValue({ success: true, id: 'test-id' }),
+    updateStatus: vi.fn().mockResolvedValue({ success: true }),
+    closeTask: vi.fn().mockResolvedValue({ success: true }),
+  })),
+  BeadsClientError: class extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'BeadsClientError';
+    }
+  },
+}));
+
 describe('OrphanRecovery', () => {
   let orphanRecovery: OrphanRecovery;
   let familiarManager: FamiliarManager;
-  let taskManager: TaskManager;
+  let beadsTaskSource: BeadsTaskSource;
   const workspaceRoot = '/test/workspace';
 
   const mockProcessInfo: ProcessInfo = {
@@ -55,8 +74,7 @@ describe('OrphanRecovery', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    taskManager = new TaskManager(workspaceRoot);
-    await taskManager.initialize();
+    beadsTaskSource = new BeadsTaskSource(workspaceRoot, { autoWatch: false });
 
     familiarManager = new FamiliarManager(workspaceRoot, DEFAULT_SESSION_CONFIG);
     await familiarManager.initialize();
@@ -65,12 +83,12 @@ describe('OrphanRecovery', () => {
       workspaceRoot,
       '.coven/worktrees',
       familiarManager,
-      taskManager
+      beadsTaskSource
     );
   });
 
   afterEach(() => {
-    taskManager.dispose();
+    beadsTaskSource.dispose();
     familiarManager.dispose();
   });
 

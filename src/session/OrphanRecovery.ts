@@ -5,7 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Familiar, ProcessInfo } from '../shared/types';
 import { FamiliarManager } from '../agents/FamiliarManager';
-import { TaskManager } from '../tasks/TaskManager';
+import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 
 const execAsync = promisify(exec);
 
@@ -28,19 +28,19 @@ export class OrphanRecovery extends EventEmitter {
   private workspaceRoot: string;
   private worktreeBasePath: string;
   private familiarManager: FamiliarManager;
-  private taskManager: TaskManager;
+  private beadsTaskSource: BeadsTaskSource;
 
   constructor(
     workspaceRoot: string,
     worktreeBasePath: string,
     familiarManager: FamiliarManager,
-    taskManager: TaskManager
+    beadsTaskSource: BeadsTaskSource
   ) {
     super();
     this.workspaceRoot = workspaceRoot;
     this.worktreeBasePath = path.join(workspaceRoot, worktreeBasePath);
     this.familiarManager = familiarManager;
-    this.taskManager = taskManager;
+    this.beadsTaskSource = beadsTaskSource;
   }
 
   /**
@@ -100,9 +100,9 @@ export class OrphanRecovery extends EventEmitter {
     if (state.hasUnmergedCommits) {
       // Has completed work that needs review
       this.emit('orphan:needsReview', { taskId: state.taskId });
-      const task = this.taskManager.getTask(state.taskId);
+      const task = this.beadsTaskSource.getTask(state.taskId);
       if (task && task.status === 'working') {
-        this.taskManager.transitionStatus(state.taskId, 'review');
+        await this.beadsTaskSource.updateTaskStatus(state.taskId, 'review');
       }
       return;
     }
@@ -113,9 +113,9 @@ export class OrphanRecovery extends EventEmitter {
         taskId: state.taskId,
         worktreePath: state.worktreePath,
       });
-      const task = this.taskManager.getTask(state.taskId);
+      const task = this.beadsTaskSource.getTask(state.taskId);
       if (task && task.status === 'working') {
-        this.taskManager.transitionStatus(state.taskId, 'ready');
+        await this.beadsTaskSource.updateTaskStatus(state.taskId, 'ready');
       }
       return;
     }

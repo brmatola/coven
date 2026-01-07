@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TaskManager } from '../tasks/TaskManager';
+import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 import { FamiliarManager } from '../agents/FamiliarManager';
 import { OrphanRecovery, OrphanState } from './OrphanRecovery';
 import {
@@ -11,18 +11,21 @@ import {
   SessionEvents,
   DEFAULT_SESSION_CONFIG,
   validateSessionConfig,
+  Task,
 } from '../shared/types';
 
 /**
  * Main orchestrator for Coven sessions.
- * Coordinates TaskManager and FamiliarManager, manages session lifecycle,
+ * Coordinates BeadsTaskSource and FamiliarManager, manages session lifecycle,
  * and provides the unified state interface.
+ *
+ * Beads is the single source of truth for tasks - this session just orchestrates.
  */
 export class CovenSession extends EventEmitter {
   private status: SessionStatus = 'inactive';
   private featureBranch: string | null = null;
   private config: SessionConfig;
-  private taskManager: TaskManager;
+  private beadsTaskSource: BeadsTaskSource;
   private familiarManager: FamiliarManager;
   private orphanRecovery: OrphanRecovery;
   private workspaceRoot: string;
@@ -38,13 +41,16 @@ export class CovenSession extends EventEmitter {
     this.sessionFilePath = path.join(this.covenDir, 'session.json');
     this.configFilePath = path.join(this.covenDir, 'config.json');
     this.config = { ...DEFAULT_SESSION_CONFIG };
-    this.taskManager = new TaskManager(workspaceRoot);
+    this.beadsTaskSource = new BeadsTaskSource(workspaceRoot, {
+      syncIntervalMs: this.config.beadsSyncIntervalMs,
+      autoWatch: false, // We'll start watching when session starts
+    });
     this.familiarManager = new FamiliarManager(workspaceRoot, this.config);
     this.orphanRecovery = new OrphanRecovery(
       workspaceRoot,
       this.config.worktreeBasePath,
       this.familiarManager,
-      this.taskManager
+      this.beadsTaskSource
     );
     this.setupEventForwarding();
   }
@@ -55,10 +61,17 @@ export class CovenSession extends EventEmitter {
   async initialize(): Promise<void> {
     await this.ensureCovenDir();
     await this.loadConfig();
-    await this.taskManager.initialize();
     await this.familiarManager.initialize();
     await this.loadSession();
     this.watchConfigFile();
+
+    // Check if Beads is available
+    const beadsAvailable = await this.beadsTaskSource.isAvailable();
+    if (!beadsAvailable) {
+      this.emit('session:error', {
+        error: new Error('Beads is not available. Please run `bd init` to initialize Beads.'),
+      } satisfies SessionEvents['session:error']);
+    }
 
     // Perform orphan recovery if session was active
     if (this.status === 'active') {
@@ -112,6 +125,13 @@ export class CovenSession extends EventEmitter {
 
     try {
       this.featureBranch = featureBranch;
+
+      // Initial sync from Beads
+      await this.beadsTaskSource.fetchTasks();
+
+      // Start watching for changes
+      this.beadsTaskSource.watch();
+
       this.status = 'active';
       await this.persistSession();
 
@@ -174,6 +194,9 @@ export class CovenSession extends EventEmitter {
     this.emit('session:stopping', undefined satisfies SessionEvents['session:stopping']);
 
     try {
+      // Stop watching Beads
+      this.beadsTaskSource.stopWatch();
+
       // Terminate all familiars
       this.familiarManager.clear();
 
@@ -191,10 +214,18 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
+   * Manually refresh tasks from Beads.
+   */
+  async refreshTasks(): Promise<void> {
+    await this.beadsTaskSource.sync();
+    this.emitStateChange();
+  }
+
+  /**
    * Get an immutable snapshot of the current session state.
    */
   getState(): CovenState {
-    const tasksGrouped = this.taskManager.getTasksGroupedByStatus();
+    const tasksGrouped = this.beadsTaskSource.getTasksGroupedByStatus();
 
     return Object.freeze({
       sessionStatus: this.status,
@@ -246,10 +277,10 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
-   * Get the TaskManager instance.
+   * Get the BeadsTaskSource instance.
    */
-  getTaskManager(): TaskManager {
-    return this.taskManager;
+  getBeadsTaskSource(): BeadsTaskSource {
+    return this.beadsTaskSource;
   }
 
   /**
@@ -274,7 +305,7 @@ export class CovenSession extends EventEmitter {
       this.configWatcher.close();
       this.configWatcher = null;
     }
-    this.taskManager.dispose();
+    this.beadsTaskSource.dispose();
     this.familiarManager.dispose();
     this.removeAllListeners();
   }
@@ -284,22 +315,28 @@ export class CovenSession extends EventEmitter {
   // ============================================================================
 
   private setupEventForwarding(): void {
-    // Forward task events
-    this.taskManager.on('task:created', (event) => {
-      this.emit('task:created', event);
-      this.emitStateChange();
-    });
-    this.taskManager.on('task:updated', (event) => {
-      this.emit('task:updated', event);
-      this.emitStateChange();
-    });
-    this.taskManager.on('task:deleted', (event) => {
-      this.emit('task:deleted', event);
-      this.emitStateChange();
-    });
-    this.taskManager.on('task:unblocked', (event) => {
-      this.emit('task:unblocked', event);
-      this.emitStateChange();
+    // Forward task sync events from BeadsTaskSource
+    this.beadsTaskSource.on(
+      'sync',
+      (event: { added: Task[]; updated: Task[]; removed: string[] }) => {
+        // Emit individual events for UI updates
+        for (const task of event.added) {
+          this.emit('task:created', { task } satisfies SessionEvents['task:created']);
+        }
+        for (const task of event.updated) {
+          this.emit('task:updated', { task } satisfies SessionEvents['task:updated']);
+        }
+        for (const taskId of event.removed) {
+          this.emit('task:deleted', { taskId } satisfies SessionEvents['task:deleted']);
+        }
+        this.emitStateChange();
+      }
+    );
+
+    this.beadsTaskSource.on('error', (event: { source: string; error: string }) => {
+      this.emit('session:error', {
+        error: new Error(event.error),
+      } satisfies SessionEvents['session:error']);
     });
 
     // Forward familiar events
