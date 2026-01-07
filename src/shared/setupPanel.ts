@@ -18,10 +18,7 @@ export class SetupPanel {
   private _disposables: vscode.Disposable[] = [];
   private _status: PrerequisitesStatus;
 
-  public static createOrShow(
-    extensionUri: vscode.Uri,
-    status: PrerequisitesStatus
-  ): SetupPanel {
+  public static createOrShow(extensionUri: vscode.Uri, status: PrerequisitesStatus): SetupPanel {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
 
     if (SetupPanel.currentPanel) {
@@ -31,15 +28,10 @@ export class SetupPanel {
       return SetupPanel.currentPanel;
     }
 
-    const panel = vscode.window.createWebviewPanel(
-      'covenSetup',
-      'Coven Setup',
-      column,
-      {
-        enableScripts: true,
-        localResourceRoots: [extensionUri],
-      }
-    );
+    const panel = vscode.window.createWebviewPanel('covenSetup', 'Coven Setup', column, {
+      enableScripts: true,
+      localResourceRoots: [extensionUri],
+    });
 
     SetupPanel.currentPanel = new SetupPanel(panel, extensionUri, status);
     return SetupPanel.currentPanel;
@@ -89,32 +81,32 @@ export class SetupPanel {
   private async _initOpenspec(): Promise<void> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
-      vscode.window.showErrorMessage('No workspace folder open');
+      await vscode.window.showErrorMessage('No workspace folder open');
       return;
     }
 
     try {
       await execAsync('openspec init --tools claude', { cwd: workspaceRoot });
-      vscode.window.showInformationMessage('OpenSpec initialized successfully');
+      await vscode.window.showInformationMessage('OpenSpec initialized successfully');
       await this._refresh();
     } catch (err) {
-      vscode.window.showErrorMessage(`Failed to initialize OpenSpec: ${String(err)}`);
+      await vscode.window.showErrorMessage(`Failed to initialize OpenSpec: ${String(err)}`);
     }
   }
 
   private async _initBeads(): Promise<void> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
-      vscode.window.showErrorMessage('No workspace folder open');
+      await vscode.window.showErrorMessage('No workspace folder open');
       return;
     }
 
     try {
       await execAsync('bd init', { cwd: workspaceRoot });
-      vscode.window.showInformationMessage('Beads initialized successfully');
+      await vscode.window.showInformationMessage('Beads initialized successfully');
       await this._refresh();
     } catch (err) {
-      vscode.window.showErrorMessage(`Failed to initialize Beads: ${String(err)}`);
+      await vscode.window.showErrorMessage(`Failed to initialize Beads: ${String(err)}`);
     }
   }
 
@@ -124,7 +116,9 @@ export class SetupPanel {
     this._update();
 
     if (this._status.allMet) {
-      vscode.window.showInformationMessage('All prerequisites met! You can now start a session.');
+      await vscode.window.showInformationMessage(
+        'All prerequisites met! You can now start a session.'
+      );
       this._panel.dispose();
     }
   }
@@ -211,9 +205,10 @@ export class SetupPanel {
     const icon = tool.available ? '&#10003;' : '&#10007;';
     const iconClass = tool.available ? 'status-ok' : 'status-missing';
     const version = tool.version ? `<span class="status-version">${tool.version}</span>` : '';
-    const installLink = !tool.available && tool.installUrl
-      ? `<a href="${tool.installUrl}" target="_blank">Install</a>`
-      : '';
+    const installLink =
+      !tool.available && tool.installUrl
+        ? `<a href="${tool.installUrl}" target="_blank">Install</a>`
+        : '';
 
     return `<div class="status-item">
       <span class="status-icon ${iconClass}">${icon}</span>

@@ -42,7 +42,9 @@ export function deactivate(): void {
 async function startSession(): Promise<void> {
   const prereqs = await checkPrerequisites();
   if (!prereqs.allMet) {
-    vscode.window.showWarningMessage('Coven: Prerequisites not met. Please complete setup first.');
+    await vscode.window.showWarningMessage(
+      'Coven: Prerequisites not met. Please complete setup first.'
+    );
     return;
   }
 
@@ -52,7 +54,7 @@ async function startSession(): Promise<void> {
   sessionsProvider.refresh();
 }
 
-async function stopSession(): Promise<void> {
+function stopSession(): void {
   statusBarItem.text = '$(circle-outline) Coven: Inactive';
   sessionsProvider.refresh();
 }

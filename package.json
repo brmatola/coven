@@ -47,6 +47,7 @@
   },
   "scripts": {
     "build": "tsx scripts/build.ts",
+    "build:e2e": "tsc -p src/test/e2e/tsconfig.json",
     "watch": "tsx scripts/build.ts --watch",
     "package": "vsce package",
     "lint": "eslint src --ext .ts",
@@ -55,6 +56,7 @@
     "format:check": "prettier --check \"src/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:e2e": "npm run build && npm run build:e2e",
     "test:e2e": "tsx scripts/run-e2e-tests.ts"
   },
   "devDependencies": {

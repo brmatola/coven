@@ -52,9 +52,19 @@ Track these steps as TODOs and complete them one by one.
 2. **Read design.md** (if exists) - Review technical decisions
 3. **Read tasks.md** - Get implementation checklist
 4. **Implement tasks sequentially** - Complete in order
-5. **Confirm completion** - Ensure every item in `tasks.md` is finished before updating statuses
-6. **Update checklist** - After all work is done, set every task to `- [x]` so the list reflects reality
-7. **Approval gate** - Do not start implementation until the proposal is reviewed and approved
+5. **Run all tests** - Execute `npm run lint && npm test && npm run build && npm run test:e2e`
+6. **Fix any failures** - All tests and checks must pass before proceeding
+7. **Confirm completion** - Ensure every item in `tasks.md` is finished before updating statuses
+8. **Update checklist** - After all work is done, set every task to `- [x]` so the list reflects reality
+9. **Approval gate** - Do not start implementation until the proposal is reviewed and approved
+
+**Testing Requirements:**
+- All changes must pass `npm run lint` (ESLint)
+- All changes must pass `npm test` (Vitest unit tests)
+- All changes must pass `npm run build` (TypeScript compilation)
+- All changes must pass `npm run test:e2e` (VSCode E2E tests)
+- New features should include unit tests in `*.test.ts` files
+- New user-facing features should include E2E tests in `src/test/e2e/`
 
 ### Stage 3: Archiving Changes
 After deployment, create separate PR to:

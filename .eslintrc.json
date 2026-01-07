@@ -18,5 +18,13 @@
     "@typescript-eslint/no-explicit-any": "error",
     "no-console": "warn"
   },
+  "overrides": [
+    {
+      "files": ["src/test/e2e/**/*.ts"],
+      "parserOptions": {
+        "project": "./src/test/e2e/tsconfig.json"
+      }
+    }
+  ],
   "ignorePatterns": ["dist", "node_modules", "scripts", "*.js"]
 }
