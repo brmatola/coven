@@ -1,5 +1,10 @@
 # Tasks: Add Claude Agent Integration
 
+## Implementation
+Epic: `coven-34a` (add-claude-agent-integration)
+Track progress: `bd epic status coven-34a`
+List tasks: `bd list --parent coven-34a`
+
 ## 1. AgentProvider Interface
 - [ ] 1.1 Define `AgentProvider` interface with spawn, terminate operations
 - [ ] 1.2 Define `AgentSpawnConfig` interface (task, workingDirectory, callbacks)

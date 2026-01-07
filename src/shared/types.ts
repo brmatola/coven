@@ -41,6 +41,8 @@ export interface Task {
   sourceId: string;
   /** External ID from the source system (if applicable) */
   externalId?: string;
+  /** Optional tags for categorization (e.g., 'ac:criterion' for acceptance criteria) */
+  tags?: string[];
   /** Timestamp when task was created */
   createdAt: number;
   /** Timestamp of last update */
