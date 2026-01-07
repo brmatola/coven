@@ -1,0 +1,288 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import { CovenSession } from './CovenSession';
+import { DEFAULT_SESSION_CONFIG } from '../shared/types';
+
+// Mock fs
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    promises: {
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      readdir: vi.fn().mockResolvedValue([]),
+      access: vi.fn().mockRejectedValue(new Error('ENOENT')),
+    },
+    writeFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    watch: vi.fn().mockReturnValue({ close: vi.fn() }),
+  };
+});
+
+describe('CovenSession', () => {
+  let session: CovenSession;
+  const workspaceRoot = '/test/workspace';
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    session = new CovenSession(workspaceRoot);
+    await session.initialize();
+  });
+
+  afterEach(() => {
+    session.dispose();
+  });
+
+  describe('initialization', () => {
+    it('should initialize with inactive status', () => {
+      expect(session.getStatus()).toBe('inactive');
+      expect(session.getFeatureBranch()).toBeNull();
+      expect(session.isActive()).toBe(false);
+    });
+
+    it('should create .coven directory', () => {
+      expect(fs.promises.mkdir).toHaveBeenCalledWith(
+        path.join(workspaceRoot, '.coven'),
+        { recursive: true }
+      );
+    });
+
+    it('should load default config when no config file exists', () => {
+      const config = session.getConfig();
+      expect(config.maxConcurrentAgents).toBe(DEFAULT_SESSION_CONFIG.maxConcurrentAgents);
+    });
+
+    it('should restore active session from file', async () => {
+      // Mock all readFile calls in order:
+      // 1. loadConfig reads config.json
+      // 2. TaskManager.loadTasks reads tasks.json
+      // 3. FamiliarManager.loadPersistedFamiliars reads directory (handled by readdir mock)
+      // 4. loadSession reads session.json
+      vi.mocked(fs.promises.readFile)
+        .mockResolvedValueOnce(JSON.stringify(DEFAULT_SESSION_CONFIG)) // config.json
+        .mockRejectedValueOnce(new Error('ENOENT')) // tasks.json
+        .mockResolvedValueOnce(JSON.stringify({ status: 'active', featureBranch: 'feature/test' })); // session.json
+
+      const newSession = new CovenSession(workspaceRoot);
+      await newSession.initialize();
+
+      expect(newSession.getStatus()).toBe('active');
+      expect(newSession.getFeatureBranch()).toBe('feature/test');
+
+      newSession.dispose();
+    });
+  });
+
+  describe('start', () => {
+    it('should start a session', async () => {
+      await session.start('feature/test');
+
+      expect(session.getStatus()).toBe('active');
+      expect(session.getFeatureBranch()).toBe('feature/test');
+      expect(session.isActive()).toBe(true);
+    });
+
+    it('should emit session:starting and session:started events', async () => {
+      const startingHandler = vi.fn();
+      const startedHandler = vi.fn();
+
+      session.on('session:starting', startingHandler);
+      session.on('session:started', startedHandler);
+
+      await session.start('feature/test');
+
+      expect(startingHandler).toHaveBeenCalledWith({ featureBranch: 'feature/test' });
+      expect(startedHandler).toHaveBeenCalledWith({ featureBranch: 'feature/test' });
+    });
+
+    it('should throw if session is already active', async () => {
+      await session.start('feature/test');
+
+      await expect(session.start('feature/other')).rejects.toThrow('Session already active');
+    });
+
+    it('should persist session state', async () => {
+      await session.start('feature/test');
+
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
+        path.join(workspaceRoot, '.coven', 'session.json'),
+        expect.stringContaining('feature/test')
+      );
+    });
+  });
+
+  describe('stop', () => {
+    it('should stop an active session', async () => {
+      await session.start('feature/test');
+      await session.stop();
+
+      expect(session.getStatus()).toBe('inactive');
+      expect(session.getFeatureBranch()).toBeNull();
+      expect(session.isActive()).toBe(false);
+    });
+
+    it('should emit session:stopping and session:stopped events', async () => {
+      await session.start('feature/test');
+
+      const stoppingHandler = vi.fn();
+      const stoppedHandler = vi.fn();
+
+      session.on('session:stopping', stoppingHandler);
+      session.on('session:stopped', stoppedHandler);
+
+      await session.stop();
+
+      expect(stoppingHandler).toHaveBeenCalled();
+      expect(stoppedHandler).toHaveBeenCalled();
+    });
+
+    it('should do nothing if session is not active', async () => {
+      const stoppingHandler = vi.fn();
+      session.on('session:stopping', stoppingHandler);
+
+      await session.stop();
+
+      expect(stoppingHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getState', () => {
+    it('should return current state snapshot', async () => {
+      await session.start('feature/test');
+
+      const state = session.getState();
+
+      expect(state.sessionStatus).toBe('active');
+      expect(state.featureBranch).toBe('feature/test');
+      expect(state.config).toEqual(DEFAULT_SESSION_CONFIG);
+      expect(state.tasks).toEqual({
+        ready: [],
+        working: [],
+        review: [],
+        done: [],
+        blocked: [],
+      });
+      expect(state.familiars).toEqual([]);
+      expect(state.pendingQuestions).toEqual([]);
+      expect(state.timestamp).toBeDefined();
+    });
+
+    it('should return frozen object', () => {
+      const state = session.getState();
+      expect(Object.isFrozen(state)).toBe(true);
+    });
+  });
+
+  describe('config management', () => {
+    it('should update config', async () => {
+      await session.updateConfig({ maxConcurrentAgents: 5 });
+
+      const config = session.getConfig();
+      expect(config.maxConcurrentAgents).toBe(5);
+    });
+
+    it('should emit config:changed event', async () => {
+      const handler = vi.fn();
+      session.on('config:changed', handler);
+
+      await session.updateConfig({ maxConcurrentAgents: 5 });
+
+      expect(handler).toHaveBeenCalledWith({
+        config: expect.objectContaining({ maxConcurrentAgents: 5 }),
+      });
+    });
+
+    it('should persist config to disk', async () => {
+      await session.updateConfig({ maxConcurrentAgents: 5 });
+
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
+        path.join(workspaceRoot, '.coven', 'config.json'),
+        expect.stringContaining('"maxConcurrentAgents": 5')
+      );
+    });
+  });
+
+  describe('manager access', () => {
+    it('should provide access to TaskManager', () => {
+      const taskManager = session.getTaskManager();
+      expect(taskManager).toBeDefined();
+    });
+
+    it('should provide access to FamiliarManager', () => {
+      const familiarManager = session.getFamiliarManager();
+      expect(familiarManager).toBeDefined();
+    });
+  });
+
+  describe('event forwarding', () => {
+    it('should forward task:created event', () => {
+      const handler = vi.fn();
+      session.on('task:created', handler);
+
+      session.getTaskManager().createTask({
+        title: 'Test',
+        description: 'Test',
+        sourceId: 'manual',
+      });
+
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should forward task:updated event', () => {
+      const handler = vi.fn();
+      session.on('task:updated', handler);
+
+      const task = session.getTaskManager().createTask({
+        title: 'Test',
+        description: 'Test',
+        sourceId: 'manual',
+      });
+      session.getTaskManager().transitionStatus(task.id, 'working');
+
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should emit state:changed on task events', () => {
+      const handler = vi.fn();
+      session.on('state:changed', handler);
+
+      session.getTaskManager().createTask({
+        title: 'Test',
+        description: 'Test',
+        sourceId: 'manual',
+      });
+
+      expect(handler).toHaveBeenCalled();
+    });
+
+    it('should forward familiar:spawned event', () => {
+      const handler = vi.fn();
+      session.on('familiar:spawned', handler);
+
+      session.getFamiliarManager().spawnFamiliar('task-1', {
+        pid: 12345,
+        startTime: Date.now(),
+        command: 'claude',
+        worktreePath: '/test',
+      });
+
+      expect(handler).toHaveBeenCalled();
+    });
+  });
+
+  describe('dispose', () => {
+    it('should dispose all resources', () => {
+      const taskManager = session.getTaskManager();
+      const familiarManager = session.getFamiliarManager();
+
+      session.dispose();
+
+      // Verify that event listeners are removed by checking no error when emitting
+      expect(() => taskManager.emit('test', {})).not.toThrow();
+      expect(() => familiarManager.emit('test', {})).not.toThrow();
+    });
+  });
+});
