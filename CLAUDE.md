@@ -1,3 +1,18 @@
+# Coven Project Instructions
+
+## Testing & Coverage Policy
+
+**Coverage Exclusion Policy - STRICTLY ENFORCED:**
+- NEVER exclude actual code files from coverage in `vitest.config.ts`
+- Only these exclusions are permitted:
+  - `src/**/*.test.ts` and `src/**/*.test.tsx` (test files themselves)
+  - `src/test/**` (test infrastructure and E2E tests)
+  - `src/__mocks__/**` (mock implementations)
+- Entry points, re-export modules, type-only files, and "hard to test" code must NOT be excluded
+- If code seems untestable, refactor it to be testable or write the necessary tests
+- Comments like "covered by E2E tests" or "no logic to test" are not valid exclusion reasons
+- The 80% coverage threshold applies to ALL source code without exception
+
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions
 
