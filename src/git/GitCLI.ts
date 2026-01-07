@@ -206,8 +206,16 @@ export class GitCLI implements GitProvider {
       };
     } catch (err) {
       // Check if this is a merge conflict
+      // Need to check both the error message and cause message since exec() wraps errors
       const errorMsg = err instanceof Error ? err.message : String(err);
-      if (errorMsg.includes('CONFLICT') || errorMsg.includes('Automatic merge failed')) {
+      const causeMsg =
+        err instanceof GitCLIError && err.cause instanceof Error ? err.cause.message : '';
+      const isConflict =
+        errorMsg.includes('CONFLICT') ||
+        errorMsg.includes('Automatic merge failed') ||
+        causeMsg.includes('CONFLICT') ||
+        causeMsg.includes('Automatic merge failed');
+      if (isConflict) {
         const conflicts = await this.getConflictFiles(workingDir);
         const mergedFiles = await this.getMergedFiles(workingDir);
 

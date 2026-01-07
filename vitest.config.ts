@@ -28,7 +28,8 @@ export default defineConfig({
         'src/__mocks__/**',
         'src/**/webview/index.tsx', // Entry point, no logic to test
         'src/tasks/TaskDetailPanel.ts', // Webview panel, covered by E2E tests
-        'src/git/**', // Git infrastructure, covered by E2E tests
+        'src/git/index.ts', // Module re-exports only
+        'src/git/types.ts', // Type definitions only
       ],
       thresholds: {
         lines: 80,
