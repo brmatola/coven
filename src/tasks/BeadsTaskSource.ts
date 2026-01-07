@@ -291,6 +291,46 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
   }
 
   /**
+   * Update a task's title, description, and/or acceptance criteria.
+   * Acceptance criteria is appended to the description for Beads storage.
+   */
+  async updateTask(
+    taskId: string,
+    updates: { title?: string; description?: string; acceptanceCriteria?: string }
+  ): Promise<boolean> {
+    // Build the full description with acceptance criteria
+    let fullDescription: string | undefined;
+    if (updates.description !== undefined || updates.acceptanceCriteria !== undefined) {
+      const existingTask = this.cachedTasks.get(taskId);
+      const desc = updates.description ?? existingTask?.description ?? '';
+      const ac = updates.acceptanceCriteria ?? existingTask?.acceptanceCriteria;
+
+      fullDescription = desc;
+      if (ac && ac.trim()) {
+        fullDescription = `${desc}\n\n## Acceptance Criteria\n${ac}`;
+      }
+    }
+
+    const result = await this.client.updateTask(taskId, {
+      title: updates.title,
+      description: fullDescription,
+    });
+
+    if (!result.success) {
+      this.logger.error('Failed to update task in Beads', {
+        taskId,
+        error: result.error,
+      });
+      this.emit('error', { source: 'beads', error: `Failed to update task: ${result.error}` });
+      return false;
+    }
+
+    // Refresh cache
+    await this.sync();
+    return true;
+  }
+
+  /**
    * Close a task in Beads (mark as done).
    */
   async closeTask(taskId: string, reason?: string): Promise<boolean> {

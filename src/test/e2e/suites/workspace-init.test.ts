@@ -114,8 +114,8 @@ suite('Workspace Initialization E2E Tests', function () {
       await assertCommandExists('coven.showSetup');
     });
 
-    test('refreshSidebar command should be registered', async () => {
-      await assertCommandExists('coven.refreshSidebar');
+    test('refreshTasks command should be registered', async () => {
+      await assertCommandExists('coven.refreshTasks');
     });
   });
 

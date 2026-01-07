@@ -1,5 +1,10 @@
 # Tasks: Add Task Detail View
 
+## Implementation
+Epic: `coven-oga` (add-task-detail-view)
+Track progress: `bd epic status coven-oga`
+List tasks: `bd list --parent coven-oga`
+
 ## 1. Webview Infrastructure (First React Webview)
 - [ ] 1.1 Set up `webview-ui/` directory with React + Vite
 - [ ] 1.2 Configure Vite build to output to `dist/webview`

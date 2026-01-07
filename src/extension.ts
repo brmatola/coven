@@ -4,6 +4,7 @@ import { GrimoireTreeProvider } from './sidebar/GrimoireTreeProvider';
 import { CovenStatusBar } from './sidebar/CovenStatusBar';
 import { checkPrerequisites } from './setup/prerequisites';
 import { SetupPanel } from './setup/SetupPanel';
+import { TaskDetailPanel } from './tasks/TaskDetailPanel';
 import { ExtensionContext } from './shared/extensionContext';
 
 let grimoireProvider: GrimoireTreeProvider;
@@ -249,9 +250,16 @@ function revealSidebar(): void {
   void vscode.commands.executeCommand('coven.sessions.focus');
 }
 
-function showTaskDetail(taskId: string): void {
-  // Task detail panel - will be implemented in add-task-detail-view
-  void vscode.window.showInformationMessage(`Task detail: ${taskId} (not yet implemented)`);
+async function showTaskDetail(taskId: string): Promise<void> {
+  const ctx = ExtensionContext.get();
+
+  if (!covenSession) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  const beadsTaskSource = covenSession.getBeadsTaskSource();
+  await TaskDetailPanel.createOrShow(ctx.extensionUri, beadsTaskSource, taskId);
 }
 
 function viewFamiliarOutput(taskId: string): void {

@@ -201,6 +201,36 @@ export class BeadsClient {
   }
 
   /**
+   * Update a task's title and/or description.
+   */
+  async updateTask(
+    id: string,
+    updates: { title?: string; description?: string }
+  ): Promise<BeadResult> {
+    try {
+      const args = ['bd', 'update', this.escapeArg(id)];
+
+      if (updates.title !== undefined) {
+        args.push('--title', this.escapeArg(updates.title));
+      }
+
+      if (updates.description !== undefined) {
+        args.push('--description', this.escapeArg(updates.description));
+      }
+
+      // Only run if there are updates
+      if (args.length > 3) {
+        await this.exec(args.join(' '));
+      }
+
+      return { success: true, id };
+    } catch (err) {
+      this.logger.error('Failed to update bead', { id, updates, error: String(err) });
+      return { success: false, error: String(err) };
+    }
+  }
+
+  /**
    * Close a task with a reason.
    */
   async closeTask(id: string, reason?: string): Promise<BeadResult> {

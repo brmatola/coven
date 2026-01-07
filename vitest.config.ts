@@ -27,6 +27,7 @@ export default defineConfig({
         'src/test/**',
         'src/__mocks__/**',
         'src/**/webview/index.tsx', // Entry point, no logic to test
+        'src/tasks/TaskDetailPanel.ts', // Webview panel, covered by E2E tests
       ],
       thresholds: {
         lines: 80,
