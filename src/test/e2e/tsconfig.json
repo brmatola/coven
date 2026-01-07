@@ -14,9 +14,9 @@
     "sourceMap": true,
     "types": ["mocha", "node"]
   },
-  "files": [
+  "include": [
     "index.ts",
-    "extension.test.ts",
-    "beads.test.ts"
+    "fixtures/**/*.ts",
+    "suites/**/*.ts"
   ]
 }

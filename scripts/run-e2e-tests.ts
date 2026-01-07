@@ -5,6 +5,18 @@ import { execSync } from 'child_process';
 import { runTests } from '@vscode/test-electron';
 
 /**
+ * Configuration from environment variables.
+ */
+const config = {
+  // Use existing workspace if set (for CI or debugging)
+  existingWorkspace: process.env.COVEN_E2E_WORKSPACE,
+  // Timeout for test suite (default: 2 minutes)
+  timeout: parseInt(process.env.COVEN_E2E_TIMEOUT || '120000', 10),
+  // Keep workspace after tests for debugging
+  keepWorkspace: process.env.COVEN_E2E_KEEP_WORKSPACE === 'true',
+};
+
+/**
  * Create an isolated test workspace with git and beads initialized.
  * Returns the path to the workspace and a cleanup function.
  */
@@ -18,39 +30,63 @@ function createTestWorkspace(): { workspacePath: string; cleanup: () => void } {
     execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'pipe' });
     execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'pipe' });
 
-    // Create an initial commit (required for some git operations)
+    // Create initial commit (required for git operations)
     fs.writeFileSync(path.join(tempDir, 'README.md'), '# Test Workspace\n');
     execSync('git add .', { cwd: tempDir, stdio: 'pipe' });
     execSync('git commit -m "Initial commit"', { cwd: tempDir, stdio: 'pipe' });
 
     console.log('Git initialized');
 
-    // Initialize beads (if available)
+    // Initialize beads if available
     try {
       execSync('bd init', { cwd: tempDir, stdio: 'pipe' });
       execSync('git add .beads', { cwd: tempDir, stdio: 'pipe' });
       execSync('git commit -m "Initialize beads"', { cwd: tempDir, stdio: 'pipe' });
       console.log('Beads initialized');
-    } catch (err) {
+    } catch {
       console.log('Beads CLI not available - tests will skip Beads-specific tests');
     }
   } catch (err) {
     // Clean up on error
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    cleanupWorkspace(tempDir);
     throw err;
   }
 
   return {
     workspacePath: tempDir,
     cleanup: () => {
-      console.log(`Cleaning up test workspace: ${tempDir}`);
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (err) {
-        console.error('Failed to clean up test workspace:', err);
+      if (config.keepWorkspace) {
+        console.log(`Keeping test workspace for debugging: ${tempDir}`);
+        return;
       }
+      cleanupWorkspace(tempDir);
     },
   };
+}
+
+/**
+ * Clean up workspace with retry logic.
+ */
+function cleanupWorkspace(workspacePath: string, retries = 3): void {
+  console.log(`Cleaning up test workspace: ${workspacePath}`);
+
+  for (let i = 0; i < retries; i++) {
+    try {
+      fs.rmSync(workspacePath, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (i === retries - 1) {
+        console.error(`Failed to clean up workspace after ${retries} attempts:`, err);
+      } else {
+        // Brief delay before retry
+        const delay = 100 * (i + 1);
+        const start = Date.now();
+        while (Date.now() - start < delay) {
+          // Synchronous delay
+        }
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -60,8 +96,18 @@ async function main(): Promise<void> {
   // The compiled test runner
   const extensionTestsPath = path.resolve(__dirname, '../dist/test/e2e/index.js');
 
-  // Create isolated test workspace
-  const { workspacePath, cleanup } = createTestWorkspace();
+  // Use existing workspace or create isolated one
+  let workspacePath: string;
+  let cleanup: (() => void) | null = null;
+
+  if (config.existingWorkspace) {
+    workspacePath = config.existingWorkspace;
+    console.log(`Using existing workspace: ${workspacePath}`);
+  } else {
+    const workspace = createTestWorkspace();
+    workspacePath = workspace.workspacePath;
+    cleanup = workspace.cleanup;
+  }
 
   try {
     await runTests({
@@ -73,10 +119,13 @@ async function main(): Promise<void> {
       ],
       extensionTestsEnv: {
         COVEN_E2E_WORKSPACE: workspacePath,
+        COVEN_E2E_TIMEOUT: String(config.timeout),
       },
     });
   } finally {
-    cleanup();
+    if (cleanup) {
+      cleanup();
+    }
   }
 }
 
