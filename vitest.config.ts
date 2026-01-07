@@ -1,12 +1,18 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
+import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  plugins: [react()],
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     exclude: ['src/test/e2e/**'],
     globals: true,
     environment: 'node',
+    environmentMatchGlobs: [
+      ['src/**/webview/**/*.test.tsx', 'jsdom'],
+    ],
+    setupFiles: ['./vitest-setup.ts'],
     alias: {
       vscode: path.resolve(__dirname, 'src/__mocks__/vscode.ts'),
     },
@@ -14,12 +20,13 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
       reportsDirectory: './coverage',
-      include: ['src/**/*.ts'],
+      include: ['src/**/*.ts', 'src/**/*.tsx'],
       exclude: [
         'src/**/*.test.ts',
+        'src/**/*.test.tsx',
         'src/test/**',
         'src/__mocks__/**',
-        'src/**/webview/**', // React webviews tested separately
+        'src/**/webview/index.tsx', // Entry point, no logic to test
       ],
       thresholds: {
         lines: 80,

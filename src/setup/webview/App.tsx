@@ -1,16 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { SetupState, ToolStatus, InitStatus, SetupMessageToWebview } from '../types';
 
 // VS Code API type
-interface VsCodeApi {
+export interface VsCodeApi {
   postMessage: (message: unknown) => void;
 }
 
 declare function acquireVsCodeApi(): VsCodeApi;
 
-const vscode = acquireVsCodeApi();
+// Lazy getter for VS Code API - allows testing without global
+let cachedVsCodeApi: VsCodeApi | null = null;
+function getVsCodeApi(): VsCodeApi {
+  if (!cachedVsCodeApi) {
+    cachedVsCodeApi = acquireVsCodeApi();
+  }
+  return cachedVsCodeApi;
+}
 
-export function App(): React.ReactElement {
+// For testing: allow resetting the cached API
+export function _resetVsCodeApi(): void {
+  cachedVsCodeApi = null;
+}
+
+export interface AppProps {
+  vsCodeApi?: VsCodeApi;
+}
+
+export function App({ vsCodeApi }: AppProps): React.ReactElement {
+  const vscode = useMemo(() => vsCodeApi ?? getVsCodeApi(), [vsCodeApi]);
   const [state, setState] = useState<SetupState | null>(null);
 
   useEffect(() => {
@@ -27,7 +44,7 @@ export function App(): React.ReactElement {
     vscode.postMessage({ type: 'refresh' });
 
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [vscode]);
 
   const handleInitOpenspec = (): void => {
     vscode.postMessage({ type: 'initOpenspec' });
