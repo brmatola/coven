@@ -47,6 +47,50 @@ The system SHALL load and persist session configuration including feature branch
 - **THEN** changes take effect immediately where possible
 - **THEN** changes requiring restart prompt user appropriately
 
+### Requirement: Configuration Schema
+The system SHALL define and validate configuration via `.coven/config.json` with explicit schema.
+
+#### Scenario: Default configuration
+- **WHEN** session starts without existing config
+- **THEN** `.coven/config.json` is created with defaults
+- **THEN** defaults are:
+  ```json
+  {
+    "maxConcurrentAgents": 3,
+    "worktreeBasePath": ".coven/worktrees",
+    "beadsSyncIntervalMs": 30000,
+    "agentTimeoutMs": 600000,
+    "mergeConflictMaxRetries": 2,
+    "preMergeChecks": {
+      "enabled": false,
+      "commands": []
+    },
+    "logging": {
+      "level": "info",
+      "retentionDays": 7
+    },
+    "outputRetentionDays": 7,
+    "notifications": {
+      "questions": "modal",
+      "completions": "toast",
+      "conflicts": "toast",
+      "errors": "toast"
+    }
+  }
+  ```
+- **THEN** notification values are: `"modal"` (interrupting), `"toast"` (dismissable), `"statusbar"` (silent), `"none"` (disabled)
+
+#### Scenario: Config validation
+- **WHEN** config file is loaded
+- **THEN** schema is validated
+- **THEN** invalid values fall back to defaults with warning
+- **THEN** extra fields are ignored (forward compatibility)
+
+#### Scenario: Config reload
+- **WHEN** config file changes on disk
+- **THEN** changes are detected via file watcher
+- **THEN** applicable settings update without session restart
+
 ### Requirement: Orphan Familiar Recovery
 The system SHALL attempt to recover orphaned familiars from crashed or restarted sessions rather than discarding their work.
 

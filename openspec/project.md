@@ -127,3 +127,23 @@ This opinionation reduces configuration burden and ensures a cohesive experience
 
 ### Design Note
 While MVP assumes OpenSpec + Beads + Claude Code, the architecture uses interfaces (TaskSource, AgentProvider) to allow future alternative implementations.
+
+## Future Roadmap (Post-MVP)
+
+### Agent Capabilities
+- **Agent Pause/Resume**: Suspend long-running agents to context-switch, resume later (depends on Claude Code CLI support for SIGSTOP/SIGCONT)
+- **Alternative AI Providers**: GPT-4, Gemini, local models via AgentProvider interface
+- **Cost Tracking**: Track API usage and estimated costs per task/session
+
+### Task Management
+- **Session Summary Export**: Generate markdown/JSON reports of completed sessions
+- **Parallel Dependency Visualization**: DAG view of task dependencies and execution order
+- **Multi-root Workspace Support**: Allow selecting which repo to use in multi-root workspaces
+
+### Validation
+- **MCP Server Allowlist**: Restrict which MCP servers agents can configure (security hardening)
+- **Input Sanitization**: Validate agent stdin injection for security
+
+### Resource Management
+- **Disk Space Monitoring**: Warn when worktree usage exceeds thresholds
+- **Memory Limits**: Cap output streaming buffer sizes

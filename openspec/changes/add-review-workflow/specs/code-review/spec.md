@@ -70,3 +70,39 @@ The system SHALL allow reverting completed work to discard changes.
 - **WHEN** user provides revert reason
 - **THEN** reason is logged in activity log
 - **THEN** reason is stored with task for future reference
+
+### Requirement: Pre-Merge Checks
+The system SHALL run configurable validation checks before allowing merge to feature branch.
+
+#### Scenario: Check configuration
+- **WHEN** pre-merge checks are enabled in `.coven/config.json`
+- **THEN** configured commands are available (e.g., `["npm test", "npm run lint"]`)
+- **THEN** checks run in the task worktree before merge
+
+#### Scenario: Run checks on approval
+- **WHEN** user clicks "Approve" and pre-merge checks are enabled
+- **THEN** checks run sequentially in task worktree
+- **THEN** progress is shown in review panel
+- **THEN** check output is captured and displayable
+
+#### Scenario: Checks pass
+- **WHEN** all pre-merge checks pass (exit code 0)
+- **THEN** merge proceeds normally
+- **THEN** check results are logged
+
+#### Scenario: Checks fail
+- **WHEN** any pre-merge check fails (non-zero exit)
+- **THEN** merge is blocked
+- **THEN** failure output is displayed in review panel
+- **THEN** user can choose to fix and re-run, or override
+
+#### Scenario: Override failed checks
+- **WHEN** user chooses to override failed checks
+- **THEN** confirmation dialog explains risks
+- **THEN** override is logged with reason
+- **THEN** merge proceeds after confirmation
+
+#### Scenario: Skip checks
+- **WHEN** pre-merge checks are disabled in config
+- **THEN** approval merges immediately without running checks
+- **THEN** no skip confirmation needed

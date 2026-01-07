@@ -12,4 +12,4 @@ After an agent completes a task, humans need to review the changes before they'r
 ## Impact
 - Affected specs: `code-review` (new capability)
 - Affected code: `src/review/ReviewPanel.ts`, `src/review/ReviewManager.ts`
-- Dependencies: Requires `add-git-worktree-management` for diff access, `add-sidebar-views` for integration
+- Dependencies: Requires `add-git-worktree-management` for diff access, `add-sidebar-views` for integration, `add-claude-agent-integration` for agent completion events

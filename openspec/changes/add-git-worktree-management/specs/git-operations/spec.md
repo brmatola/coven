@@ -48,19 +48,35 @@ The system SHALL merge completed task branches to the feature branch with confli
 - **THEN** merge completes after resolution
 
 ### Requirement: AI-Assisted Conflict Resolution
-The system SHALL attempt to resolve merge conflicts using an AI agent before escalating to human.
+The system SHALL attempt to resolve merge conflicts using a dedicated merge agent before escalating to human.
 
 #### Scenario: AI resolves conflict
 - **WHEN** merge conflict occurs
-- **THEN** an AI agent is given the conflict context and task description
-- **THEN** agent proposes resolution
+- **THEN** a merge agent is spawned with conflict context (both branches, task descriptions, conflicting files)
+- **THEN** merge agent proposes resolution
+- **THEN** resolution is validated (compiles, tests pass if applicable)
 - **THEN** resolution is applied and merge continues
 
 #### Scenario: AI cannot resolve conflict
-- **WHEN** AI agent fails to resolve conflict after max attempts
+- **WHEN** merge agent fails to resolve conflict after max attempts (default: 2)
 - **THEN** conflict is escalated to user
 - **THEN** task status becomes "blocked"
-- **THEN** user is notified with conflict details
+- **THEN** user is notified with conflict details and diff
+
+### Requirement: Merge Queue Coordination
+The system SHALL serialize merges to the feature branch to prevent race conditions when multiple agents complete concurrently.
+
+#### Scenario: Sequential merge queue
+- **WHEN** multiple tasks complete and enter review status
+- **THEN** approved tasks are queued for merge in approval order
+- **THEN** merges execute one at a time
+- **THEN** subsequent merges rebase on updated feature branch before merging
+
+#### Scenario: Merge queue conflict
+- **WHEN** a queued merge would conflict with a just-completed merge
+- **THEN** merge agent is invoked to resolve
+- **THEN** if unresolvable, task returns to "review" with conflict notification
+- **THEN** user can re-review with updated context
 
 ### Requirement: Branch Operations
 The system SHALL support creating and managing branches for sessions and tasks.

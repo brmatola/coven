@@ -18,6 +18,34 @@ The system SHALL display agent output in real-time via VSCode output channels.
 - **THEN** output channel remains available for review
 - **THEN** channel is disposed when session ends
 
+### Requirement: Output Persistence
+The system SHALL persist agent output to disk for recovery and debugging.
+
+#### Scenario: Output file creation
+- **WHEN** an agent is spawned
+- **THEN** output is written to `.coven/output/{taskId}.log`
+- **THEN** file is created immediately, not buffered
+
+#### Scenario: Real-time persistence
+- **WHEN** agent produces output
+- **THEN** output is appended to log file immediately
+- **THEN** output includes timestamps matching the output channel
+
+#### Scenario: Recovery after restart
+- **WHEN** VSCode restarts with a task in working/review status
+- **THEN** persisted output is loaded into output channel
+- **THEN** user can review what happened before restart
+
+#### Scenario: Output for completed tasks
+- **WHEN** user opens output for a completed task
+- **THEN** persisted log is loaded into output channel on demand
+- **THEN** output remains available until session ends
+
+#### Scenario: Output cleanup
+- **WHEN** session ends normally
+- **THEN** output files for completed tasks are retained (configurable retention)
+- **THEN** output files for reverted tasks are deleted
+
 ### Requirement: Question Response Flow
 The system SHALL provide a UI for responding to agent questions.
 

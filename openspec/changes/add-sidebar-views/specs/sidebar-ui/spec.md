@@ -95,3 +95,29 @@ The system SHALL provide contextual actions for tasks via tree item actions.
 #### Scenario: Review task actions
 - **WHEN** viewing a review task
 - **THEN** "Review" opens review panel
+
+### Requirement: Task List Scaling
+The system SHALL handle large task lists efficiently with virtualization and search.
+
+#### Scenario: Virtualized scrolling
+- **WHEN** task list contains many items (50+)
+- **THEN** list uses virtualized rendering (only visible items in DOM)
+- **THEN** scroll performance remains smooth
+- **THEN** memory usage scales O(visible) not O(total)
+
+#### Scenario: Task search
+- **WHEN** user types in search input
+- **THEN** task list filters to matching titles/descriptions
+- **THEN** filtering happens instantly (debounced 150ms)
+- **THEN** clearing search restores full list
+
+#### Scenario: Search with Beads index
+- **WHEN** Beads is available and has search capability
+- **THEN** search queries Beads cached database for performance
+- **THEN** fallback to local in-memory filter if Beads unavailable
+
+#### Scenario: Filter by status
+- **WHEN** user selects status filter
+- **THEN** only tasks with that status are shown
+- **THEN** filter combines with search (AND logic)
+- **THEN** filter state persists across sessions
