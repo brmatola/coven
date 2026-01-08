@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { Task, ProcessInfo, SessionConfig } from '../shared/types';
+import { Task, ProcessInfo, SessionConfig, PendingQuestion } from '../shared/types';
 import { FamiliarManager } from './FamiliarManager';
 import { WorktreeManager } from '../git/WorktreeManager';
 import { ClaudeAgent } from './ClaudeAgent';
@@ -218,13 +218,16 @@ export class AgentOrchestrator extends EventEmitter {
   }
 
   private handleQuestion(taskId: string, question: AgentQuestion): void {
-    // Add to FamiliarManager
-    this.familiarManager.addQuestion({
+    // Add to FamiliarManager - only include options if defined
+    const pendingQuestion: Omit<PendingQuestion, 'askedAt'> = {
       familiarId: taskId,
       taskId,
       question: question.question,
-      options: question.suggestedResponses,
-    });
+    };
+    if (question.suggestedResponses) {
+      pendingQuestion.options = question.suggestedResponses;
+    }
+    this.familiarManager.addQuestion(pendingQuestion);
     // Emit event
     this.emit('agent:question', { taskId, question });
   }

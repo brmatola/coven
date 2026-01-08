@@ -17,6 +17,8 @@ import {
   DEFAULT_SESSION_CONFIG,
   validateSessionConfig,
   Task,
+  ActivityEntry,
+  ActivityType,
 } from '../shared/types';
 
 /**
@@ -26,6 +28,9 @@ import {
  *
  * Beads is the single source of truth for tasks - this session just orchestrates.
  */
+/** Maximum number of activity entries to keep in memory */
+const MAX_ACTIVITY_ENTRIES = 50;
+
 export class CovenSession extends EventEmitter {
   private status: SessionStatus = 'inactive';
   private featureBranch: string | null = null;
@@ -41,6 +46,7 @@ export class CovenSession extends EventEmitter {
   private configFilePath: string;
   private configWatcher: fs.FSWatcher | null = null;
   private sessionId: string;
+  private activityLog: ActivityEntry[] = [];
 
   constructor(workspaceRoot: string) {
     super();
@@ -96,8 +102,10 @@ export class CovenSession extends EventEmitter {
       } satisfies SessionEvents['session:error']);
     }
 
-    // Perform orphan recovery if session was active
+    // If session was restored as active, sync tasks and start watching
     if (this.status === 'active') {
+      await this.beadsTaskSource.fetchTasks();
+      this.beadsTaskSource.watch();
       await this.recoverOrphans();
     }
   }
@@ -136,22 +144,31 @@ export class CovenSession extends EventEmitter {
   }
 
   private setupWorktreeEventForwarding(): void {
-    this.worktreeManager.on('worktree:created', (event) => {
+    this.worktreeManager.on('worktree:created', (event: SessionEvents['worktree:created']) => {
       this.emit('worktree:created', event);
       this.emitStateChange();
     });
-    this.worktreeManager.on('worktree:deleted', (event) => {
+    this.worktreeManager.on('worktree:deleted', (event: SessionEvents['worktree:deleted']) => {
       this.emit('worktree:deleted', event);
       this.emitStateChange();
     });
-    this.worktreeManager.on('worktree:merged', (event) => {
+    this.worktreeManager.on('worktree:merged', (event: SessionEvents['worktree:merged']) => {
+      if (event.result.success) {
+        this.addActivity('merge_success', 'Changes merged successfully', {
+          taskId: event.taskId,
+        });
+      }
       this.emit('worktree:merged', event);
       this.emitStateChange();
     });
-    this.worktreeManager.on('worktree:conflict', (event) => {
+    this.worktreeManager.on('worktree:conflict', (event: SessionEvents['worktree:conflict']) => {
+      this.addActivity('conflict', `Merge conflict detected`, {
+        taskId: event.taskId,
+        details: { conflictCount: event.conflicts.length },
+      });
       this.emit('worktree:conflict', event);
     });
-    this.worktreeManager.on('worktree:orphan', (event) => {
+    this.worktreeManager.on('worktree:orphan', (event: SessionEvents['worktree:orphan']) => {
       this.emit('worktree:orphan', event);
     });
   }
@@ -179,6 +196,7 @@ export class CovenSession extends EventEmitter {
       this.status = 'active';
       await this.persistSession();
 
+      this.addActivity('session_started', `Session started on branch ${featureBranch}`);
       this.emit('session:started', { featureBranch } satisfies SessionEvents['session:started']);
       this.emitStateChange();
     } catch (error) {
@@ -249,6 +267,7 @@ export class CovenSession extends EventEmitter {
       this.featureBranch = null;
       await this.persistSession();
 
+      this.addActivity('session_stopped', 'Session stopped');
       this.emit('session:stopped', undefined satisfies SessionEvents['session:stopped']);
       this.emitStateChange();
     } catch (error) {
@@ -284,8 +303,46 @@ export class CovenSession extends EventEmitter {
       },
       familiars: [...this.familiarManager.getAllFamiliars()],
       pendingQuestions: [...this.familiarManager.getPendingQuestions()],
+      activityLog: [...this.activityLog],
       timestamp: Date.now(),
     });
+  }
+
+  /**
+   * Get the recent activity log entries.
+   */
+  getActivityLog(): ActivityEntry[] {
+    return [...this.activityLog];
+  }
+
+  /**
+   * Add an entry to the activity log.
+   * @param type - The type of activity
+   * @param message - The message describing the activity
+   * @param options - Optional task/familiar IDs and details
+   */
+  private addActivity(
+    type: ActivityType,
+    message: string,
+    options?: { taskId?: string; familiarId?: string; details?: Record<string, unknown> }
+  ): void {
+    const entry: ActivityEntry = {
+      id: `${Date.now()}-${randomBytes(4).toString('hex')}`,
+      type,
+      message,
+      timestamp: Date.now(),
+      taskId: options?.taskId,
+      familiarId: options?.familiarId,
+      details: options?.details,
+    };
+
+    // Add to front (most recent first)
+    this.activityLog.unshift(entry);
+
+    // Trim to max entries
+    if (this.activityLog.length > MAX_ACTIVITY_ENTRIES) {
+      this.activityLog = this.activityLog.slice(0, MAX_ACTIVITY_ENTRIES);
+    }
   }
 
   /**
@@ -463,6 +520,17 @@ export class CovenSession extends EventEmitter {
           this.emit('task:created', { task } satisfies SessionEvents['task:created']);
         }
         for (const task of event.updated) {
+          // Log activity for significant status changes
+          if (task.status === 'working') {
+            this.addActivity('task_started', `Started: ${task.title}`, { taskId: task.id });
+          } else if (task.status === 'done') {
+            this.addActivity('task_completed', `Completed: ${task.title}`, { taskId: task.id });
+          } else if (task.status === 'blocked') {
+            this.addActivity('task_blocked', `Blocked: ${task.title}`, {
+              taskId: task.id,
+              details: { dependencies: task.dependencies },
+            });
+          }
           this.emit('task:updated', { task } satisfies SessionEvents['task:updated']);
         }
         for (const taskId of event.removed) {
@@ -479,22 +547,30 @@ export class CovenSession extends EventEmitter {
     });
 
     // Forward familiar events
-    this.familiarManager.on('familiar:spawned', (event) => {
+    this.familiarManager.on('familiar:spawned', (event: SessionEvents['familiar:spawned']) => {
+      this.addActivity('task_started', `Agent spawned for task`, {
+        taskId: event.familiar.taskId,
+        familiarId: event.familiar.taskId,
+      });
       this.emit('familiar:spawned', event);
       this.emitStateChange();
     });
-    this.familiarManager.on('familiar:statusChanged', (event) => {
+    this.familiarManager.on('familiar:statusChanged', (event: SessionEvents['familiar:statusChanged']) => {
       this.emit('familiar:statusChanged', event);
       this.emitStateChange();
     });
-    this.familiarManager.on('familiar:output', (event) => {
+    this.familiarManager.on('familiar:output', (event: SessionEvents['familiar:output']) => {
       this.emit('familiar:output', event);
     });
-    this.familiarManager.on('familiar:terminated', (event) => {
+    this.familiarManager.on('familiar:terminated', (event: SessionEvents['familiar:terminated']) => {
       this.emit('familiar:terminated', event);
       this.emitStateChange();
     });
-    this.familiarManager.on('familiar:question', (event) => {
+    this.familiarManager.on('familiar:question', (event: SessionEvents['familiar:question']) => {
+      this.addActivity('agent_question', `Agent needs input: ${event.question.question.slice(0, 50)}...`, {
+        taskId: event.question.taskId,
+        familiarId: event.question.familiarId,
+      });
       this.emit('familiar:question', event);
       this.emitStateChange();
     });

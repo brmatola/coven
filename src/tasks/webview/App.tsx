@@ -40,7 +40,10 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
   const [editedTitle, setEditedTitle] = useState('');
   const [editedDescription, setEditedDescription] = useState('');
   const [editedAC, setEditedAC] = useState('');
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // Track which fields have local edits (use refs to avoid closure issues)
+  const dirtyFieldsRef = useRef<Set<'title' | 'description' | 'acceptanceCriteria'>>(new Set());
+  const pendingSaveRef = useRef<boolean>(false);
 
   // Debounce timer ref
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,12 +54,19 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
       if (message.type === 'state') {
         setState(message.payload);
 
-        // Initialize local state from task if not edited
         const task = message.payload.task;
-        if (task && !hasUnsavedChanges) {
-          setEditedTitle(task.title);
-          setEditedDescription(task.description);
-          setEditedAC(task.acceptanceCriteria ?? '');
+        if (task) {
+          // Only update fields that don't have local edits
+          // This prevents sync from overwriting user's typing
+          if (!dirtyFieldsRef.current.has('title') && !pendingSaveRef.current) {
+            setEditedTitle(task.title);
+          }
+          if (!dirtyFieldsRef.current.has('description') && !pendingSaveRef.current) {
+            setEditedDescription(task.description);
+          }
+          if (!dirtyFieldsRef.current.has('acceptanceCriteria') && !pendingSaveRef.current) {
+            setEditedAC(task.acceptanceCriteria ?? '');
+          }
         }
       }
     };
@@ -67,7 +77,7 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     vscode.postMessage({ type: 'ready' });
 
     return () => window.removeEventListener('message', handleMessage);
-  }, [vscode, hasUnsavedChanges]);
+  }, [vscode]);
 
   // Auto-save with debounce
   const debouncedSave = useCallback(
@@ -76,19 +86,30 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
         clearTimeout(saveTimeoutRef.current);
       }
 
+      pendingSaveRef.current = true;
+
       saveTimeoutRef.current = setTimeout(() => {
         vscode.postMessage({ type: 'save', payload: update });
-        setHasUnsavedChanges(false);
+        // Clear dirty flags after save is sent
+        // Keep pendingSaveRef true until we get confirmation (state update with isSaving: false)
+        dirtyFieldsRef.current.clear();
       }, 1000); // 1 second debounce
     },
     [vscode]
   );
 
+  // Clear pending save flag when save completes
+  useEffect(() => {
+    if (state && !state.isSaving && pendingSaveRef.current) {
+      pendingSaveRef.current = false;
+    }
+  }, [state?.isSaving]);
+
   const handleTitleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const newTitle = e.target.value;
       setEditedTitle(newTitle);
-      setHasUnsavedChanges(true);
+      dirtyFieldsRef.current.add('title');
       debouncedSave({ title: newTitle });
     },
     [debouncedSave]
@@ -98,7 +119,7 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newDesc = e.target.value;
       setEditedDescription(newDesc);
-      setHasUnsavedChanges(true);
+      dirtyFieldsRef.current.add('description');
       debouncedSave({ description: newDesc });
     },
     [debouncedSave]
@@ -108,7 +129,7 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newAC = e.target.value;
       setEditedAC(newAC);
-      setHasUnsavedChanges(true);
+      dirtyFieldsRef.current.add('acceptanceCriteria');
       debouncedSave({ acceptanceCriteria: newAC });
     },
     [debouncedSave]

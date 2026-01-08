@@ -57,6 +57,9 @@ function createMockState(overrides: Partial<CovenState> = {}): CovenState {
         conflicts: 'toast',
         errors: 'toast',
       },
+      agentPermissions: {
+        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep'],
+      },
     },
     tasks: {
       ready: [],
@@ -67,6 +70,7 @@ function createMockState(overrides: Partial<CovenState> = {}): CovenState {
     },
     familiars: [],
     pendingQuestions: [],
+    activityLog: [],
     timestamp: Date.now(),
     ...overrides,
   };

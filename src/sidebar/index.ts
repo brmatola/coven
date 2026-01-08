@@ -7,5 +7,7 @@ export {
   FamiliarItem,
   EmptyStateItem,
   NoSessionItem,
+  ActivityGroupItem,
+  ActivityItem,
 } from './GrimoireTreeProvider';
 export { CovenStatusBar } from './CovenStatusBar';

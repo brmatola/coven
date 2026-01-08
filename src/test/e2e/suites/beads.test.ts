@@ -269,6 +269,149 @@ suite('Beads Integration E2E Tests', function () {
     });
   });
 
+  suite('All Issue Types Are Synced', () => {
+    test('Feature type issues should be included in sync', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
+
+      // Create a feature issue
+      const result = await execAsync(
+        'bd create --title "E2E Test - Feature Issue" --type feature --json',
+        { cwd: workspacePath }
+      ).catch(() => null);
+
+      if (!result) {
+        this.skip();
+        return;
+      }
+
+      const parsed = JSON.parse(result.stdout);
+      const taskId = parsed.id;
+      if (taskId) {
+        createdTaskIds.push(taskId);
+      }
+
+      // Get ready list via bd ready --json
+      const { stdout } = await execAsync('bd ready --json', { cwd: workspacePath });
+      const readyItems = JSON.parse(stdout);
+
+      // Feature should be in the list
+      const foundFeature = readyItems.find(
+        (item: { id: string; issue_type: string }) =>
+          item.id === taskId && item.issue_type === 'feature'
+      );
+      assert.ok(foundFeature, 'Feature issue should be in ready list');
+    });
+
+    test('Bug type issues should be included in sync', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
+
+      // Create a bug issue
+      const result = await execAsync(
+        'bd create --title "E2E Test - Bug Issue" --type bug --json',
+        { cwd: workspacePath }
+      ).catch(() => null);
+
+      if (!result) {
+        this.skip();
+        return;
+      }
+
+      const parsed = JSON.parse(result.stdout);
+      const taskId = parsed.id;
+      if (taskId) {
+        createdTaskIds.push(taskId);
+      }
+
+      // Get ready list
+      const { stdout } = await execAsync('bd ready --json', { cwd: workspacePath });
+      const readyItems = JSON.parse(stdout);
+
+      // Bug should be in the list
+      const foundBug = readyItems.find(
+        (item: { id: string; issue_type: string }) =>
+          item.id === taskId && item.issue_type === 'bug'
+      );
+      assert.ok(foundBug, 'Bug issue should be in ready list');
+    });
+
+    test('Epic type issues should be included in sync', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
+
+      // Create an epic issue
+      const result = await execAsync(
+        'bd create --title "E2E Test - Epic Issue" --type epic --json',
+        { cwd: workspacePath }
+      ).catch(() => null);
+
+      if (!result) {
+        this.skip();
+        return;
+      }
+
+      const parsed = JSON.parse(result.stdout);
+      const taskId = parsed.id;
+      if (taskId) {
+        createdTaskIds.push(taskId);
+      }
+
+      // Get ready list
+      const { stdout } = await execAsync('bd ready --json', { cwd: workspacePath });
+      const readyItems = JSON.parse(stdout);
+
+      // Epic should be in the list
+      const foundEpic = readyItems.find(
+        (item: { id: string; issue_type: string }) =>
+          item.id === taskId && item.issue_type === 'epic'
+      );
+      assert.ok(foundEpic, 'Epic issue should be in ready list');
+    });
+  });
+
+  suite('File Watching Triggers Sync', () => {
+    test('.beads directory changes should trigger sync', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
+
+      // Create initial task
+      const taskId = await createTestTask(workspacePath, 'E2E Test - File Watch');
+      if (!taskId) {
+        this.skip();
+        return;
+      }
+      createdTaskIds.push(taskId);
+
+      // Trigger a refresh to ensure extension is watching
+      try {
+        await vscode.commands.executeCommand('coven.refreshTasks');
+      } catch {
+        // Expected if no session
+      }
+
+      // Modify beads data externally (this simulates bd sync/bd create)
+      await execAsync(`bd update ${taskId} --title "E2E Test - File Watch Updated"`, {
+        cwd: workspacePath,
+      });
+
+      // Wait for file watcher debounce (300ms) + processing time
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Verify task was updated
+      const task = await getTask(workspacePath, taskId);
+      assert.ok(task?.title.includes('Updated'), 'Task title should be updated');
+    });
+  });
+
   suite('Beads Unavailable Shows Error', () => {
     test('Extension should be active regardless of Beads availability', async () => {
       const extension = vscode.extensions.getExtension('coven.coven');

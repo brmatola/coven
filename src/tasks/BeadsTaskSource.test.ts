@@ -376,4 +376,289 @@ describe('BeadsTaskSource', () => {
       expect(tasks[0].acceptanceCriteria).toBeUndefined();
     });
   });
+
+  describe('closeTask', () => {
+    beforeEach(() => {
+      // Add closeTask to mock
+      (mockClient as ReturnType<typeof vi.fn> & { closeTask: ReturnType<typeof vi.fn> }).closeTask = vi.fn().mockResolvedValue({ success: true });
+    });
+
+    it('optimistically removes task from cache', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1' })]);
+      await source.fetchTasks();
+      expect(source.getTask('task-1')).toBeDefined();
+
+      const syncHandler = vi.fn();
+      source.on('sync', syncHandler);
+
+      await source.closeTask('task-1');
+
+      // Task should be removed immediately
+      expect(source.getTask('task-1')).toBeUndefined();
+      expect(syncHandler).toHaveBeenCalledWith({
+        added: [],
+        updated: [],
+        removed: ['task-1'],
+      });
+    });
+
+    it('restores task on CLI failure', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', title: 'Test' })]);
+      await source.fetchTasks();
+
+      (mockClient as ReturnType<typeof vi.fn> & { closeTask: ReturnType<typeof vi.fn> }).closeTask = vi.fn().mockResolvedValue({ success: false, error: 'CLI failed' });
+
+      const errorHandler = vi.fn();
+      source.on('error', errorHandler);
+
+      await source.closeTask('task-1');
+
+      // Wait for the background promise to resolve
+      await vi.runAllTimersAsync();
+
+      // Task should be restored
+      expect(source.getTask('task-1')).toBeDefined();
+      expect(errorHandler).toHaveBeenCalled();
+    });
+
+    it('restores task on CLI error', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', title: 'Test' })]);
+      await source.fetchTasks();
+
+      (mockClient as ReturnType<typeof vi.fn> & { closeTask: ReturnType<typeof vi.fn> }).closeTask = vi.fn().mockRejectedValue(new Error('Network error'));
+
+      const errorHandler = vi.fn();
+      source.on('error', errorHandler);
+
+      await source.closeTask('task-1');
+
+      // Wait for the background promise to resolve
+      await vi.runAllTimersAsync();
+
+      // Task should be restored
+      expect(source.getTask('task-1')).toBeDefined();
+      expect(errorHandler).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateTaskStatus', () => {
+    it('optimistically updates status in cache', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', status: 'open' })]);
+      await source.fetchTasks();
+      expect(source.getTask('task-1')?.status).toBe('ready');
+
+      const syncHandler = vi.fn();
+      source.on('sync', syncHandler);
+
+      await source.updateTaskStatus('task-1', 'working');
+
+      // Status should be updated immediately
+      expect(source.getTask('task-1')?.status).toBe('working');
+      expect(syncHandler).toHaveBeenCalledWith({
+        added: [],
+        updated: [expect.objectContaining({ id: 'task-1', status: 'working' })],
+        removed: [],
+      });
+    });
+
+    it('returns updated task from cache', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', status: 'open' })]);
+      await source.fetchTasks();
+
+      const result = await source.updateTaskStatus('task-1', 'working');
+
+      expect(result).toBeDefined();
+      expect(result?.status).toBe('working');
+    });
+
+    it('returns null for unknown status mapping', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1' })]);
+      await source.fetchTasks();
+
+      // Use type assertion to test invalid status
+      const result = await source.updateTaskStatus('task-1', 'invalid' as 'ready');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('updateTask', () => {
+    beforeEach(() => {
+      (mockClient as ReturnType<typeof vi.fn> & { updateTask: ReturnType<typeof vi.fn> }).updateTask = vi.fn().mockResolvedValue({ success: true });
+    });
+
+    it('updates task title and description', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1' })]);
+      await source.fetchTasks();
+
+      const result = await source.updateTask('task-1', {
+        title: 'New Title',
+        description: 'New Description',
+      });
+
+      expect(result).toBe(true);
+      expect((mockClient as ReturnType<typeof vi.fn> & { updateTask: ReturnType<typeof vi.fn> }).updateTask).toHaveBeenCalled();
+    });
+
+    it('returns false on failure', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1' })]);
+      await source.fetchTasks();
+
+      (mockClient as ReturnType<typeof vi.fn> & { updateTask: ReturnType<typeof vi.fn> }).updateTask = vi.fn().mockResolvedValue({ success: false, error: 'Failed' });
+
+      const errorHandler = vi.fn();
+      source.on('error', errorHandler);
+
+      const result = await source.updateTask('task-1', { title: 'New' });
+
+      expect(result).toBe(false);
+      expect(errorHandler).toHaveBeenCalled();
+    });
+
+    it('appends acceptance criteria to description', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', description: 'Original' })]);
+      await source.fetchTasks();
+
+      await source.updateTask('task-1', {
+        acceptanceCriteria: '- Test AC',
+      });
+
+      expect((mockClient as ReturnType<typeof vi.fn> & { updateTask: ReturnType<typeof vi.fn> }).updateTask).toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({
+          description: expect.stringContaining('## Acceptance Criteria'),
+        })
+      );
+    });
+  });
+
+  describe('getTasksByStatus', () => {
+    it('filters tasks by status', async () => {
+      mockClient.listReady.mockResolvedValue([
+        createMockBead({ id: 'task-1', status: 'open' }),
+        createMockBead({ id: 'task-2', status: 'in_progress' }),
+        createMockBead({ id: 'task-3', status: 'open' }),
+      ]);
+      await source.fetchTasks();
+
+      const readyTasks = source.getTasksByStatus('ready');
+      const workingTasks = source.getTasksByStatus('working');
+
+      expect(readyTasks).toHaveLength(2);
+      expect(workingTasks).toHaveLength(1);
+    });
+  });
+
+  describe('getTasksGroupedByStatus', () => {
+    it('groups tasks by status', async () => {
+      mockClient.listReady.mockResolvedValue([
+        createMockBead({ id: 'task-1', status: 'open' }),
+        createMockBead({ id: 'task-2', status: 'in_progress' }),
+        createMockBead({ id: 'task-3', status: 'closed' }),
+      ]);
+      await source.fetchTasks();
+
+      const grouped = source.getTasksGroupedByStatus();
+
+      expect(grouped.ready).toHaveLength(1);
+      expect(grouped.working).toHaveLength(1);
+      expect(grouped.done).toHaveLength(1);
+      expect(grouped.blocked).toHaveLength(0);
+      expect(grouped.review).toHaveLength(0);
+    });
+  });
+
+  describe('getNextTask', () => {
+    it('returns highest priority ready task', async () => {
+      mockClient.listReady.mockResolvedValue([
+        createMockBead({ id: 'low', priority: 4, status: 'open' }),
+        createMockBead({ id: 'critical', priority: 1, status: 'open' }),
+        createMockBead({ id: 'high', priority: 2, status: 'open' }),
+      ]);
+      await source.fetchTasks();
+
+      const next = source.getNextTask();
+
+      expect(next?.id).toBe('critical');
+    });
+
+    it('returns undefined when no ready tasks', async () => {
+      mockClient.listReady.mockResolvedValue([
+        createMockBead({ id: 'task-1', status: 'in_progress' }),
+      ]);
+      await source.fetchTasks();
+
+      const next = source.getNextTask();
+
+      expect(next).toBeUndefined();
+    });
+
+    it('returns oldest task at same priority', async () => {
+      const older = '2026-01-01T00:00:00Z';
+      const newer = '2026-01-02T00:00:00Z';
+      mockClient.listReady.mockResolvedValue([
+        createMockBead({ id: 'newer', priority: 2, status: 'open', created_at: newer }),
+        createMockBead({ id: 'older', priority: 2, status: 'open', created_at: older }),
+      ]);
+      await source.fetchTasks();
+
+      const next = source.getNextTask();
+
+      expect(next?.id).toBe('older');
+    });
+  });
+
+  describe('priority edge cases', () => {
+    it('maps priority 0 to critical', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', priority: 0 })]);
+      const tasks = await source.fetchTasks();
+      expect(tasks[0].priority).toBe('critical');
+    });
+
+    it('maps unknown priority to low', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', priority: 99 })]);
+      const tasks = await source.fetchTasks();
+      expect(tasks[0].priority).toBe('low');
+    });
+  });
+
+  describe('sync change detection', () => {
+    it('detects status changes', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', status: 'open' })]);
+      await source.fetchTasks();
+
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', status: 'in_progress' })]);
+      const result = await source.sync();
+
+      expect(result.updated).toHaveLength(1);
+      expect(result.updated[0].status).toBe('working');
+    });
+
+    it('detects priority changes', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', priority: 2 })]);
+      await source.fetchTasks();
+
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1', priority: 1 })]);
+      const result = await source.sync();
+
+      expect(result.updated).toHaveLength(1);
+      expect(result.updated[0].priority).toBe('critical');
+    });
+
+    it('detects dependency changes', async () => {
+      mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1' })]);
+      await source.fetchTasks();
+
+      mockClient.listReady.mockResolvedValue([
+        createMockBead({
+          id: 'task-1',
+          dependencies: [{ id: 'dep-1', title: 'Dep', status: 'open', dependency_type: 'blocked-by' }],
+        }),
+      ]);
+      const result = await source.sync();
+
+      expect(result.updated).toHaveLength(1);
+      expect(result.updated[0].dependencies).toContain('dep-1');
+    });
+  });
 });

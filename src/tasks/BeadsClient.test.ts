@@ -103,30 +103,32 @@ describe('BeadsClient', () => {
       expect(result[1].id).toBe('task-2');
     });
 
-    it('filters out non-task items', async () => {
+    it('includes all issue types (task, bug, feature, epic, story)', async () => {
       const beads = [
         createMockBeadData({ id: 'task-1', issue_type: 'task' }),
         createMockBeadData({ id: 'epic-1', issue_type: 'epic' }),
+        createMockBeadData({ id: 'feature-1', issue_type: 'feature' }),
+        createMockBeadData({ id: 'bug-1', issue_type: 'bug' }),
       ];
       mockExecSuccess(JSON.stringify(beads));
 
       const result = await client.listReady();
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('task-1');
+      expect(result).toHaveLength(4);
+      expect(result.map((b) => b.id)).toEqual(['task-1', 'epic-1', 'feature-1', 'bug-1']);
     });
 
-    it('filters out closed tasks', async () => {
+    it('returns all items from bd ready (no additional filtering)', async () => {
       const beads = [
         createMockBeadData({ id: 'task-1', status: 'open' }),
-        createMockBeadData({ id: 'task-2', status: 'closed' }),
+        createMockBeadData({ id: 'task-2', status: 'open' }),
       ];
       mockExecSuccess(JSON.stringify(beads));
 
       const result = await client.listReady();
 
-      expect(result).toHaveLength(1);
-      expect(result[0].id).toBe('task-1');
+      // bd ready already filters, we just return what it gives us
+      expect(result).toHaveLength(2);
     });
 
     it('throws BeadsClientError on failure', async () => {

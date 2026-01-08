@@ -122,6 +122,43 @@ export interface PendingQuestion {
 }
 
 // ============================================================================
+// Activity Log Types
+// ============================================================================
+
+/**
+ * Types of activity entries that can be logged.
+ */
+export type ActivityType =
+  | 'task_started'
+  | 'task_completed'
+  | 'task_blocked'
+  | 'agent_question'
+  | 'conflict'
+  | 'merge_success'
+  | 'session_started'
+  | 'session_stopped';
+
+/**
+ * An entry in the session activity log.
+ */
+export interface ActivityEntry {
+  /** Unique identifier for this activity */
+  id: string;
+  /** Type of activity */
+  type: ActivityType;
+  /** Primary message describing the activity */
+  message: string;
+  /** Timestamp when the activity occurred */
+  timestamp: number;
+  /** Related task ID (if applicable) */
+  taskId?: string;
+  /** Related familiar ID (if applicable) */
+  familiarId?: string;
+  /** Additional context data */
+  details?: Record<string, unknown>;
+}
+
+// ============================================================================
 // Session Types
 // ============================================================================
 
@@ -237,6 +274,8 @@ export interface CovenState {
   familiars: Familiar[];
   /** Pending questions from agents */
   pendingQuestions: PendingQuestion[];
+  /** Recent activity log entries (most recent first) */
+  activityLog: ActivityEntry[];
   /** Timestamp of this snapshot */
   timestamp: number;
 }
@@ -463,6 +502,11 @@ export function validateSessionConfig(value: unknown): SessionConfig {
         )
           ? ((obj.notifications as Record<string, unknown>).errors as NotificationLevel)
           : DEFAULT_SESSION_CONFIG.notifications.errors,
+    },
+    agentPermissions: {
+      allowedTools: Array.isArray((obj.agentPermissions as Record<string, unknown>)?.allowedTools)
+        ? ((obj.agentPermissions as Record<string, unknown>).allowedTools as string[])
+        : DEFAULT_SESSION_CONFIG.agentPermissions.allowedTools,
     },
   };
 }

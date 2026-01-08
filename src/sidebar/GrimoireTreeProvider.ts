@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CovenSession } from '../session/CovenSession';
-import { CovenState, Task, TaskStatus, Familiar, FamiliarStatus } from '../shared/types';
+import { CovenState, Task, TaskStatus, Familiar, FamiliarStatus, ActivityEntry, ActivityType } from '../shared/types';
 
 /**
  * Tree item types for type-safe context handling.
@@ -11,7 +11,9 @@ export type TreeItemType =
   | 'task'
   | 'familiar'
   | 'emptyState'
-  | 'noSession';
+  | 'noSession'
+  | 'activityGroup'
+  | 'activityItem';
 
 /**
  * Base interface for all grimoire tree items.
@@ -30,6 +32,7 @@ export class GrimoireTreeProvider implements vscode.TreeDataProvider<GrimoireTre
 
   private session: CovenSession | null = null;
   private expandedGroups: Set<TaskStatus> = new Set(['ready', 'working', 'review']);
+  private activityExpanded: boolean = true;
   private stateSubscription: (() => void) | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -37,6 +40,10 @@ export class GrimoireTreeProvider implements vscode.TreeDataProvider<GrimoireTre
     const saved = context.workspaceState.get<TaskStatus[]>('grimoire.expandedGroups');
     if (saved) {
       this.expandedGroups = new Set(saved);
+    }
+    const activitySaved = context.workspaceState.get<boolean>('grimoire.activityExpanded');
+    if (activitySaved !== undefined) {
+      this.activityExpanded = activitySaved;
     }
   }
 
@@ -97,6 +104,10 @@ export class GrimoireTreeProvider implements vscode.TreeDataProvider<GrimoireTre
       return this.getFamiliarChildren(element.task.id);
     }
 
+    if (element instanceof ActivityGroupItem) {
+      return this.getActivityChildren();
+    }
+
     return [];
   }
 
@@ -132,6 +143,15 @@ export class GrimoireTreeProvider implements vscode.TreeDataProvider<GrimoireTre
     }
     // Persist state
     void this.context.workspaceState.update('grimoire.expandedGroups', Array.from(this.expandedGroups));
+    this.refresh();
+  }
+
+  /**
+   * Toggle expand/collapse state for the activity log.
+   */
+  toggleActivityExpanded(): void {
+    this.activityExpanded = !this.activityExpanded;
+    void this.context.workspaceState.update('grimoire.activityExpanded', this.activityExpanded);
     this.refresh();
   }
 
@@ -180,6 +200,11 @@ export class GrimoireTreeProvider implements vscode.TreeDataProvider<GrimoireTre
       items.push(new EmptyStateItem());
     }
 
+    // Activity log section (always show if there are entries)
+    if (state.activityLog.length > 0) {
+      items.push(new ActivityGroupItem(state.activityLog.length, this.activityExpanded));
+    }
+
     return items;
   }
 
@@ -210,6 +235,14 @@ export class GrimoireTreeProvider implements vscode.TreeDataProvider<GrimoireTre
     if (!this.session) return false;
     const state = this.session.getState();
     return state.familiars.some((f) => f.taskId === taskId);
+  }
+
+  private getActivityChildren(): GrimoireTreeItem[] {
+    if (!this.session) return [];
+
+    const state = this.session.getState();
+    // Show up to 10 most recent activities
+    return state.activityLog.slice(0, 10).map((entry) => new ActivityItem(entry));
   }
 }
 
@@ -389,6 +422,62 @@ export class NoSessionItem extends GrimoireTreeItem {
   }
 }
 
+/**
+ * Activity log group header.
+ */
+export class ActivityGroupItem extends GrimoireTreeItem {
+  readonly itemType: TreeItemType = 'activityGroup';
+
+  constructor(count: number, expanded: boolean) {
+    super('Activity', expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    this.description = `(${count})`;
+    this.iconPath = new vscode.ThemeIcon('history');
+    this.contextValue = 'activityGroup';
+  }
+}
+
+/**
+ * Individual activity entry in the log.
+ */
+export class ActivityItem extends GrimoireTreeItem {
+  readonly itemType: TreeItemType = 'activityItem';
+  readonly entry: ActivityEntry;
+
+  constructor(entry: ActivityEntry) {
+    super(entry.message, vscode.TreeItemCollapsibleState.None);
+    this.entry = entry;
+    this.description = formatTimeAgo(entry.timestamp);
+    this.iconPath = getActivityIcon(entry.type);
+    this.contextValue = `activity.${entry.type}`;
+
+    // Build tooltip with full details
+    const tooltipLines = [
+      `**${entry.message}**`,
+      '',
+      `Time: ${new Date(entry.timestamp).toLocaleString()}`,
+    ];
+    if (entry.taskId) {
+      tooltipLines.push(`Task: ${entry.taskId}`);
+    }
+    if (entry.details) {
+      tooltipLines.push('', '**Details:**');
+      for (const [key, value] of Object.entries(entry.details)) {
+        tooltipLines.push(`- ${key}: ${JSON.stringify(value)}`);
+      }
+    }
+    this.tooltip = new vscode.MarkdownString(tooltipLines.join('\n'));
+
+    // Command to navigate to related task if applicable
+    if (entry.taskId) {
+      this.command = {
+        command: 'coven.showTaskDetail',
+        title: 'Show Task',
+        arguments: [entry.taskId],
+      };
+    }
+  }
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -452,4 +541,41 @@ function formatElapsedTime(startTimestamp: number): string {
     return `${minutes}m ${seconds % 60}s`;
   }
   return `${seconds}s`;
+}
+
+function formatTimeAgo(timestamp: number): string {
+  const elapsed = Date.now() - timestamp;
+  const seconds = Math.floor(elapsed / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) {
+    return `${days}d ago`;
+  }
+  if (hours > 0) {
+    return `${hours}h ago`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ago`;
+  }
+  if (seconds > 5) {
+    return `${seconds}s ago`;
+  }
+  return 'just now';
+}
+
+function getActivityIcon(type: ActivityType): vscode.ThemeIcon {
+  const icons: Record<ActivityType, [string, string?]> = {
+    task_started: ['play', 'charts.blue'],
+    task_completed: ['check', 'charts.green'],
+    task_blocked: ['lock', 'charts.red'],
+    agent_question: ['question', 'charts.yellow'],
+    conflict: ['git-pull-request', 'charts.red'],
+    merge_success: ['git-merge', 'charts.green'],
+    session_started: ['rocket', 'charts.blue'],
+    session_stopped: ['stop', 'charts.orange'],
+  };
+  const [icon, color] = icons[type];
+  return color ? new vscode.ThemeIcon(icon, new vscode.ThemeColor(color)) : new vscode.ThemeIcon(icon);
 }

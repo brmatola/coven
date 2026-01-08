@@ -21,9 +21,8 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     title: 'Test Task',
     description: 'A simple test task',
     status: 'working',
-    priority: 2,
+    priority: 'medium',
     dependencies: [],
-    tags: [],
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
@@ -51,7 +50,21 @@ describe('AgentOrchestrator', () => {
   const config: SessionConfig = {
     maxConcurrentAgents: 3,
     agentTimeoutMs: 600000,
-    autoMerge: false,
+    worktreeBasePath: '.coven/worktrees',
+    beadsSyncIntervalMs: 30000,
+    mergeConflictMaxRetries: 2,
+    preMergeChecks: { enabled: false, commands: [] },
+    logging: { level: 'info', retentionDays: 7 },
+    outputRetentionDays: 7,
+    notifications: {
+      questions: 'modal',
+      completions: 'toast',
+      conflicts: 'toast',
+      errors: 'toast',
+    },
+    agentPermissions: {
+      allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep'],
+    },
   };
 
   beforeEach(() => {

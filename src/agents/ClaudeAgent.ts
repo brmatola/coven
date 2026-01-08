@@ -191,7 +191,7 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     // Set up idle timeout checker
     this.setupIdleChecker(runningAgent);
 
-    return handle;
+    return Promise.resolve(handle);
   }
 
   /**
@@ -493,15 +493,19 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       // Try to extract files changed from output
       const filesChanged = this.extractFilesChanged(fullOutput);
 
-      // Build result
+      // Build result - only include optional properties when defined
       const result: AgentResult = {
         success: success && hasCompletionSignal,
         summary: this.extractSummary(fullOutput) || (success ? 'Task completed' : 'Task failed'),
         filesChanged,
-        exitCode: code ?? undefined,
         durationMs,
-        error: !success ? `Process exited with code ${code}` : undefined,
       };
+      if (code !== null && code !== undefined) {
+        result.exitCode = code;
+      }
+      if (!success) {
+        result.error = `Process exited with code ${code}`;
+      }
 
       config.callbacks.onComplete(result);
     });

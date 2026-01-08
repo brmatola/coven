@@ -15,7 +15,7 @@ export interface BeadData {
   description?: string;
   status: 'open' | 'in_progress' | 'closed';
   priority: number;
-  issue_type: 'task' | 'bug' | 'epic' | 'story';
+  issue_type: 'task' | 'bug' | 'epic' | 'story' | 'feature';
   created_at: string;
   created_by: string;
   updated_at: string;
@@ -92,13 +92,14 @@ export class BeadsClient {
   }
 
   /**
-   * List ready (unblocked) tasks.
+   * List ready (unblocked) issues of all types.
    */
   async listReady(): Promise<BeadData[]> {
     try {
       const { stdout } = await this.exec('bd ready --json');
       const beads = JSON.parse(stdout) as BeadData[];
-      return beads.filter((b) => b.issue_type === 'task' && b.status === 'open');
+      // Return all ready issues - bd ready already filters for unblocked
+      return beads;
     } catch (err) {
       this.logger.error('Failed to list ready beads', { error: String(err) });
       throw new BeadsClientError('Failed to list ready tasks', err);
@@ -106,13 +107,14 @@ export class BeadsClient {
   }
 
   /**
-   * List all open tasks (including blocked ones).
+   * List all open issues (including blocked ones).
    */
   async listOpen(): Promise<BeadData[]> {
     try {
       const { stdout } = await this.exec('bd list --status open --json');
       const beads = JSON.parse(stdout) as BeadData[];
-      return beads.filter((b) => b.issue_type === 'task');
+      // Return all open issues regardless of type
+      return beads;
     } catch (err) {
       this.logger.error('Failed to list open beads', { error: String(err) });
       throw new BeadsClientError('Failed to list open tasks', err);
