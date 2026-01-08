@@ -17,3 +17,6 @@ export type { TaskPromptOptions, CodebaseContext } from './prompts';
 
 // FamiliarManager (existing)
 export { FamiliarManager } from './FamiliarManager';
+
+// Output channel management
+export { FamiliarOutputChannel } from './FamiliarOutputChannel';

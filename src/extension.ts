@@ -6,10 +6,12 @@ import { checkPrerequisites } from './setup/prerequisites';
 import { SetupPanel } from './setup/SetupPanel';
 import { TaskDetailPanel } from './tasks/TaskDetailPanel';
 import { ExtensionContext } from './shared/extensionContext';
+import { FamiliarOutputChannel } from './agents/FamiliarOutputChannel';
 
 let grimoireProvider: GrimoireTreeProvider;
 let statusBar: CovenStatusBar;
 let covenSession: CovenSession | null = null;
+let familiarOutputChannel: FamiliarOutputChannel | null = null;
 let treeView: vscode.TreeView<unknown>;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -72,6 +74,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
+  if (familiarOutputChannel) {
+    familiarOutputChannel.dispose();
+    familiarOutputChannel = null;
+  }
   if (covenSession) {
     covenSession.dispose();
     covenSession = null;
@@ -91,6 +97,13 @@ async function initializeSession(workspaceRoot: string): Promise<void> {
   try {
     covenSession = new CovenSession(workspaceRoot);
     await covenSession.initialize();
+
+    // Initialize output channel manager for familiars
+    familiarOutputChannel = new FamiliarOutputChannel(
+      covenSession.getFamiliarManager(),
+      workspaceRoot
+    );
+    await familiarOutputChannel.initialize();
 
     // Connect session to UI components
     grimoireProvider.setSession(covenSession);
@@ -262,9 +275,19 @@ async function showTaskDetail(taskId: string): Promise<void> {
   await TaskDetailPanel.createOrShow(ctx.extensionUri, beadsTaskSource, taskId);
 }
 
-function viewFamiliarOutput(taskId: string): void {
-  // Familiar output - will be implemented in add-agent-interaction
-  void vscode.window.showInformationMessage(`Familiar output: ${taskId} (not yet implemented)`);
+async function viewFamiliarOutput(taskId: string): Promise<void> {
+  if (!familiarOutputChannel) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  // Load persisted output if channel doesn't exist yet
+  if (!familiarOutputChannel.hasChannel(taskId)) {
+    await familiarOutputChannel.loadPersistedOutput(taskId);
+  }
+
+  // Show the output channel
+  familiarOutputChannel.showChannel(taskId, false);
 }
 
 async function createTask(): Promise<void> {
@@ -300,9 +323,17 @@ async function startTask(taskId: string): Promise<void> {
 
   try {
     const beadsTaskSource = covenSession.getBeadsTaskSource();
+
+    // Find task to get title for output channel naming
+    const tasks = await beadsTaskSource.fetchTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (familiarOutputChannel && task) {
+      familiarOutputChannel.setTaskTitle(taskId, task.title);
+    }
+
     await beadsTaskSource.updateTaskStatus(taskId, 'working');
-    // Agent spawning will be implemented in add-claude-agent-integration
-    void vscode.window.showInformationMessage(`Started task: ${taskId} (agent spawning not yet implemented)`);
+    // TODO: Wire agent spawning via AgentOrchestrator
+    void vscode.window.showInformationMessage(`Started task: ${taskId} (agent spawning not yet wired)`);
   } catch (err) {
     await vscode.window.showErrorMessage(
       `Failed to start task: ${err instanceof Error ? err.message : String(err)}`
@@ -329,7 +360,7 @@ async function stopTask(taskId: string): Promise<void> {
   try {
     const beadsTaskSource = covenSession.getBeadsTaskSource();
     await beadsTaskSource.updateTaskStatus(taskId, 'ready');
-    // Agent termination will be implemented in add-claude-agent-integration
+    // TODO: Wire agent termination via AgentOrchestrator
   } catch (err) {
     await vscode.window.showErrorMessage(
       `Failed to stop task: ${err instanceof Error ? err.message : String(err)}`

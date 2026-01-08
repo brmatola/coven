@@ -1,12 +1,12 @@
 # Tasks: Add Agent Interaction
 
 ## 1. Output Channel
-- [ ] 1.1 Create `FamiliarOutputChannel` managing VSCode output channels
-- [ ] 1.2 Create one output channel per active familiar
-- [ ] 1.3 Stream agent output to channel in real-time
-- [ ] 1.4 Add timestamps and formatting to output
-- [ ] 1.5 Implement output channel cleanup on task completion
-- [ ] 1.6 Add "View Output" command to reveal channel
+- [x] 1.1 Create `FamiliarOutputChannel` managing VSCode output channels
+- [x] 1.2 Create one output channel per active familiar
+- [x] 1.3 Stream agent output to channel in real-time
+- [x] 1.4 Add timestamps and formatting to output
+- [x] 1.5 Implement output channel cleanup on task completion
+- [x] 1.6 Add "View Output" command to reveal channel
 
 ## 2. Question Response UI
 - [ ] 2.1 Create question response webview panel
