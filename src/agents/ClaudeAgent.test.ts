@@ -19,11 +19,21 @@ const mockProcess = Object.assign(new EventEmitter(), {
   stdout: mockStdout,
   stderr: mockStderr,
   killed: false,
-  kill: vi.fn().mockImplementation(function (this: EventEmitter & { killed: boolean }) {
-    this.killed = true;
-    // Emit close synchronously to ensure cleanup completes
-    process.nextTick(() => this.emit('close', 0));
-  }),
+  exitCode: null as number | null,
+  signalCode: null as string | null,
+  kill: vi
+    .fn()
+    .mockImplementation(function (
+      this: EventEmitter & { killed: boolean; exitCode: number | null; signalCode: string | null }
+    ) {
+      this.killed = true;
+      // Emit close synchronously to ensure cleanup completes
+      process.nextTick(() => {
+        this.exitCode = 0;
+        this.emit('close', 0);
+      });
+      return true; // kill() returns boolean indicating if signal was sent
+    }),
 });
 
 vi.mock('child_process', () => ({
@@ -75,6 +85,8 @@ describe('ClaudeAgent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProcess.killed = false;
+    mockProcess.exitCode = null;
+    mockProcess.signalCode = null;
     mockProcess.removeAllListeners();
     mockStdout.removeAllListeners();
     mockStderr.removeAllListeners();
@@ -144,11 +156,27 @@ describe('ClaudeAgent', () => {
 
       await agent.spawn(config);
 
+      // Tools should be passed as separate arguments (not joined with space)
       expect(spawn).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['--allowedTools', 'Read Write Bash(git:*)']),
+        expect.arrayContaining(['--allowedTools', 'Read', 'Write', 'Bash(git:*)']),
         expect.any(Object)
       );
+    });
+
+    it('should filter out invalid tool names', async () => {
+      const { spawn } = await import('child_process');
+      const config = createMockConfig({
+        allowedTools: ['Read', 'evil; rm -rf /', 'Write'],
+      });
+
+      await agent.spawn(config);
+
+      // Should only include valid tools
+      const args = vi.mocked(spawn).mock.calls[0]?.[1] as string[];
+      expect(args).toContain('Read');
+      expect(args).toContain('Write');
+      expect(args).not.toContain('evil; rm -rf /');
     });
 
     it('should throw if agent already running for task', async () => {
@@ -271,6 +299,74 @@ describe('ClaudeAgent', () => {
       await handle.respond('yes');
 
       expect(mockStdin.write).toHaveBeenCalledWith('yes\n');
+    });
+
+    it('should reject responses that are too large', async () => {
+      const config = createMockConfig();
+      const handle = await agent.spawn(config);
+
+      // Create a 2MB response (over 1MB limit)
+      const largeResponse = 'x'.repeat(2 * 1024 * 1024);
+
+      await expect(handle.respond(largeResponse)).rejects.toThrow('Response too large');
+    });
+
+    it('should sanitize control characters from response', async () => {
+      const config = createMockConfig();
+      const handle = await agent.spawn(config);
+
+      // Response with control characters (except newline which is allowed after)
+      await handle.respond('hello\x00\x07world');
+
+      // Should have stripped the control chars
+      expect(mockStdin.write).toHaveBeenCalledWith('helloworld\n');
+    });
+  });
+
+  describe('security', () => {
+    it('should not pass shell: true to spawn', async () => {
+      const { spawn } = await import('child_process');
+      const config = createMockConfig();
+
+      await agent.spawn(config);
+
+      // The spawn call should NOT have shell: true
+      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2];
+      expect(spawnOptions).not.toHaveProperty('shell');
+    });
+
+    it('should only pass allowlisted environment variables', async () => {
+      const { spawn } = await import('child_process');
+      const config = createMockConfig();
+
+      await agent.spawn(config);
+
+      const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv };
+      const env = spawnOptions.env;
+
+      // Should have required vars
+      expect(env.CI).toBe('true');
+      expect(env.CLAUDE_CODE_NO_TELEMETRY).toBe('1');
+
+      // Should NOT have random env vars that weren't allowlisted
+      expect(env).not.toHaveProperty('npm_lifecycle_event');
+      expect(env).not.toHaveProperty('VSCODE_INJECTION');
+    });
+
+    it('should truncate very long output lines', async () => {
+      const config = createMockConfig();
+      await agent.spawn(config);
+
+      // Create output larger than 64KB limit
+      const longOutput = 'x'.repeat(100 * 1024);
+      mockStdout.emit('data', Buffer.from(longOutput));
+
+      // Should have been truncated
+      expect(config.callbacks.onOutput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: expect.stringContaining('... (truncated)'),
+        })
+      );
     });
   });
 
