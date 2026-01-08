@@ -83,6 +83,11 @@
         "command": "coven.refreshTasks",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "coven.reviewTask",
+        "title": "Review",
+        "icon": "$(checklist)"
       }
     ],
     "menus": {
@@ -117,6 +122,11 @@
         {
           "command": "coven.viewFamiliarOutput",
           "when": "view == coven.sessions && viewItem =~ /^familiar\\./",
+          "group": "inline"
+        },
+        {
+          "command": "coven.reviewTask",
+          "when": "view == coven.sessions && viewItem == task.review",
           "group": "inline"
         }
       ]

@@ -5,6 +5,8 @@ import { CovenStatusBar } from './sidebar/CovenStatusBar';
 import { checkPrerequisites } from './setup/prerequisites';
 import { SetupPanel } from './setup/SetupPanel';
 import { TaskDetailPanel } from './tasks/TaskDetailPanel';
+import { ReviewPanel } from './review/ReviewPanel';
+import { ReviewManager } from './review/ReviewManager';
 import { ExtensionContext } from './shared/extensionContext';
 import { FamiliarOutputChannel } from './agents/FamiliarOutputChannel';
 import { QuestionHandler } from './agents/QuestionHandler';
@@ -18,6 +20,7 @@ let covenSession: CovenSession | null = null;
 let familiarOutputChannel: FamiliarOutputChannel | null = null;
 let questionHandler: QuestionHandler | null = null;
 let notificationService: NotificationService | null = null;
+let reviewManager: ReviewManager | null = null;
 let treeView: vscode.TreeView<unknown>;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -53,7 +56,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.startTask', startTask),
     vscode.commands.registerCommand('coven.stopTask', stopTask),
     vscode.commands.registerCommand('coven.refreshTasks', refreshTasks),
-    vscode.commands.registerCommand('coven.respondToQuestion', respondToQuestion)
+    vscode.commands.registerCommand('coven.respondToQuestion', respondToQuestion),
+    vscode.commands.registerCommand('coven.reviewTask', reviewTask)
   );
 
   // Initialize session if workspace is available
@@ -81,6 +85,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
+  if (reviewManager) {
+    reviewManager.dispose();
+    reviewManager = null;
+  }
   if (familiarOutputChannel) {
     familiarOutputChannel.dispose();
     familiarOutputChannel = null;
@@ -119,6 +127,15 @@ async function initializeSession(workspaceRoot: string): Promise<void> {
     questionHandler = new QuestionHandler(
       covenSession.getFamiliarManager(),
       covenSession.getAgentOrchestrator()
+    );
+
+    // Initialize review manager
+    reviewManager = new ReviewManager(
+      workspaceRoot,
+      covenSession.getWorktreeManager(),
+      covenSession.getBeadsTaskSource(),
+      covenSession.getFamiliarManager(),
+      () => covenSession!.getConfig()
     );
 
     // Wire up session event handlers for notifications
@@ -491,4 +508,43 @@ async function refreshTasks(): Promise<void> {
     await covenSession.refreshTasks();
   }
   grimoireProvider.refresh();
+}
+
+async function reviewTask(taskId: string): Promise<void> {
+  const ctx = ExtensionContext.get();
+
+  if (!covenSession) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  if (!reviewManager) {
+    await vscode.window.showErrorMessage('Coven: Review manager not initialized');
+    return;
+  }
+
+  try {
+    const beadsTaskSource = covenSession.getBeadsTaskSource();
+    const worktreeManager = covenSession.getWorktreeManager();
+    const familiarManager = covenSession.getFamiliarManager();
+
+    await ReviewPanel.createOrShow(
+      ctx.extensionUri,
+      reviewManager,
+      worktreeManager,
+      beadsTaskSource,
+      familiarManager,
+      taskId
+    );
+
+    ctx.logger.info('Review panel opened for task', { taskId });
+  } catch (err) {
+    ctx.logger.error('Failed to open review panel', {
+      taskId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await vscode.window.showErrorMessage(
+      `Failed to open review: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }

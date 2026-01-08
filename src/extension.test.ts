@@ -558,6 +558,7 @@ describe('extension', () => {
       expect(registeredCommands).toContain('coven.stopTask');
       expect(registeredCommands).toContain('coven.refreshTasks');
       expect(registeredCommands).toContain('coven.respondToQuestion');
+      expect(registeredCommands).toContain('coven.reviewTask');
     });
   });
 });
