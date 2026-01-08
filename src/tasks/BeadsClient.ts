@@ -207,7 +207,7 @@ export class BeadsClient {
    */
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string }
+    updates: { title?: string | undefined; description?: string | undefined }
   ): Promise<BeadResult> {
     try {
       const args = ['bd', 'update', this.escapeArg(id)];

@@ -40,7 +40,6 @@ export class CovenSession extends EventEmitter {
   private agentOrchestrator: AgentOrchestrator;
   private orphanRecovery: OrphanRecovery;
   private worktreeManager: WorktreeManager;
-  private workspaceRoot: string;
   private covenDir: string;
   private sessionFilePath: string;
   private configFilePath: string;
@@ -50,7 +49,6 @@ export class CovenSession extends EventEmitter {
 
   constructor(workspaceRoot: string) {
     super();
-    this.workspaceRoot = workspaceRoot;
     this.covenDir = path.join(workspaceRoot, '.coven');
     this.sessionFilePath = path.join(this.covenDir, 'session.json');
     this.configFilePath = path.join(this.covenDir, 'config.json');

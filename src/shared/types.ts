@@ -151,11 +151,11 @@ export interface ActivityEntry {
   /** Timestamp when the activity occurred */
   timestamp: number;
   /** Related task ID (if applicable) */
-  taskId?: string;
+  taskId?: string | undefined;
   /** Related familiar ID (if applicable) */
-  familiarId?: string;
+  familiarId?: string | undefined;
   /** Additional context data */
-  details?: Record<string, unknown>;
+  details?: Record<string, unknown> | undefined;
 }
 
 // ============================================================================

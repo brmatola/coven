@@ -160,7 +160,7 @@ export class OrphanRecovery extends EventEmitter {
 
       // Parse elapsed time to verify start time
       const match = stdout.trim().match(/^\s*(\d+)\s+/);
-      if (match) {
+      if (match?.[1]) {
         const elapsedSeconds = parseInt(match[1], 10);
         const estimatedStartTime = Date.now() - elapsedSeconds * 1000;
 

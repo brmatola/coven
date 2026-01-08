@@ -52,7 +52,6 @@ export interface ConflictResolverOptions {
  */
 export class ConflictResolver extends EventEmitter {
   private gitProvider: GitProvider;
-  private workspaceRoot: string;
   private options: Required<ConflictResolverOptions>;
   private logger = getLogger();
 
@@ -62,7 +61,6 @@ export class ConflictResolver extends EventEmitter {
     gitProvider?: GitProvider
   ) {
     super();
-    this.workspaceRoot = workspaceRoot;
     this.gitProvider = gitProvider ?? new GitCLI(workspaceRoot);
     this.options = {
       defaultStrategy: options.defaultStrategy ?? 'manual',

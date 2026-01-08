@@ -112,7 +112,7 @@ export class FamiliarOutputChannel {
     const handle = this.fileHandles.get(taskId);
     if (handle) {
       void handle.close();
-      this.fileHandles.delete(handle);
+      this.fileHandles.delete(taskId);
     }
 
     this.taskTitles.delete(taskId);

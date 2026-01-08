@@ -36,6 +36,9 @@
       "files": ["src/test/e2e/**/*.ts"],
       "parserOptions": {
         "project": "./src/test/e2e/tsconfig.json"
+      },
+      "rules": {
+        "no-console": "off"
       }
     },
     {

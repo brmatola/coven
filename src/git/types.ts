@@ -29,7 +29,7 @@ export interface MergeResult {
   /** List of successfully merged files */
   mergedFiles: string[];
   /** Merge commit hash if successful */
-  commitHash?: string;
+  commitHash?: string | undefined;
 }
 
 /**
@@ -43,7 +43,7 @@ export interface ConflictFile {
   /** Content from the incoming branch (theirs) */
   theirContent: string;
   /** Common ancestor content if available */
-  baseContent?: string;
+  baseContent?: string | undefined;
 }
 
 /**

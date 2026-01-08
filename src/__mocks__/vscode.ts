@@ -98,14 +98,14 @@ export const window = {
     (): MockWebviewPanel => ({
       webview: {
         html: '',
-        onDidReceiveMessage: vi.fn((_callback) => ({ dispose: vi.fn() })),
+        onDidReceiveMessage: vi.fn((_callback: unknown) => ({ dispose: vi.fn() })) as ReturnType<typeof vi.fn>,
         postMessage: vi.fn(),
-        asWebviewUri: vi.fn((uri) => uri),
+        asWebviewUri: vi.fn((uri: unknown) => uri),
         cspSource: 'mock-csp-source',
       },
       reveal: vi.fn(),
       dispose: vi.fn(),
-      onDidDispose: vi.fn((_callback) => ({ dispose: vi.fn() })),
+      onDidDispose: vi.fn((_callback: unknown) => ({ dispose: vi.fn() })) as ReturnType<typeof vi.fn>,
     })
   ),
   activeTextEditor: undefined,
@@ -114,6 +114,7 @@ export const window = {
 export const commands = {
   registerCommand: vi.fn(),
   getCommands: vi.fn((): Promise<string[]> => Promise.resolve([])),
+  executeCommand: vi.fn(),
 };
 
 export const extensions = {
@@ -195,7 +196,7 @@ export type Disposable = {
 
 export class ThemeIcon {
   id: string;
-  color?: ThemeColor;
+  color: ThemeColor | undefined;
 
   constructor(id: string, color?: ThemeColor) {
     this.id = id;

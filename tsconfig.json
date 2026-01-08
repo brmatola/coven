@@ -23,5 +23,5 @@
     "noUncheckedIndexedAccess": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/test/e2e", "src/setup/webview"]
+  "exclude": ["node_modules", "dist", "src/test/e2e", "src/setup/webview", "src/**/*.test.ts", "src/**/*.test.tsx", "src/__mocks__"]
 }

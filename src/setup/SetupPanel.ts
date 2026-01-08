@@ -30,7 +30,7 @@ export class SetupPanel extends WebviewPanel<SetupState, SetupMessageToExtension
   };
 
   // Callback when session should be started
-  private onBeginSession?: (branchName: string, config: SessionConfig) => Promise<void>;
+  private onBeginSession: ((branchName: string, config: SessionConfig) => Promise<void>) | undefined;
 
   public static async createOrShow(
     extensionUri: vscode.Uri,
