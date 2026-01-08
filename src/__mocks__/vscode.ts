@@ -66,6 +66,8 @@ export const window = {
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
   showInputBox: vi.fn(),
+  showQuickPick: vi.fn(),
+  setStatusBarMessage: vi.fn(),
   createOutputChannel: vi.fn(
     (name: string): MockOutputChannel => ({
       appendLine: vi.fn(),

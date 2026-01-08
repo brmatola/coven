@@ -7,11 +7,17 @@ import { SetupPanel } from './setup/SetupPanel';
 import { TaskDetailPanel } from './tasks/TaskDetailPanel';
 import { ExtensionContext } from './shared/extensionContext';
 import { FamiliarOutputChannel } from './agents/FamiliarOutputChannel';
+import { QuestionHandler } from './agents/QuestionHandler';
+import { NotificationService } from './shared/notifications';
+import { AgentResult } from './agents/types';
+import { SessionEvents } from './shared/types';
 
 let grimoireProvider: GrimoireTreeProvider;
 let statusBar: CovenStatusBar;
 let covenSession: CovenSession | null = null;
 let familiarOutputChannel: FamiliarOutputChannel | null = null;
+let questionHandler: QuestionHandler | null = null;
+let notificationService: NotificationService | null = null;
 let treeView: vscode.TreeView<unknown>;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -46,7 +52,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.createTask', createTask),
     vscode.commands.registerCommand('coven.startTask', startTask),
     vscode.commands.registerCommand('coven.stopTask', stopTask),
-    vscode.commands.registerCommand('coven.refreshTasks', refreshTasks)
+    vscode.commands.registerCommand('coven.refreshTasks', refreshTasks),
+    vscode.commands.registerCommand('coven.respondToQuestion', respondToQuestion)
   );
 
   // Initialize session if workspace is available
@@ -105,6 +112,18 @@ async function initializeSession(workspaceRoot: string): Promise<void> {
     );
     await familiarOutputChannel.initialize();
 
+    // Initialize notification service
+    notificationService = new NotificationService(() => covenSession!.getConfig());
+
+    // Initialize question handler
+    questionHandler = new QuestionHandler(
+      covenSession.getFamiliarManager(),
+      covenSession.getAgentOrchestrator()
+    );
+
+    // Wire up session event handlers for notifications
+    setupSessionEventHandlers(covenSession);
+
     // Connect session to UI components
     grimoireProvider.setSession(covenSession);
     statusBar.setSession(covenSession);
@@ -119,6 +138,54 @@ async function initializeSession(workspaceRoot: string): Promise<void> {
     });
     // Continue without session - user can start one manually
   }
+}
+
+/**
+ * Set up event handlers for session events (notifications, questions).
+ */
+function setupSessionEventHandlers(session: CovenSession): void {
+  // Handle agent questions - show notification
+  session.on('familiar:question', (event: SessionEvents['familiar:question']) => {
+    if (!notificationService) return;
+
+    const { question } = event;
+    void notificationService.notifyQuestion(question.taskId, question.question, () => {
+      void vscode.commands.executeCommand('coven.respondToQuestion', question.taskId);
+    });
+  });
+
+  // Handle agent completion - show notification
+  session.on('agent:complete', (event: { taskId: string; result: AgentResult }) => {
+    if (!notificationService || !covenSession) return;
+
+    const tasks = covenSession.getState().tasks;
+    const allTasks = [
+      ...tasks.ready,
+      ...tasks.working,
+      ...tasks.review,
+      ...tasks.done,
+      ...tasks.blocked,
+    ];
+    const task = allTasks.find((t) => t.id === event.taskId);
+    const taskTitle = task?.title || event.taskId;
+
+    if (event.result.success) {
+      void notificationService.notifyCompletion(event.taskId, taskTitle, () => {
+        void vscode.commands.executeCommand('coven.showTaskDetail', event.taskId);
+      });
+    } else {
+      void notificationService.notifyError(
+        event.taskId,
+        event.result.summary || 'Agent failed to complete the task'
+      );
+    }
+  });
+
+  // Handle agent errors
+  session.on('agent:error', (event: { taskId: string; error: Error }) => {
+    if (!notificationService) return;
+    void notificationService.notifyError(event.taskId, event.error.message);
+  });
 }
 
 async function startSession(workspaceRoot: string | undefined): Promise<void> {
@@ -316,25 +383,55 @@ async function createTask(): Promise<void> {
 }
 
 async function startTask(taskId: string): Promise<void> {
+  const ctx = ExtensionContext.get();
+
   if (!covenSession) {
     await vscode.window.showErrorMessage('Coven: No active session');
     return;
   }
 
+  if (!covenSession.isActive()) {
+    await vscode.window.showErrorMessage('Coven: Session not active. Start a session first.');
+    return;
+  }
+
   try {
+    // Check if Claude is available
+    const agentAvailable = await covenSession.isAgentAvailable();
+    if (!agentAvailable) {
+      await vscode.window.showErrorMessage(
+        'Coven: Claude CLI not found. Please install claude-code: npm install -g @anthropic-ai/claude-code'
+      );
+      return;
+    }
+
     const beadsTaskSource = covenSession.getBeadsTaskSource();
 
     // Find task to get title for output channel naming
     const tasks = await beadsTaskSource.fetchTasks();
     const task = tasks.find((t) => t.id === taskId);
-    if (familiarOutputChannel && task) {
+    if (!task) {
+      await vscode.window.showErrorMessage(`Task not found: ${taskId}`);
+      return;
+    }
+
+    if (familiarOutputChannel) {
       familiarOutputChannel.setTaskTitle(taskId, task.title);
     }
 
+    // Update task status to working
     await beadsTaskSource.updateTaskStatus(taskId, 'working');
-    // TODO: Wire agent spawning via AgentOrchestrator
-    void vscode.window.showInformationMessage(`Started task: ${taskId} (agent spawning not yet wired)`);
+
+    // Spawn the agent
+    await covenSession.spawnAgentForTask(taskId);
+
+    ctx.logger.info('Agent spawned for task', { taskId, taskTitle: task.title });
+    void vscode.window.showInformationMessage(`Agent started working on: ${task.title}`);
   } catch (err) {
+    ctx.logger.error('Failed to start task', {
+      taskId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     await vscode.window.showErrorMessage(
       `Failed to start task: ${err instanceof Error ? err.message : String(err)}`
     );
@@ -342,6 +439,8 @@ async function startTask(taskId: string): Promise<void> {
 }
 
 async function stopTask(taskId: string): Promise<void> {
+  const ctx = ExtensionContext.get();
+
   if (!covenSession) {
     await vscode.window.showErrorMessage('Coven: No active session');
     return;
@@ -358,14 +457,33 @@ async function stopTask(taskId: string): Promise<void> {
   }
 
   try {
+    // Terminate the agent first
+    await covenSession.terminateAgent(taskId, 'user requested');
+
+    // Update task status back to ready
     const beadsTaskSource = covenSession.getBeadsTaskSource();
     await beadsTaskSource.updateTaskStatus(taskId, 'ready');
-    // TODO: Wire agent termination via AgentOrchestrator
+
+    ctx.logger.info('Task stopped', { taskId });
+    void vscode.window.showInformationMessage('Task stopped');
   } catch (err) {
+    ctx.logger.error('Failed to stop task', {
+      taskId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     await vscode.window.showErrorMessage(
       `Failed to stop task: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+}
+
+async function respondToQuestion(taskId: string): Promise<void> {
+  if (!questionHandler) {
+    await vscode.window.showErrorMessage('Coven: No active session');
+    return;
+  }
+
+  await questionHandler.handleQuestionByTaskId(taskId);
 }
 
 async function refreshTasks(): Promise<void> {

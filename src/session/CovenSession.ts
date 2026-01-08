@@ -4,9 +4,11 @@ import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 import { FamiliarManager } from '../agents/FamiliarManager';
+import { AgentOrchestrator } from '../agents/AgentOrchestrator';
 import { OrphanRecovery, OrphanState } from './OrphanRecovery';
 import { WorktreeManager } from '../git/WorktreeManager';
 import { Worktree } from '../git/types';
+import { AgentResult } from '../agents/types';
 import {
   CovenState,
   SessionConfig,
@@ -30,6 +32,7 @@ export class CovenSession extends EventEmitter {
   private config: SessionConfig;
   private beadsTaskSource: BeadsTaskSource;
   private familiarManager: FamiliarManager;
+  private agentOrchestrator: AgentOrchestrator;
   private orphanRecovery: OrphanRecovery;
   private worktreeManager: WorktreeManager;
   private workspaceRoot: string;
@@ -57,6 +60,12 @@ export class CovenSession extends EventEmitter {
       this.config.worktreeBasePath,
       this.sessionId
     );
+    this.agentOrchestrator = new AgentOrchestrator(
+      this.familiarManager,
+      this.worktreeManager,
+      undefined, // Use default ClaudeAgent
+      this.config
+    );
     this.orphanRecovery = new OrphanRecovery(
       workspaceRoot,
       this.config.worktreeBasePath,
@@ -64,6 +73,7 @@ export class CovenSession extends EventEmitter {
       this.beadsTaskSource
     );
     this.setupEventForwarding();
+    this.setupOrchestratorEventForwarding();
   }
 
   /**
@@ -363,6 +373,61 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
+   * Get the AgentOrchestrator instance.
+   */
+  getAgentOrchestrator(): AgentOrchestrator {
+    return this.agentOrchestrator;
+  }
+
+  /**
+   * Spawn an agent to work on a task.
+   * Creates worktree isolation and starts the agent process.
+   */
+  async spawnAgentForTask(taskId: string): Promise<void> {
+    if (this.status !== 'active') {
+      throw new Error('Cannot spawn agent: session not active');
+    }
+
+    if (!this.featureBranch) {
+      throw new Error('Cannot spawn agent: no feature branch set');
+    }
+
+    // Get task details
+    const tasks = await this.beadsTaskSource.fetchTasks();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`);
+    }
+
+    // Spawn via orchestrator
+    await this.agentOrchestrator.spawnForTask({
+      task,
+      featureBranch: this.featureBranch,
+    });
+  }
+
+  /**
+   * Terminate an agent working on a task.
+   */
+  async terminateAgent(taskId: string, reason = 'user requested'): Promise<void> {
+    await this.agentOrchestrator.terminateAgent(taskId, reason);
+  }
+
+  /**
+   * Respond to an agent question.
+   */
+  async respondToAgentQuestion(taskId: string, response: string): Promise<void> {
+    await this.agentOrchestrator.respondToQuestion(taskId, response);
+  }
+
+  /**
+   * Check if agent provider (Claude) is available.
+   */
+  async isAgentAvailable(): Promise<boolean> {
+    return this.agentOrchestrator.isAvailable();
+  }
+
+  /**
    * Check if the session is active.
    */
   isActive(): boolean {
@@ -379,6 +444,7 @@ export class CovenSession extends EventEmitter {
     }
     this.beadsTaskSource.dispose();
     this.familiarManager.dispose();
+    this.agentOrchestrator.dispose();
     this.worktreeManager.dispose();
     this.removeAllListeners();
   }
@@ -431,6 +497,21 @@ export class CovenSession extends EventEmitter {
     this.familiarManager.on('familiar:question', (event) => {
       this.emit('familiar:question', event);
       this.emitStateChange();
+    });
+  }
+
+  private setupOrchestratorEventForwarding(): void {
+    this.agentOrchestrator.on('agent:spawned', (event: { taskId: string; worktreePath: string }) => {
+      this.emit('agent:spawned', event);
+    });
+
+    this.agentOrchestrator.on('agent:complete', (event: { taskId: string; result: AgentResult }) => {
+      this.emit('agent:complete', event);
+      this.emitStateChange();
+    });
+
+    this.agentOrchestrator.on('agent:error', (event: { taskId: string; error: Error }) => {
+      this.emit('agent:error', event);
     });
   }
 

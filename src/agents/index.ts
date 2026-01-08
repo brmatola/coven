@@ -20,3 +20,6 @@ export { FamiliarManager } from './FamiliarManager';
 
 // Output channel management
 export { FamiliarOutputChannel } from './FamiliarOutputChannel';
+
+// Question handling
+export { QuestionHandler } from './QuestionHandler';
