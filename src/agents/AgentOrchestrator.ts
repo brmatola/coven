@@ -62,14 +62,13 @@ export class AgentOrchestrator extends EventEmitter {
     this.familiarManager = familiarManager;
     this.worktreeManager = worktreeManager;
     this.agentProvider = agentProvider ?? new ClaudeAgent();
-    this.config = config ?? {
+    this.config = config ?? ({
       maxConcurrentAgents: 3,
       agentTimeoutMs: 600000,
-      autoMerge: false,
       agentPermissions: {
         allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(git:*)', 'Bash(npm:*)'],
       },
-    };
+    } as SessionConfig);
   }
 
   /**
@@ -221,7 +220,6 @@ export class AgentOrchestrator extends EventEmitter {
   private handleQuestion(taskId: string, question: AgentQuestion): void {
     // Add to FamiliarManager
     this.familiarManager.addQuestion({
-      id: question.id,
       familiarId: taskId,
       taskId,
       question: question.question,

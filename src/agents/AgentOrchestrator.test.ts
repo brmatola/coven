@@ -245,7 +245,8 @@ describe('AgentOrchestrator', () => {
 
       expect(mockFamiliarManager.addQuestion).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 'q-1',
+          familiarId: 'task-1',
+          taskId: 'task-1',
           question: 'Should I proceed?',
         })
       );

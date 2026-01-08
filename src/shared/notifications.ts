@@ -28,7 +28,7 @@ export class NotificationService {
       },
       {
         label: 'View Output',
-        action: () => {
+        action: (): void => {
           void vscode.commands.executeCommand('coven.viewFamiliarOutput', taskId);
         },
       },
@@ -53,7 +53,7 @@ export class NotificationService {
       },
       {
         label: 'View Output',
-        action: () => {
+        action: (): void => {
           void vscode.commands.executeCommand('coven.viewFamiliarOutput', taskId);
         },
       },
@@ -71,7 +71,7 @@ export class NotificationService {
     await this.notify(level, message, [
       {
         label: 'View Changes',
-        action: () => {
+        action: (): void => {
           void vscode.commands.executeCommand('coven.viewFamiliarOutput', taskId);
         },
       },
@@ -92,7 +92,7 @@ export class NotificationService {
       [
         {
           label: 'View Output',
-          action: () => {
+          action: (): void => {
             void vscode.commands.executeCommand('coven.viewFamiliarOutput', taskId);
           },
         },
@@ -114,7 +114,7 @@ export class NotificationService {
       [
         {
           label: 'Help',
-          action: () => {
+          action: (): void => {
             void vscode.commands.executeCommand('coven.viewFamiliarOutput', taskId);
           },
         },

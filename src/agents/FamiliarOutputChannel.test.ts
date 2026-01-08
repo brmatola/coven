@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { FamiliarOutputChannel } from './FamiliarOutputChannel';
 import { FamiliarManager } from './FamiliarManager';
-import { DEFAULT_SESSION_CONFIG, Familiar, ProcessInfo } from '../shared/types';
+import { DEFAULT_SESSION_CONFIG, ProcessInfo } from '../shared/types';
 
 // Mock fs module
 vi.mock('fs', () => ({
