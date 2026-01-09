@@ -447,9 +447,11 @@ export class CovenSession extends EventEmitter {
       throw new Error('Cannot spawn agent: no feature branch set');
     }
 
-    // Get task details
-    const tasks = await this.beadsTaskSource.fetchTasks();
-    const task = tasks.find((t) => t.id === taskId);
+    // Get task details - first check cache, then fetch directly
+    let task = this.beadsTaskSource.getTask(taskId);
+    if (!task) {
+      task = await this.beadsTaskSource.fetchTask(taskId);
+    }
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }

@@ -347,8 +347,14 @@ function revealSidebar(): void {
   void vscode.commands.executeCommand('coven.sessions.focus');
 }
 
-async function showTaskDetail(taskId: string): Promise<void> {
+async function showTaskDetail(arg: unknown): Promise<void> {
   const ctx = ExtensionContext.get();
+  const taskId = extractTaskId(arg);
+
+  if (!taskId) {
+    await vscode.window.showErrorMessage('Coven: Invalid task reference');
+    return;
+  }
 
   if (!covenSession) {
     await vscode.window.showErrorMessage('Coven: No active session');
@@ -359,7 +365,14 @@ async function showTaskDetail(taskId: string): Promise<void> {
   await TaskDetailPanel.createOrShow(ctx.extensionUri, beadsTaskSource, taskId);
 }
 
-async function viewFamiliarOutput(taskId: string): Promise<void> {
+async function viewFamiliarOutput(arg: unknown): Promise<void> {
+  const taskId = extractTaskId(arg);
+
+  if (!taskId) {
+    await vscode.window.showErrorMessage('Coven: Invalid task reference');
+    return;
+  }
+
   if (!familiarOutputChannel) {
     await vscode.window.showErrorMessage('Coven: No active session');
     return;
@@ -399,8 +412,37 @@ async function createTask(): Promise<void> {
   }
 }
 
-async function startTask(taskId: string): Promise<void> {
+/**
+ * Extract task ID from command argument.
+ * Commands can receive either a string ID or a tree item with a task property.
+ */
+function extractTaskId(arg: unknown): string | null {
+  if (typeof arg === 'string') {
+    return arg;
+  }
+  if (arg && typeof arg === 'object') {
+    // Tree item with task property (TaskItem)
+    const item = arg as { task?: { id?: string } };
+    if (item.task?.id) {
+      return item.task.id;
+    }
+    // Tree item with familiar property (FamiliarItem)
+    const familiarItem = arg as { familiar?: { taskId?: string } };
+    if (familiarItem.familiar?.taskId) {
+      return familiarItem.familiar.taskId;
+    }
+  }
+  return null;
+}
+
+async function startTask(arg: unknown): Promise<void> {
   const ctx = ExtensionContext.get();
+  const taskId = extractTaskId(arg);
+
+  if (!taskId) {
+    await vscode.window.showErrorMessage('Coven: Invalid task reference');
+    return;
+  }
 
   if (!covenSession) {
     await vscode.window.showErrorMessage('Coven: No active session');
@@ -424,9 +466,13 @@ async function startTask(taskId: string): Promise<void> {
 
     const beadsTaskSource = covenSession.getBeadsTaskSource();
 
-    // Find task to get title for output channel naming
-    const tasks = await beadsTaskSource.fetchTasks();
-    const task = tasks.find((t) => t.id === taskId);
+    // Find task - first check cache, then try to fetch directly
+    let task = beadsTaskSource.getTask(taskId);
+    if (!task) {
+      // Task not in cache, try to fetch it directly from Beads
+      ctx.logger.info('Task not in cache, fetching from Beads', { taskId });
+      task = await beadsTaskSource.fetchTask(taskId);
+    }
     if (!task) {
       await vscode.window.showErrorMessage(`Task not found: ${taskId}`);
       return;
@@ -455,8 +501,14 @@ async function startTask(taskId: string): Promise<void> {
   }
 }
 
-async function stopTask(taskId: string): Promise<void> {
+async function stopTask(arg: unknown): Promise<void> {
   const ctx = ExtensionContext.get();
+  const taskId = extractTaskId(arg);
+
+  if (!taskId) {
+    await vscode.window.showErrorMessage('Coven: Invalid task reference');
+    return;
+  }
 
   if (!covenSession) {
     await vscode.window.showErrorMessage('Coven: No active session');
@@ -494,7 +546,14 @@ async function stopTask(taskId: string): Promise<void> {
   }
 }
 
-async function respondToQuestion(taskId: string): Promise<void> {
+async function respondToQuestion(arg: unknown): Promise<void> {
+  const taskId = extractTaskId(arg);
+
+  if (!taskId) {
+    await vscode.window.showErrorMessage('Coven: Invalid task reference');
+    return;
+  }
+
   if (!questionHandler) {
     await vscode.window.showErrorMessage('Coven: No active session');
     return;
@@ -510,8 +569,14 @@ async function refreshTasks(): Promise<void> {
   grimoireProvider.refresh();
 }
 
-async function reviewTask(taskId: string): Promise<void> {
+async function reviewTask(arg: unknown): Promise<void> {
   const ctx = ExtensionContext.get();
+  const taskId = extractTaskId(arg);
+
+  if (!taskId) {
+    await vscode.window.showErrorMessage('Coven: Invalid task reference');
+    return;
+  }
 
   if (!covenSession) {
     await vscode.window.showErrorMessage('Coven: No active session');

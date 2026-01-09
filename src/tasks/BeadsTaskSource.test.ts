@@ -337,6 +337,41 @@ describe('BeadsTaskSource', () => {
     });
   });
 
+  describe('fetchTask', () => {
+    it('fetches a single task from Beads and caches it', async () => {
+      const mockBead = createMockBead({ id: 'task-1', title: 'Test Task' });
+      mockClient.getTask.mockResolvedValue(mockBead);
+
+      const task = await source.fetchTask('task-1');
+
+      expect(task).toBeDefined();
+      expect(task?.id).toBe('task-1');
+      expect(task?.title).toBe('Test Task');
+      expect(mockClient.getTask).toHaveBeenCalledWith('task-1');
+
+      // Should be cached now
+      const cachedTask = source.getTask('task-1');
+      expect(cachedTask).toBeDefined();
+      expect(cachedTask?.id).toBe('task-1');
+    });
+
+    it('returns null when task not found', async () => {
+      mockClient.getTask.mockResolvedValue(null);
+
+      const task = await source.fetchTask('unknown');
+
+      expect(task).toBeNull();
+    });
+
+    it('returns null and logs error on failure', async () => {
+      mockClient.getTask.mockRejectedValue(new Error('Network error'));
+
+      const task = await source.fetchTask('task-1');
+
+      expect(task).toBeNull();
+    });
+  });
+
   describe('dispose', () => {
     it('clears cache and stops watching', async () => {
       mockClient.listReady.mockResolvedValue([createMockBead({ id: 'task-1' })]);

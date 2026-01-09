@@ -255,6 +255,25 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
   }
 
   /**
+   * Fetch a single task directly from Beads by ID.
+   * Updates the cache if found.
+   */
+  async fetchTask(id: string): Promise<Task | null> {
+    try {
+      const bead = await this.client.getTask(id);
+      if (!bead) {
+        return null;
+      }
+      const task = this.beadToTask(bead);
+      this.cachedTasks.set(task.id, task);
+      return task;
+    } catch (err) {
+      this.logger.error('Failed to fetch task from Beads', { id, error: String(err) });
+      return null;
+    }
+  }
+
+  /**
    * Get all cached tasks.
    */
   getTasks(): Task[] {
