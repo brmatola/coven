@@ -111,6 +111,15 @@ const (
 	OnSuccessExitLoop OnSuccessAction = "exit_loop"
 )
 
+// OnMaxIterationsAction defines actions when max loop iterations is reached.
+type OnMaxIterationsAction string
+
+const (
+	OnMaxIterationsBlock    OnMaxIterationsAction = "block"
+	OnMaxIterationsExit     OnMaxIterationsAction = "exit"
+	OnMaxIterationsContinue OnMaxIterationsAction = "continue"
+)
+
 // GetTimeout returns the timeout as a time.Duration.
 // Returns the default timeout for the step type if not specified.
 func (s *Step) GetTimeout() (time.Duration, error) {
@@ -218,9 +227,14 @@ func (s *Step) validateLoopStep() error {
 	}
 
 	// Validate on_max_iterations if specified
-	if s.OnMaxIterations != "" && s.OnMaxIterations != string(OnFailBlock) {
-		return fmt.Errorf("step %q: invalid on_max_iterations value %q, must be %q",
-			s.Name, s.OnMaxIterations, OnFailBlock)
+	validMaxIterActions := map[string]bool{
+		string(OnMaxIterationsBlock):    true,
+		string(OnMaxIterationsExit):     true,
+		string(OnMaxIterationsContinue): true,
+	}
+	if s.OnMaxIterations != "" && !validMaxIterActions[s.OnMaxIterations] {
+		return fmt.Errorf("step %q: invalid on_max_iterations value %q, must be %q, %q, or %q",
+			s.Name, s.OnMaxIterations, OnMaxIterationsBlock, OnMaxIterationsExit, OnMaxIterationsContinue)
 	}
 
 	// Validate nested steps

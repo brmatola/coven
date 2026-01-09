@@ -349,11 +349,35 @@ func TestStep_Validate_LoopStep(t *testing.T) {
 			errMsg:  "non-negative",
 		},
 		{
-			name: "valid on_max_iterations",
+			name: "valid on_max_iterations block",
 			step: Step{
 				Name:            "loop",
 				Type:            StepTypeLoop,
 				OnMaxIterations: "block",
+				Steps: []Step{
+					{Name: "test", Type: StepTypeScript, Command: "npm test"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid on_max_iterations exit",
+			step: Step{
+				Name:            "loop",
+				Type:            StepTypeLoop,
+				OnMaxIterations: "exit",
+				Steps: []Step{
+					{Name: "test", Type: StepTypeScript, Command: "npm test"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid on_max_iterations continue",
+			step: Step{
+				Name:            "loop",
+				Type:            StepTypeLoop,
+				OnMaxIterations: "continue",
 				Steps: []Step{
 					{Name: "test", Type: StepTypeScript, Command: "npm test"},
 				},
@@ -497,5 +521,17 @@ func TestStepType_Constants(t *testing.T) {
 	}
 	if StepTypeMerge != "merge" {
 		t.Errorf("StepTypeMerge = %q, want %q", StepTypeMerge, "merge")
+	}
+}
+
+func TestOnMaxIterationsAction_Constants(t *testing.T) {
+	if OnMaxIterationsBlock != "block" {
+		t.Errorf("OnMaxIterationsBlock = %q, want %q", OnMaxIterationsBlock, "block")
+	}
+	if OnMaxIterationsExit != "exit" {
+		t.Errorf("OnMaxIterationsExit = %q, want %q", OnMaxIterationsExit, "exit")
+	}
+	if OnMaxIterationsContinue != "continue" {
+		t.Errorf("OnMaxIterationsContinue = %q, want %q", OnMaxIterationsContinue, "continue")
 	}
 }
