@@ -26,7 +26,19 @@ export {
   createSessionHelper,
   SessionStatus,
   SessionState,
+  PersistedSessionState,
 } from './session-helper';
+
+// Familiar (agent) helpers
+export {
+  FamiliarHelper,
+  createFamiliarHelper,
+  FamiliarStatus,
+  FamiliarState,
+  PersistedFamiliar,
+  ProcessInfo,
+  WorktreeInfo,
+} from './familiar-helper';
 
 // Task helpers
 export {

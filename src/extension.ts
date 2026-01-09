@@ -45,9 +45,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   ctx.subscriptions.push({ dispose: () => grimoireProvider.dispose() });
 
   // Register commands
+  // Commands accept optional arguments for programmatic/E2E test usage
   ctx.subscriptions.push(
-    vscode.commands.registerCommand('coven.startSession', () => startSession(workspaceRoot)),
-    vscode.commands.registerCommand('coven.stopSession', stopSession),
+    vscode.commands.registerCommand('coven.startSession', (branchName?: string) => startSession(workspaceRoot, branchName)),
+    vscode.commands.registerCommand('coven.stopSession', (options?: { skipConfirmation?: boolean }) => stopSession(options)),
     vscode.commands.registerCommand('coven.showSetup', showSetup),
     vscode.commands.registerCommand('coven.revealSidebar', revealSidebar),
     vscode.commands.registerCommand('coven.showTaskDetail', showTaskDetail),
@@ -205,7 +206,12 @@ function setupSessionEventHandlers(session: CovenSession): void {
   });
 }
 
-async function startSession(workspaceRoot: string | undefined): Promise<void> {
+/**
+ * Start a new session.
+ * @param workspaceRoot - The workspace root path
+ * @param providedBranchName - Optional branch name (for programmatic/E2E test usage)
+ */
+async function startSession(workspaceRoot: string | undefined, providedBranchName?: string): Promise<void> {
   const ctx = ExtensionContext.get();
 
   if (!workspaceRoot) {
@@ -231,20 +237,23 @@ async function startSession(workspaceRoot: string | undefined): Promise<void> {
     return;
   }
 
-  // Prompt for feature branch name
-  const branchName = await vscode.window.showInputBox({
-    prompt: 'Enter feature branch name',
-    placeHolder: 'feature/my-feature',
-    validateInput: (value) => {
-      if (!value.trim()) {
-        return 'Branch name is required';
-      }
-      if (!/^[\w\-/]+$/.test(value)) {
-        return 'Branch name contains invalid characters';
-      }
-      return undefined;
-    },
-  });
+  // Use provided branch name or prompt for one
+  let branchName = providedBranchName;
+  if (!branchName) {
+    branchName = await vscode.window.showInputBox({
+      prompt: 'Enter feature branch name',
+      placeHolder: 'feature/my-feature',
+      validateInput: (value) => {
+        if (!value.trim()) {
+          return 'Branch name is required';
+        }
+        if (!/^[\w\-/]+$/.test(value)) {
+          return 'Branch name contains invalid characters';
+        }
+        return undefined;
+      },
+    });
+  }
 
   if (!branchName) {
     return; // User cancelled
@@ -270,7 +279,11 @@ async function startSession(workspaceRoot: string | undefined): Promise<void> {
   }
 }
 
-async function stopSession(): Promise<void> {
+/**
+ * Stop the current session.
+ * @param options - Optional settings (skipConfirmation for programmatic/E2E test usage)
+ */
+async function stopSession(options?: { skipConfirmation?: boolean }): Promise<void> {
   const ctx = ExtensionContext.get();
 
   if (!covenSession || covenSession.getStatus() === 'inactive') {
@@ -278,14 +291,17 @@ async function stopSession(): Promise<void> {
     return;
   }
 
-  const confirm = await vscode.window.showWarningMessage(
-    'Stop the current Coven session? Active agents will be terminated.',
-    { modal: true },
-    'Stop Session'
-  );
+  // Skip confirmation dialog if requested (for programmatic/E2E test usage)
+  if (!options?.skipConfirmation) {
+    const confirm = await vscode.window.showWarningMessage(
+      'Stop the current Coven session? Active agents will be terminated.',
+      { modal: true },
+      'Stop Session'
+    );
 
-  if (confirm !== 'Stop Session') {
-    return;
+    if (confirm !== 'Stop Session') {
+      return;
+    }
   }
 
   try {

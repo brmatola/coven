@@ -37,6 +37,16 @@ function createTestWorkspace(): { workspacePath: string; cleanup: () => void } {
 
     console.log('Git initialized');
 
+    // Initialize openspec if available
+    try {
+      execSync('openspec init', { cwd: tempDir, stdio: 'pipe' });
+      execSync('git add .openspec', { cwd: tempDir, stdio: 'pipe' });
+      execSync('git commit -m "Initialize openspec"', { cwd: tempDir, stdio: 'pipe' });
+      console.log('Openspec initialized');
+    } catch {
+      console.log('Openspec CLI not available - some tests may be skipped');
+    }
+
     // Initialize beads if available
     try {
       execSync('bd init', { cwd: tempDir, stdio: 'pipe' });

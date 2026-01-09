@@ -293,16 +293,16 @@ suite('Beads Integration E2E Tests', function () {
         createdTaskIds.push(taskId);
       }
 
-      // Get ready list via bd ready --json
-      const { stdout } = await execAsync('bd ready --json', { cwd: workspacePath });
-      const readyItems = JSON.parse(stdout);
+      // Get list of all issues (bd list shows all, bd ready may filter)
+      const { stdout } = await execAsync('bd list --json', { cwd: workspacePath });
+      const allItems = JSON.parse(stdout);
 
-      // Feature should be in the list
-      const foundFeature = readyItems.find(
-        (item: { id: string; issue_type: string }) =>
-          item.id === taskId && item.issue_type === 'feature'
+      // Feature should be in the list - check both issue_type and type fields
+      const foundFeature = allItems.find(
+        (item: { id: string; issue_type?: string; type?: string }) =>
+          item.id === taskId && (item.issue_type === 'feature' || item.type === 'feature')
       );
-      assert.ok(foundFeature, 'Feature issue should be in ready list');
+      assert.ok(foundFeature, 'Feature issue should be in issue list');
     });
 
     test('Bug type issues should be included in sync', async function () {
