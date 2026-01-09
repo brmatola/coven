@@ -12,9 +12,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coven/daemon/internal/agent"
 	"github.com/coven/daemon/internal/api"
+	"github.com/coven/daemon/internal/beads"
 	"github.com/coven/daemon/internal/config"
+	"github.com/coven/daemon/internal/git"
 	"github.com/coven/daemon/internal/logging"
+	"github.com/coven/daemon/internal/questions"
+	"github.com/coven/daemon/internal/scheduler"
+	"github.com/coven/daemon/internal/session"
+	"github.com/coven/daemon/internal/state"
+	"github.com/coven/daemon/pkg/types"
 )
 
 // Daemon manages the covend daemon lifecycle.
@@ -27,6 +35,17 @@ type Daemon struct {
 	startTime  time.Time
 	version    string
 	shutdownCh chan struct{}
+
+	// Components
+	store            *state.Store
+	sessionManager   *session.Manager
+	beadsClient      *beads.Client
+	beadsPoller      *beads.Poller
+	processManager   *agent.ProcessManager
+	worktreeManager  *git.WorktreeManager
+	scheduler        *scheduler.Scheduler
+	questionDetector *questions.Detector
+	eventBroker      *api.EventBroker
 }
 
 // New creates a new daemon for the given workspace.
@@ -53,14 +72,67 @@ func New(workspace, version string) (*Daemon, error) {
 	socketPath := filepath.Join(covenDir, "covend.sock")
 	server := api.NewServer(socketPath)
 
+	// Initialize components
+	store := state.NewStore(covenDir)
+	beadsClient := beads.NewClient(workspace)
+	eventBroker := api.NewEventBroker(store)
+	processManager := agent.NewProcessManager(logger)
+	worktreeManager := git.NewWorktreeManager(workspace, logger)
+	questionDetector := questions.NewDetector()
+	sessionManager := session.NewManager(store, logger)
+	sched := scheduler.NewScheduler(store, beadsClient, processManager, worktreeManager, logger)
+	beadsPoller := beads.NewPoller(beadsClient, store, eventBroker, logger)
+
+	// Wire up event callbacks
+	processManager.OnComplete(func(result *agent.ProcessResult) {
+		// Get agent for completed event
+		agnt := store.GetAgent(result.TaskID)
+		if agnt != nil {
+			if result.Error != "" {
+				eventBroker.EmitAgentFailed(agnt, result.Error)
+			} else {
+				eventBroker.EmitAgentCompleted(agnt)
+			}
+		}
+	})
+
+	processManager.OnOutput(func(taskID string, line agent.OutputLine) {
+		// Check for questions
+		questionDetector.ProcessLine(taskID, line)
+		eventBroker.EmitAgentOutput(taskID, line.Data)
+	})
+
+	questionDetector.OnQuestion(func(q *questions.Question) {
+		eventBroker.Broadcast(&types.Event{
+			Type: types.EventTypeAgentQuestion,
+			Data: map[string]interface{}{
+				"question_id": q.ID,
+				"task_id":     q.TaskID,
+				"type":        q.Type,
+				"text":        q.Text,
+				"options":     q.Options,
+			},
+			Timestamp: time.Now(),
+		})
+	})
+
 	return &Daemon{
-		workspace:  workspace,
-		covenDir:   covenDir,
-		server:     server,
-		logger:     logger,
-		config:     cfg,
-		version:    version,
-		shutdownCh: make(chan struct{}),
+		workspace:        workspace,
+		covenDir:         covenDir,
+		server:           server,
+		logger:           logger,
+		config:           cfg,
+		version:          version,
+		shutdownCh:       make(chan struct{}),
+		store:            store,
+		sessionManager:   sessionManager,
+		beadsClient:      beadsClient,
+		beadsPoller:      beadsPoller,
+		processManager:   processManager,
+		worktreeManager:  worktreeManager,
+		scheduler:        sched,
+		questionDetector: questionDetector,
+		eventBroker:      eventBroker,
 	}, nil
 }
 
@@ -190,18 +262,35 @@ func (d *Daemon) checkAndCleanStale() error {
 
 // registerHandlers sets up the HTTP endpoints.
 func (d *Daemon) registerHandlers() {
-	d.server.RegisterHandlerFunc("/health", d.handleHealth)
+	// Core daemon endpoints (health and version handled by api handlers)
 	d.server.RegisterHandlerFunc("/shutdown", d.handleShutdown)
-}
 
-// handleHealth returns the daemon health status.
-func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
-	api.WriteJSON(w, http.StatusOK, api.HealthResponse{
-		Status:    "healthy",
-		Version:   d.version,
-		Uptime:    time.Since(d.startTime).String(),
-		Workspace: d.workspace,
-	})
+	// API handlers (health, version, state, tasks)
+	apiHandlers := api.NewHandlers(d.store, d.version, "", "", d.workspace)
+	apiHandlers.Register(d.server)
+
+	// Session handlers
+	sessionHandlers := session.NewHandlers(d.sessionManager)
+	sessionHandlers.Register(d.server)
+
+	// Beads handlers
+	beadsHandlers := beads.NewHandlers(d.store)
+	beadsHandlers.Register(d.server)
+
+	// Agent handlers
+	agentHandlers := agent.NewHandlers(d.store, d.processManager)
+	agentHandlers.Register(d.server)
+
+	// Question handlers
+	questionHandlers := questions.NewHandlers(d.questionDetector)
+	questionHandlers.Register(d.server)
+
+	// Scheduler/task control handlers
+	schedulerHandlers := scheduler.NewHandlers(d.store, d.scheduler)
+	schedulerHandlers.Register(d.server)
+
+	// SSE event stream
+	d.eventBroker.Register(d.server)
 }
 
 // handleShutdown triggers a graceful shutdown.

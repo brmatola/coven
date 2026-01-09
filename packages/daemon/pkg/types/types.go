@@ -138,6 +138,7 @@ const (
 	EventTypeAgentOutput     = "agent.output"
 	EventTypeAgentCompleted  = "agent.completed"
 	EventTypeAgentFailed     = "agent.failed"
+	EventTypeAgentQuestion   = "agent.question"
 	EventTypeStateSnapshot   = "state.snapshot"
 	EventTypeHeartbeat       = "heartbeat"
 )
