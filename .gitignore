@@ -3,3 +3,7 @@ dist/
 *.vsix
 .vscode-test/
 coverage
+
+# Build artifacts
+build/
+packages/daemon/coverage.out
