@@ -49,6 +49,17 @@ const ALLOWED_ENV_VARS = [
   'NODE_ENV',
   'npm_config_prefix',
   'npm_config_cache',
+  // Claude/Anthropic API configuration
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_API_KEY',
+  'ANTHROPIC_BASE_URL',
+  // Common proxy settings
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
 ];
 
 /**

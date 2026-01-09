@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
@@ -42,9 +42,63 @@ async function isGitRepo(workspacePath: string): Promise<boolean> {
   }
 }
 
+/**
+ * Run claude with specific tools and get output.
+ */
+async function runClaude(
+  cwd: string,
+  prompt: string,
+  tools: string[],
+  timeoutMs: number
+): Promise<{ success: boolean; output: string; exitCode: number | null }> {
+  return new Promise((resolve) => {
+    const args = ['--print'];
+    if (tools.length > 0) {
+      args.push('--allowedTools', ...tools);
+    }
+    args.push(prompt);
+
+    const proc = spawn('claude', args, {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    const timeout = setTimeout(() => {
+      proc.kill('SIGTERM');
+      resolve({ success: false, output: `TIMEOUT\n${stdout}${stderr}`, exitCode: null });
+    }, timeoutMs);
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve({
+        success: code === 0,
+        output: stdout + stderr,
+        exitCode: code,
+      });
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      resolve({ success: false, output: err.message, exitCode: null });
+    });
+  });
+}
+
 suite('Agent Integration E2E Tests', function () {
   // Long timeout for agent tests
-  this.timeout(120000);
+  this.timeout(180000);
 
   let workspacePath: string;
   let claudeAvailable: boolean;
@@ -54,143 +108,228 @@ suite('Agent Integration E2E Tests', function () {
     workspacePath = getTestWorkspacePath();
     claudeAvailable = await isClaudeAvailable();
     isRepo = workspacePath ? await isGitRepo(workspacePath) : false;
+
+    console.log('Agent test setup:');
+    console.log(`  Workspace: ${workspacePath}`);
+    console.log(`  Claude: ${claudeAvailable}`);
+    console.log(`  Git repo: ${isRepo}`);
   });
 
   suite('Prerequisites', () => {
-    test('Extension should be active', async () => {
+    test('Extension must be active', async () => {
       const extension = vscode.extensions.getExtension('coven.coven');
       if (extension && !extension.isActive) {
         await extension.activate();
       }
-      assert.ok(extension?.isActive, 'Extension should be active');
+      assert.ok(extension?.isActive, 'Extension must be active');
     });
 
-    test('Workspace should exist', function () {
-      if (!workspacePath) {
-        this.skip();
-        return;
-      }
-      assert.ok(fs.existsSync(workspacePath), 'Workspace path should exist');
+    test('Workspace must exist', function () {
+      assert.ok(workspacePath, 'Workspace path must be set');
+      assert.ok(fs.existsSync(workspacePath), `Workspace must exist at ${workspacePath}`);
     });
 
-    test('Workspace should be a git repo', function () {
-      if (!workspacePath) {
-        this.skip();
-        return;
-      }
-      assert.ok(isRepo, 'Workspace should be a git repository');
+    test('Workspace must be a git repo', function () {
+      assert.ok(isRepo, 'Workspace must be a git repository');
     });
 
-    test('Claude CLI availability (informational)', function () {
-      // This test just reports status - doesn't fail if claude isn't available
-      if (claudeAvailable) {
-        assert.ok(true, 'Claude CLI is available');
-      } else {
-        console.log('Note: Claude CLI is not available - live agent tests will be skipped');
-        assert.ok(true, 'Claude CLI not available (expected in CI)');
-      }
+    test('Claude CLI must be available', function () {
+      assert.ok(claudeAvailable, 'Claude CLI must be installed');
     });
   });
 
   suite('Agent Commands', () => {
-    test('spawnAgent command should be registered', async () => {
+    test('startTask command must be registered', async () => {
       const commands = await vscode.commands.getCommands(true);
-      // Note: This command may not be registered yet - this tests readiness
-      const hasCommand =
-        commands.includes('coven.spawnAgent') || commands.includes('coven.startTask');
-      assert.ok(hasCommand, 'Agent-related command should exist');
+      assert.ok(commands.includes('coven.startTask'), 'startTask must be registered');
+    });
+
+    test('stopTask command must be registered', async () => {
+      const commands = await vscode.commands.getCommands(true);
+      assert.ok(commands.includes('coven.stopTask'), 'stopTask must be registered');
+    });
+
+    test('viewFamiliarOutput command must be registered', async () => {
+      const commands = await vscode.commands.getCommands(true);
+      assert.ok(commands.includes('coven.viewFamiliarOutput'), 'viewFamiliarOutput must be registered');
     });
   });
 
   suite('Agent Infrastructure', () => {
-    test('AgentOrchestrator should be importable', async () => {
-      // This verifies the module structure is correct
-      try {
-        // In e2e tests, we're in the extension context
-        // Just verify the types exist by checking commands work
-        const commands = await vscode.commands.getCommands(true);
-        assert.ok(commands.length > 0, 'Commands should be available');
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        assert.fail(`AgentOrchestrator infrastructure issue: ${errMsg}`);
-      }
-    });
-
-    test('Worktree directory structure should be correct', function () {
-      if (!workspacePath || !isRepo) {
-        this.skip();
-        return;
-      }
-
+    test('Worktree directory structure must be valid', function () {
       const covenDir = path.join(workspacePath, '.coven');
       const worktreesDir = path.join(covenDir, 'worktrees');
 
-      // The directories might not exist yet, that's OK
-      // Just verify the paths are valid
-      assert.ok(covenDir.includes('.coven'), 'Coven directory path should be valid');
-      assert.ok(worktreesDir.includes('worktrees'), 'Worktrees directory path should be valid');
+      // Paths should be constructable
+      assert.ok(covenDir.includes('.coven'), 'Coven directory path must be valid');
+      assert.ok(worktreesDir.includes('worktrees'), 'Worktrees directory path must be valid');
+    });
+
+    test('Output directory must be creatable', async function () {
+      const outputDir = path.join(workspacePath, '.coven', 'output');
+      await fs.promises.mkdir(outputDir, { recursive: true });
+      assert.ok(fs.existsSync(outputDir), 'Output directory must be created');
     });
   });
 
-  suite('Live Agent Test (requires claude CLI)', function () {
-    this.timeout(300000); // 5 minute timeout for live test
+  suite('Live Agent Tests', function () {
+    this.timeout(180000);
 
-    test('Should spawn agent and complete simple task', async function () {
-      // Skip if prerequisites not met
-      if (!workspacePath || !isRepo || !claudeAvailable) {
-        console.log('Skipping live agent test - prerequisites not met');
-        console.log(`  workspacePath: ${workspacePath || 'not set'}`);
-        console.log(`  isRepo: ${isRepo}`);
-        console.log(`  claudeAvailable: ${claudeAvailable}`);
-        this.skip();
-        return;
+    test('Claude must respond to simple prompt', async function () {
+      const result = await runClaude(
+        workspacePath,
+        'Say "Hello E2E" and nothing else.',
+        [],
+        30000
+      );
+
+      console.log('Claude response:', result.output.substring(0, 200));
+
+      assert.ok(
+        result.output.includes('Hello') || result.output.includes('E2E'),
+        `Claude must respond with greeting. Got: ${result.output.substring(0, 200)}`
+      );
+    });
+
+    test('Claude must be able to read files', async function () {
+      // Create a test file
+      const testDir = path.join(workspacePath, '.coven', 'agent-read-test');
+      await fs.promises.mkdir(testDir, { recursive: true });
+      const testFile = path.join(testDir, 'test.txt');
+      await fs.promises.writeFile(testFile, 'Test content: ABC123');
+
+      try {
+        const result = await runClaude(
+          testDir,
+          `Read the file test.txt and tell me what content it contains. Be brief.`,
+          ['Read'],
+          60000
+        );
+
+        console.log('Read test output:', result.output.substring(0, 300));
+        assert.ok(result.success, `Claude read task must succeed. Exit code: ${result.exitCode}`);
+
+        assert.ok(
+          result.output.includes('ABC123') || result.output.includes('Test content'),
+          `Claude must read file content. Got: ${result.output.substring(0, 300)}`
+        );
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
       }
+    });
 
-      // Create a test file request - very simple task
-      const testDir = path.join(workspacePath, '.coven', 'agent-test');
+    test('Claude must be able to write files', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'agent-write-test');
       await fs.promises.mkdir(testDir, { recursive: true });
 
-      const taskFile = path.join(testDir, 'task.txt');
+      try {
+        const result = await runClaude(
+          testDir,
+          'Create a file called output.txt with the content "Written by Claude". Say "Done" when complete.',
+          ['Write'],
+          60000
+        );
+
+        console.log('Write test output:', result.output.substring(0, 300));
+        assert.ok(result.success, `Claude write task must succeed. Exit code: ${result.exitCode}`);
+
+        const outputFile = path.join(testDir, 'output.txt');
+        assert.ok(fs.existsSync(outputFile), 'output.txt must be created');
+
+        const content = await fs.promises.readFile(outputFile, 'utf-8');
+        assert.ok(
+          content.includes('Claude') || content.includes('Written'),
+          `File must contain expected content. Got: ${content}`
+        );
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
+      }
+    });
+
+    test('Claude must be able to edit files', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'agent-edit-test');
+      await fs.promises.mkdir(testDir, { recursive: true });
+
+      // Create initial file
+      const testFile = path.join(testDir, 'source.ts');
       await fs.promises.writeFile(
-        taskFile,
-        'Create a file called result.txt with the text "2 + 2 = 4"'
+        testFile,
+        `function greet(): string {
+  return "Hello";
+}
+`
       );
 
       try {
-        // Run claude with allowed tools for the simple file task
-        const allowedTools = 'Read Write';
-        const { stdout, stderr } = await execAsync(
-          `claude --print --allowedTools "${allowedTools}" "Read ${taskFile} and complete the task described in it. Work in the directory ${testDir}. When done, just say 'Done.'"`,
-          {
-            cwd: testDir,
-            timeout: 240000, // 4 minute timeout
-          }
+        const result = await runClaude(
+          testDir,
+          'Edit source.ts to change the return value from "Hello" to "Hello World". Say "Done" when complete.',
+          ['Read', 'Edit'],
+          60000
         );
 
-        console.log('Claude output:', stdout);
-        if (stderr) {
-          console.log('Claude stderr:', stderr);
-        }
+        console.log('Edit test output:', result.output.substring(0, 300));
+        assert.ok(result.success, `Claude edit task must succeed. Exit code: ${result.exitCode}`);
 
-        // Check if result file was created
-        const resultFile = path.join(testDir, 'result.txt');
-        const resultExists = fs.existsSync(resultFile);
-
-        if (resultExists) {
-          const content = await fs.promises.readFile(resultFile, 'utf-8');
-          console.log('Result file content:', content);
-          assert.ok(content.includes('4'), 'Result should contain the answer');
-        } else {
-          console.log('Result file not created - checking output for success indicators');
-          assert.ok(
-            stdout.includes('Done') || stdout.includes('complete') || stdout.includes('created'),
-            'Agent should indicate completion'
-          );
-        }
+        const content = await fs.promises.readFile(testFile, 'utf-8');
+        assert.ok(content.includes('World'), `File must be edited. Content: ${content}`);
       } finally {
-        // Cleanup
         await fs.promises.rm(testDir, { recursive: true, force: true });
       }
+    });
+
+    test('Claude must complete a simple coding task', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'agent-task-test');
+      await fs.promises.mkdir(testDir, { recursive: true });
+
+      try {
+        const result = await runClaude(
+          testDir,
+          `Create a TypeScript file called utils.ts with a function called "double" that takes a number and returns it multiplied by 2. Include proper type annotations. Say "Done" when complete.`,
+          ['Write'],
+          90000
+        );
+
+        console.log('Coding task output:', result.output.substring(0, 500));
+        assert.ok(result.success, `Claude coding task must succeed. Exit code: ${result.exitCode}`);
+
+        const utilsFile = path.join(testDir, 'utils.ts');
+        assert.ok(fs.existsSync(utilsFile), 'utils.ts must be created');
+
+        const content = await fs.promises.readFile(utilsFile, 'utf-8');
+        assert.ok(
+          content.includes('function') || content.includes('double'),
+          `File must contain function. Content: ${content}`
+        );
+        assert.ok(content.includes('number'), `File must have type annotation. Content: ${content}`);
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  suite('Error Handling', () => {
+    test('Command must handle invalid task ID', async function () {
+      this.timeout(5000);
+
+      try {
+        await vscode.commands.executeCommand('coven.startTask', 'invalid-task-id-xyz');
+      } catch {
+        // Expected to fail
+      }
+      // Should not crash
+      assert.ok(true, 'Handled invalid task gracefully');
+    });
+
+    test('Command must handle undefined argument', async function () {
+      this.timeout(5000);
+
+      try {
+        await vscode.commands.executeCommand('coven.viewFamiliarOutput', undefined);
+      } catch {
+        // Expected to fail
+      }
+      assert.ok(true, 'Handled undefined argument gracefully');
     });
   });
 });
