@@ -1,91 +1,142 @@
-# Change: Agent Orchestration and Role-Based Prompt System
+# Change: Workflow-Based Agent Orchestration
 
 ## Why
 
-The daemon's core infrastructure (process management, worktrees, task scheduling) is complete but agents lack the contextual prompting needed for effective software development. Currently, prompts are just `title + description` with no role-specific behavior, acceptance criteria, or workflow integration.
+The daemon's core infrastructure (process management, worktrees, task scheduling) is complete. Now we need the orchestration layer that makes Coven actually useful: **automating repeated multi-agent workflows** like implementing features, reviewing changes, and preparing PRs.
 
-We need a structured system where:
-1. Agents operate with role-specific prompts (implement, fix, review, test)
-2. Rich context is injected (repo structure, prior attempts, related work)
-3. A review agent validates changes before merge
-4. Users can customize behavior via `.coven/` configuration
+The key insight: Claude Code already handles codebase navigation via CLAUDE.md/AGENTS.md. We don't need to reinvent context injection. Instead, we provide value through:
+1. Converting specs into well-formed beads with AC, testing requirements, context
+2. Managing review loops that iterate until quality gates pass
+3. Orchestrating multi-step workflows with agent handoffs and script gates
 
 ## What Changes
 
-### Agent Roles System (New Capability)
-- **Role definitions** with prompt templates stored in `.coven/roles/`
-- **Built-in roles**: `implement`, `fix`, `refactor`, `test`, `review`
-- **Custom roles**: User-defined roles with custom prompts
-- **Role selection**: Automatic based on task type, or explicit override
+### Grimoires: Workflow Definitions
+- **Grimoires** define multi-step workflows as YAML in `.coven/grimoires/`
+- Each grimoire is a sequence of **steps** (agent invocations or scripts)
+- Steps can be: `agent`, `agent-loop`, `parallel-agents`, `script`, `gate`
+- Built-in grimoires for common workflows; users can define custom ones
 
-### Prompt Building (Major Enhancement)
-- **Context injection**: Repo structure, relevant files, directory hints
-- **Acceptance criteria**: Included in all implementation prompts
-- **Prior attempt summaries**: For retry scenarios
-- **Session context**: Awareness of parallel work to avoid conflicts
+### Step Primitives
+- **agent**: Single agent invocation with a prompt template
+- **agent-loop**: Repeated agent invocations until exit condition (e.g., review passes)
+- **parallel-agents**: Fan-out to N agents (e.g., implement N beads concurrently)
+- **script**: Run a shell command (tests, builds, linters)
+- **gate**: Script that blocks progression if it fails
 
-### Review Workflow Integration
-- **Review agent**: Automatically spawned after implementation completes
-- **Review checks**: Test coverage, code quality, security patterns
-- **Configurable strictness**: `strict`, `normal`, `yolo` modes
-- **Blocking reviews**: Option to require review approval before merge
+### Handoffs and State
+- Steps pass outputs to subsequent steps via named variables
+- Handoffs carry context: what was done, what's next, relevant artifacts
+- Failed steps can retry, block, or escalate to user
 
-### Configuration via `.coven/`
-- **roles/**: Custom role definitions with prompt templates
-- **config.json**: Orchestration settings (concurrency, review mode, etc.)
-- **Context hints**: Project-specific context for agents
+### Built-in Grimoires (MVP)
+1. **spec-to-beads**: Convert refined openspec into beads with AC, testing requirements
+2. **implement-and-review**: Implement a bead, run review loop until acceptable
+3. **prepare-pr**: Final review, run all tests, create PR via gh CLI
 
 ## Impact
 
 - **Affected specs**:
-  - `agent-execution` (MODIFIED - prompt building, role selection)
-  - `agent-roles` (NEW - role definitions and templates)
+  - `agent-execution` (MODIFIED - workflow step execution)
+  - `agent-orchestration` (NEW - workflow definitions, step primitives)
 - **Affected code**:
-  - `packages/daemon/internal/scheduler/` - prompt building
-  - `packages/daemon/internal/roles/` - new package for role management
-  - `packages/daemon/internal/review/` - new package for review agent
-- **E2E tests**: New tests for role-based execution, review workflow
+  - `packages/daemon/internal/workflow/` - workflow engine
+  - `packages/daemon/internal/grimoire/` - grimoire loading and validation
+  - `.coven/grimoires/` - built-in workflow definitions
+
+## Example: Feature Implementation Workflow
+
+```yaml
+# .coven/grimoires/implement-feature.yaml
+name: implement-feature
+description: "End-to-end: openspec → beads → implementation → PR"
+trigger: manual  # or: on_openspec_approved
+
+steps:
+  - name: convert-spec
+    type: agent
+    prompt: spec-to-beads
+    input:
+      openspec: ${input.openspec_path}
+    output: created_beads
+
+  - name: implement
+    type: parallel-agents
+    for_each: ${created_beads}
+    prompt: implement-bead
+    max_concurrent: 3
+    output: implementations
+
+  - name: review-loop
+    type: agent-loop
+    prompt: review-changes
+    input:
+      changes: ${implementations}
+    max_iterations: 3
+    exit_when: no_actionable_findings
+    arbiter_prompt: is-finding-actionable
+    output: review_result
+
+  - name: test-gate
+    type: gate
+    command: "npm test && npm run test:e2e"
+    on_fail: block_with_message
+    message: "Tests failed. Review loop should have caught this."
+
+  - name: create-pr
+    type: agent
+    prompt: prepare-pr
+    input:
+      branch: ${input.feature_branch}
+      beads: ${created_beads}
+      review: ${review_result}
+    tools: [gh]
+```
 
 ## User Stories
 
-### Story 1: Default Workflow
-As a developer, when I create a task and mark it ready, the daemon should:
-1. Select the appropriate role based on task type
-2. Build a rich prompt with repo context and acceptance criteria
-3. Spawn an agent in a worktree
-4. On completion, spawn a review agent to validate changes
-5. Present changes for my approval (or auto-merge in yolo mode)
+### Story 1: Implement Feature from Spec
+As a developer, when I approve an openspec change, I can run the `implement-feature` grimoire which:
+1. Converts the spec into appropriately-sized beads with AC and testing requirements
+2. Implements each bead in parallel (respecting concurrency limits)
+3. Reviews changes iteratively until quality is acceptable
+4. Runs test suite as a gate
+5. Creates a PR with summary of all changes
 
-### Story 2: Custom Role
-As a developer, I want to define a custom role for my team's conventions:
+### Story 2: Custom Review Workflow
+As a team lead, I want stricter reviews, so I create a custom grimoire:
 ```yaml
-# .coven/roles/team-implement.yaml
-name: team-implement
-base: implement
-prompt_additions: |
-  Follow our team conventions:
-  - Use functional components with hooks
-  - Write tests for all public functions
-  - Use our custom logger from @/lib/logger
+# .coven/grimoires/strict-review.yaml
+steps:
+  - name: security-review
+    type: agent
+    prompt: security-audit
+
+  - name: coverage-gate
+    type: gate
+    command: "npm run test:coverage -- --min=80"
+
+  - name: architecture-review
+    type: agent
+    prompt: architecture-review
 ```
 
-### Story 3: Review Configuration
-As a developer, I want to configure how strict the review agent is:
-```json
-{
-  "review": {
-    "mode": "normal",
-    "require_tests": true,
-    "require_e2e": false,
-    "auto_merge": false
-  }
-}
+### Story 3: Yolo Mode
+As a developer prototyping, I want fast iteration:
+```yaml
+# .coven/grimoires/yolo-implement.yaml
+steps:
+  - name: implement
+    type: agent
+    prompt: implement-bead
+    # No review loop, no gates - just ship it
 ```
 
 ## Success Criteria
 
-1. Agents receive role-appropriate prompts with rich context
-2. Review agent catches common issues (missing tests, bad patterns)
-3. Users can customize roles without modifying daemon code
-4. E2E tests validate the complete workflow
-5. Default experience works well without configuration
+1. Users can define workflows as YAML grimoires
+2. Built-in grimoires handle common patterns (spec→beads, implement+review, PR)
+3. Workflows compose agent work with script gates
+4. Review loops iterate until quality acceptable (with configurable limits)
+5. Users can override/extend built-in workflows
+6. Clear signaling when human intervention needed
