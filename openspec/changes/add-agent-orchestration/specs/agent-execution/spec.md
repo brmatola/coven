@@ -37,7 +37,7 @@ The system SHALL support agent profiles via spells.
 ### Requirement: Context Injection
 The system SHALL inject workflow context into agent prompts via spell templates.
 
-**Note**: We rely on Claude Code's CLAUDE.md/AGENTS.md for codebase navigation. Context injection is via spell template variables.
+**Note**: We rely on Claude Code's CLAUDE.md/AGENTS.md for codebase navigation. Context injection is via spell template variables using Go template syntax `{{.variable}}`.
 
 #### Scenario: Bead context in spell
 - **WHEN** spell template contains `{{.bead.title}}`
@@ -50,16 +50,53 @@ The system SHALL inject workflow context into agent prompts via spell templates.
 
 ## ADDED Requirements
 
+### Requirement: Agent System Prompt
+The system SHALL wrap all agent invocations with a system prompt that enforces the output contract.
+
+#### Scenario: System prompt composition
+- **WHEN** agent is spawned
+- **THEN** system prompt SHALL be rendered with workflow context
+- **AND** spell content SHALL be injected into system prompt at `{{.spell_content}}`
+- **AND** final prompt = rendered system prompt
+
+#### Scenario: System prompt override
+- **WHEN** `.coven/system-prompt.md` exists
+- **THEN** user's system prompt SHALL be used instead of built-in
+- **AND** user prompt MUST include `{{.spell_content}}` placeholder
+
+### Requirement: Agent Output Schema
+The system SHALL require agents to produce structured JSON output.
+
+#### Scenario: Agent output format
+- **WHEN** agent completes
+- **THEN** agent's output SHALL include a JSON block with:
+  - `success`: boolean indicating task completion
+  - `summary`: human-readable description
+  - `outputs`: key-value pairs for subsequent steps (optional)
+  - `error`: error message if failed (optional)
+
+#### Scenario: Output parsing
+- **WHEN** agent output is captured
+- **THEN** the system SHALL extract the last JSON code block
+- **AND** parse it as AgentOutput schema
+- **AND** make fields available as `{{.step_name.success}}`, `{{.step_name.outputs.key}}`
+
+#### Scenario: Missing output
+- **WHEN** agent output contains no valid JSON block
+- **THEN** step SHALL be marked as failed
+- **AND** `{{.previous.failed}}` SHALL be true
+
 ### Requirement: Workflow Step Integration
 The system SHALL execute agents as workflow steps.
 
 #### Scenario: Agent step captures output
 - **WHEN** agent step completes
-- **THEN** agent's completion output SHALL be captured
+- **THEN** agent's AgentOutput SHALL be captured
 - **AND** output SHALL be stored in workflow context
-- **AND** output SHALL be available as `${step_name}` or via `output` field
+- **AND** output SHALL be available as `{{.step_name}}` or via `output` field
 
 #### Scenario: Agent step failure
 - **WHEN** agent step fails or times out
 - **THEN** failure SHALL be reported to workflow engine
-- **AND** `${previous.failed}` SHALL be true for next step
+- **AND** `{{.previous.failed}}` SHALL be true for next step
+- **AND** `{{.previous.success}}` SHALL be false

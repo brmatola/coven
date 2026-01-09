@@ -23,10 +23,17 @@ The key insight: Claude Code already handles codebase navigation via CLAUDE.md/A
 - Can be referenced by name or inlined directly in grimoire YAML
 - Users can override built-in spells or create custom ones
 
-### Step Primitives (just 3)
+### Step Primitives (4 types)
 - **agent**: Invoke agent with a spell (file reference or inline)
 - **script**: Run shell command with `on_fail`/`on_success` handlers
 - **loop**: Repeat sub-steps until condition or max iterations
+- **merge**: Merge worktree changes to main repo (requires human review by default)
+
+### Dry-Run Mode
+- Preview what a grimoire would do without executing
+- Shows: resolved grimoire, rendered spells, step sequence
+- Validates templates and variable references
+- Command: `coven grimoire preview <grimoire> --bead=<id>`
 
 ### Grimoire-to-Bead Mapping
 - Beads specify grimoire via label: `grimoire:implement-bead`
@@ -50,7 +57,7 @@ steps:
     type: agent
     spell: implement
     input:
-      bead: ${bead}
+      bead: "{{.bead}}"
 
   - name: quality-loop
     type: loop
@@ -66,7 +73,9 @@ steps:
       - name: fix-tests
         type: agent
         spell: fix-tests
-        when: ${previous.failed}
+        when: "{{.previous.failed}}"
+        input:
+          test_output: "{{.run_tests.output}}"
 
       # Review phase
       - name: review
@@ -78,13 +87,15 @@ steps:
         type: agent
         spell: is-actionable
         input:
-          findings: ${findings}
-        output: needs_fixes
+          findings: "{{.findings.outputs.issues}}"
+        output: actionable
 
       - name: apply-fixes
         type: agent
         spell: apply-review-fixes
-        when: ${needs_fixes}
+        when: "{{.actionable.outputs.needs_fixes}}"
+        input:
+          issues: "{{.findings.outputs.issues}}"
 
       # Exit if clean
       - name: final-test
@@ -92,9 +103,9 @@ steps:
         command: "npm test"
         on_success: exit_loop
 
-  - name: mark-done
-    type: script
-    command: "bd close ${bead.id}"
+  - name: merge-changes
+    type: merge
+    require_review: true
 ```
 
 ## Example: Inline Spell
@@ -163,9 +174,20 @@ You are reviewing changes. Focus on:
 
 ## Success Criteria
 
-1. Three primitives only: agent, script, loop
+### Functional
+1. Four primitives: agent, script, loop, merge
 2. Spells as separate composable templates (file or inline)
 3. Labels drive grimoire selection with sensible fallbacks
 4. Quality loop pattern handles test + review iteration cleanly
 5. Max iterations → block for manual review (no infinite loops)
-6. Simple bead lifecycle (open → in_progress → closed/blocked)
+6. Simple bead lifecycle (open → in_progress → pending_merge → closed/blocked)
+7. Merge step requires human review before changes land in main repo
+8. Timeouts prevent runaway execution (configurable per-step and per-workflow)
+9. Shell-escaped variables prevent command injection in script steps
+10. Explicit boolean coercion in conditions (fail fast on type errors)
+11. Dry-run mode validates grimoires without execution
+
+### Quality Metrics (validate through experimentation)
+12. Agent outputs valid JSON in ≥90% of steps (target: 95%+)
+13. Quality loop converges within max_iterations for ≥70% of test beads (target: 80%+)
+14. Blocked workflows provide sufficient context to understand failure in <2 minutes

@@ -151,3 +151,9 @@ While MVP assumes OpenSpec + Beads + Claude Code, the architecture uses interfac
 ### Quality Gates
 - We want views into the state of various quality gates from coven
 - Test coverage, test status, etc
+
+### Workflow Orchestration Improvements
+- **Output Reliability**: More robust agent output parsing (fallback strategies, structured output mode, retry on malformed JSON)
+- **Cost Controls**: Budget limits per workflow/bead, token limits per agent step, cost alerting, automatic pause on threshold
+- **Parallel Steps**: Support parallel step execution within a workflow (e.g., run lint + typecheck simultaneously)
+- **Dry Run Mode**: Preview what a grimoire would do without executing (`coven grimoire preview implement-bead --bead=xyz`)
