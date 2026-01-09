@@ -2,36 +2,36 @@
 
 ## Context
 
-Coven's daemon can spawn agents in worktrees and merge changes back. The next layer is **workflow orchestration**: defining multi-step processes that combine agent work with script-based quality gates, enabling autonomous feature implementation from spec to PR.
+Coven's daemon can spawn agents in worktrees and merge changes back. The next layer is **workflow orchestration**: defining multi-step processes that combine agent work with script-based quality checks, enabling autonomous feature implementation.
 
 ### Key Insight
 Claude Code already handles codebase navigation via CLAUDE.md/AGENTS.md. We don't reinvent that. Our value is in:
 1. **Workflow composition**: Defining sequences of agent + script steps
-2. **Review loops**: Iterating until quality is acceptable
+2. **Quality loops**: Iterating until tests pass and reviews are clean
 3. **Handoffs**: Passing context between steps cleanly
-4. **Gates**: Script-based quality checkpoints that block or allow progression
+4. **Scheduling**: k8s-style pickup of ready work, N at a time
 
 ### Stakeholders
-- **Developers**: Define and run workflows, review results
-- **Teams**: Share custom workflows via `.coven/grimoires/`
+- **Developers**: Define and run workflows, review flagged work
+- **Teams**: Share custom grimoires and spells via `.coven/`
 - **Agents**: Execute steps, receive handoff context
-- **Daemon**: Orchestrates workflow execution
+- **Scheduler**: Picks up ready beads, runs grimoires, respects concurrency
 
 ## Goals / Non-Goals
 
 ### Goals
-- Composable workflow primitives (agent, agent-loop, parallel-agents, script, gate)
-- Built-in grimoires for common patterns (spec→beads, implement+review, prepare-pr)
-- User-definable custom grimoires in YAML
-- Clean handoffs with context between steps
-- Review loops with arbiter pattern (separate agent judges actionability)
-- Clear intervention signaling when human needed
+- Three primitives only: agent, script, loop
+- Spells as composable prompt templates (file or inline)
+- Labels drive grimoire selection with fallbacks
+- Quality loop pattern for test + review iteration
+- Simple bead lifecycle (open → in_progress → closed/blocked)
+- Clear intervention signaling when max retries hit
 
 ### Non-Goals
-- Complex DAG-based workflow engines (keep it sequential with fan-out)
-- Visual workflow builders (YAML is the interface)
-- Cross-repository workflows (single repo focus)
-- Real-time collaboration on workflows
+- Complex DAG-based workflow engines
+- Visual workflow builders
+- Goto/branching (keep it linear with loops)
+- Magic requeuing (grimoire is explicit about the full flow)
 
 ## Architecture
 
@@ -40,285 +40,353 @@ Claude Code already handles codebase navigation via CLAUDE.md/AGENTS.md. We don'
 ```
 .coven/
 ├── config.json              # Global settings
-└── grimoires/               # Workflow definitions
-    ├── spec-to-beads.yaml   # Built-in (can override)
-    ├── implement-bead.yaml  # Built-in
-    ├── review-loop.yaml     # Built-in
-    ├── prepare-pr.yaml      # Built-in
-    └── custom-*.yaml        # User-defined
+├── grimoires/               # Workflow definitions
+│   ├── implement-bead.yaml  # Built-in (can override)
+│   ├── spec-to-beads.yaml   # Built-in
+│   └── prepare-pr.yaml      # Built-in
+└── spells/                  # Prompt templates
+    ├── implement.md         # Built-in (can override)
+    ├── review.md            # Built-in
+    ├── fix-tests.md         # Built-in
+    └── is-actionable.md     # Arbiter prompt
 
 packages/daemon/internal/
 ├── workflow/                # Workflow engine (NEW)
 │   ├── engine.go            # Workflow execution
-│   ├── step.go              # Step interface and implementations
-│   ├── context.go           # Workflow context and variable passing
-│   └── state.go             # Workflow state persistence
+│   ├── step.go              # Step executors (agent, script, loop)
+│   ├── context.go           # Variable passing
+│   └── state.go             # Workflow state
 ├── grimoire/                # Grimoire loading (NEW)
 │   ├── loader.go            # Load from .coven/grimoires/
 │   ├── parser.go            # YAML parsing
-│   ├── validator.go         # Schema validation
-│   └── builtin.go           # Embedded built-in grimoires
-├── prompts/                 # Prompt templates (NEW)
-│   ├── spec-to-beads.md     # Convert openspec to beads
-│   ├── implement-bead.md    # Implement a single bead
-│   ├── review-changes.md    # Review agent prompt
-│   ├── is-actionable.md     # Arbiter prompt
-│   └── prepare-pr.md        # PR preparation prompt
-└── scheduler/               # Enhanced to support workflows
-    └── scheduler.go         # Workflow step scheduling
+│   └── builtin/             # Embedded built-in grimoires
+├── spell/                   # Spell loading (NEW)
+│   ├── loader.go            # Load from .coven/spells/
+│   ├── renderer.go          # Go template rendering
+│   └── builtin/             # Embedded built-in spells
+└── scheduler/               # Enhanced scheduler
+    └── scheduler.go         # Grimoire selection, bead lifecycle
 ```
 
 ### Core Types
 
 ```go
-// Grimoire defines a multi-step workflow
+// Grimoire defines a workflow for one unit of work
 type Grimoire struct {
-    Name        string            `yaml:"name"`
-    Description string            `yaml:"description"`
-    Trigger     string            `yaml:"trigger"`  // manual, on_event
-    Input       []InputDef        `yaml:"input"`
-    Steps       []Step            `yaml:"steps"`
+    Name        string `yaml:"name"`
+    Description string `yaml:"description"`
+    Steps       []Step `yaml:"steps"`
 }
 
-// Step is a single unit of work in a workflow
+// Step is a unit of work in a grimoire
 type Step struct {
-    Name          string            `yaml:"name"`
-    Type          StepType          `yaml:"type"`  // agent, agent-loop, parallel-agents, script, gate
-    Prompt        string            `yaml:"prompt"`
-    Command       string            `yaml:"command"`
-    Input         map[string]string `yaml:"input"`
-    Output        string            `yaml:"output"`
+    Name    string   `yaml:"name"`
+    Type    StepType `yaml:"type"`  // agent, script, loop
 
-    // For parallel-agents
-    ForEach       string            `yaml:"for_each"`
-    MaxConcurrent int               `yaml:"max_concurrent"`
+    // For agent steps
+    Spell   string            `yaml:"spell"`   // File ref or inline
+    Input   map[string]string `yaml:"input"`
+    Output  string            `yaml:"output"`
 
-    // For agent-loop
-    MaxIterations int               `yaml:"max_iterations"`
-    ExitWhen      string            `yaml:"exit_when"`
-    ArbiterPrompt string            `yaml:"arbiter_prompt"`
+    // For script steps
+    Command   string `yaml:"command"`
+    OnFail    string `yaml:"on_fail"`    // continue, block
+    OnSuccess string `yaml:"on_success"` // exit_loop
 
-    // For gates
-    OnFail        string            `yaml:"on_fail"`  // block, retry, escalate
-    Message       string            `yaml:"message"`
+    // For loop steps
+    Steps         []Step `yaml:"steps"`
+    MaxIterations int    `yaml:"max_iterations"`
+    OnMaxIter     string `yaml:"on_max_iterations"` // block
+
+    // Conditional execution
+    When string `yaml:"when"` // ${previous.failed}, ${needs_fixes}
 }
 
-// WorkflowContext carries state through workflow execution
+// WorkflowContext carries state through execution
 type WorkflowContext struct {
-    WorkflowID    string
-    GrimoireName  string
-    Input         map[string]any
-    Variables     map[string]any  // Step outputs
-    CurrentStep   int
-    Status        WorkflowStatus
-    StartedAt     time.Time
-    CompletedAt   *time.Time
-    Error         *string
+    WorkflowID  string
+    BeadID      string
+    Grimoire    string
+    Variables   map[string]any  // Step outputs
+    CurrentStep int
+    Status      WorkflowStatus  // running, blocked, completed, failed
+    Error       *string
 }
 ```
 
 ### Step Types
 
-| Type | Purpose | Execution |
-|------|---------|-----------|
-| `agent` | Single agent invocation | Spawn agent with prompt, wait for completion |
-| `agent-loop` | Repeated agent until condition | Loop with arbiter checking exit condition |
-| `parallel-agents` | Fan-out to N agents | Spawn multiple agents, wait for all |
-| `script` | Run shell command | Execute command, capture output |
-| `gate` | Quality checkpoint | Run command, block if non-zero exit |
+| Type | Purpose | Key Fields |
+|------|---------|------------|
+| `agent` | Invoke agent with spell | `spell`, `input`, `output`, `when` |
+| `script` | Run shell command | `command`, `on_fail`, `on_success` |
+| `loop` | Repeat sub-steps | `steps`, `max_iterations`, `on_max_iterations` |
+
+### Spells
+
+Spells are Markdown files with Go template syntax:
+
+```markdown
+# .coven/spells/implement.md
+
+You are implementing a feature.
+
+## Task
+{{.bead.title}}
+
+## Description
+{{.bead.description}}
+
+## Acceptance Criteria
+{{range .bead.acceptance_criteria}}
+- {{.}}
+{{end}}
+
+## Instructions
+- Write clean, maintainable code
+- Include unit tests for new functionality
+- Follow existing patterns in the codebase
+```
+
+**Inline spells** for simple cases:
+```yaml
+- type: agent
+  spell: |
+    Fix the failing tests:
+    {{.test_output}}
+```
+
+**Resolution order**:
+1. If `spell` contains newlines → treat as inline
+2. Else check `.coven/spells/{spell}.md`
+3. Else check built-in spells
+
+### Grimoire Selection
+
+Beads specify grimoire via label:
+```bash
+bd create --title="Add login" --labels="grimoire:implement-bead"
+```
+
+**Resolution order**:
+1. Check bead labels for `grimoire:*` → use that grimoire
+2. Check config type mapping (`feature` → `implement-bead`)
+3. Use default grimoire from config
+
+```json
+// .coven/config.json
+{
+  "grimoire": {
+    "default": "implement-bead",
+    "type_mapping": {
+      "feature": "implement-bead",
+      "bug": "implement-bead"
+    }
+  }
+}
+```
+
+### Bead Lifecycle
+
+Simple state machine:
+
+```
+open ──────► in_progress ──────► closed
+                 │
+                 └──────────────► blocked
+```
+
+| Status | Meaning |
+|--------|---------|
+| `open` | Ready to be picked up |
+| `in_progress` | Actively being worked by grimoire |
+| `blocked` | Needs manual intervention |
+| `closed` | Done, merged |
+
+Scheduler:
+1. Query beads: `status=open`, no unmet dependencies
+2. Pick up to N beads (concurrency limit)
+3. Set `in_progress`, run grimoire
+4. On success → `closed`
+5. On `block` action → `blocked`, notify user
+
+### Variable Resolution
+
+Steps reference outputs using `${variable}` syntax:
+
+```yaml
+- name: review
+  type: agent
+  spell: review
+  output: findings
+
+- name: check-actionable
+  type: agent
+  spell: is-actionable
+  input:
+    findings: ${findings}
+  output: needs_fixes
+
+- name: apply-fixes
+  type: agent
+  spell: apply-fixes
+  when: ${needs_fixes}
+```
+
+Special variables:
+- `${bead}` - The bead being processed
+- `${previous.output}` - Previous step's output
+- `${previous.failed}` - Boolean, true if previous step failed
+
+### Quality Loop Pattern
+
+The standard pattern for test + review iteration:
+
+```yaml
+- name: quality-loop
+  type: loop
+  max_iterations: 3
+  on_max_iterations: block
+  steps:
+    # Test phase
+    - name: run-tests
+      type: script
+      command: "npm test"
+      on_fail: continue
+
+    - name: fix-tests
+      type: agent
+      spell: fix-tests
+      when: ${previous.failed}
+
+    # Review phase
+    - name: review
+      type: agent
+      spell: review
+      output: findings
+
+    - name: check-actionable
+      type: agent
+      spell: is-actionable
+      input:
+        findings: ${findings}
+      output: needs_fixes
+
+    - name: apply-fixes
+      type: agent
+      spell: apply-review-fixes
+      when: ${needs_fixes}
+
+    # Exit if clean
+    - name: final-test
+      type: script
+      command: "npm test"
+      on_success: exit_loop
+```
+
+Each iteration: test → fix if needed → review → fix if needed → test again → exit if pass.
+
+If max iterations reached, grimoire blocks and user is notified.
 
 ### Workflow Execution Flow
 
 ```
-User triggers grimoire
+Scheduler picks up bead
+        ↓
+Resolve grimoire (label → type → default)
         ↓
 Load grimoire definition
         ↓
-Initialize WorkflowContext with input
+Initialize WorkflowContext
         ↓
 ┌─────────────────────────────────────┐
 │ For each step:                      │
-│   1. Resolve input variables        │
-│   2. Execute step (type-dependent)  │
-│   3. Store output in context        │
-│   4. Check for failure/intervention │
+│   1. Check `when` condition         │
+│   2. Resolve input variables        │
+│   3. Execute step (type-dependent)  │
+│   4. Store output in context        │
+│   5. Handle on_fail/on_success      │
 └─────────────────────────────────────┘
         ↓
-Workflow complete or blocked
-```
-
-### Agent-Loop with Arbiter Pattern
-
-The review loop uses two agents:
-1. **Review Agent**: Examines changes, produces findings
-2. **Arbiter Agent**: Judges if findings are actionable
-
-```
-┌─────────────────────────────────────────────┐
-│ Agent Loop                                  │
-│                                             │
-│   Review Agent → findings                   │
-│         ↓                                   │
-│   Arbiter Agent → actionable? (yes/no)      │
-│         ↓                                   │
-│   if actionable && iterations < max:        │
-│       Apply fixes (Review Agent)            │
-│       Loop again                            │
-│   else:                                     │
-│       Exit loop                             │
-└─────────────────────────────────────────────┘
-```
-
-This prevents infinite loops and handles subjective quality judgments.
-
-### Variable Resolution
-
-Steps reference outputs from previous steps using `${variable}` syntax:
-
-```yaml
-steps:
-  - name: convert
-    output: beads          # Stores result as "beads"
-
-  - name: implement
-    for_each: ${beads}     # References previous output
-    output: implementations
-
-  - name: review
-    input:
-      changes: ${implementations}  # References previous output
-```
-
-Variables are stored in `WorkflowContext.Variables` and resolved at step execution time.
-
-### Built-in Prompts
-
-Prompts are Markdown files with template variables:
-
-```markdown
-# .coven/prompts/spec-to-beads.md
-
-You are converting an OpenSpec change proposal into actionable beads.
-
-## Input
-OpenSpec path: {{.openspec}}
-
-## Instructions
-1. Read the proposal.md, design.md, and tasks.md
-2. For each logical unit of work, create a bead with:
-   - Clear title describing the deliverable
-   - Description with context needed for implementation
-   - Acceptance criteria (testable conditions)
-   - Testing requirements (unit tests, E2E tests expected)
-   - Dependencies on other beads (if any)
-
-3. Beads should be:
-   - Small enough for one agent session (< 1 hour of work)
-   - Self-contained (agent can complete without other beads)
-   - Testable (clear definition of done)
-
-## Output
-Use `bd create` to create each bead. Include all context in the bead itself.
-```
-
-### Handoff Context
-
-When one step completes, the next step receives:
-1. **Explicit outputs**: Named variables from `output` field
-2. **Implicit context**: WorkflowContext with full history
-3. **Artifacts**: File paths, git refs, bead IDs
-
-For agent steps, handoff context is injected into the prompt:
-
-```markdown
-## Previous Step: {{.previous_step.name}}
-Result: {{.previous_step.output}}
-
-## Your Task
-{{.current_step.prompt}}
+Workflow complete → close bead
+   or blocked → flag for user
 ```
 
 ## Decisions
 
-### Decision 1: YAML for Grimoires
-**Choice**: Define workflows in YAML
-**Alternatives**: JSON, code-based (Go DSL), visual builder
-**Rationale**: YAML is human-readable, widely understood, git-friendly. Complex enough for our needs without over-engineering.
+### Decision 1: Three Primitives Only
+**Choice**: agent, script, loop
+**Alternatives**: Add gate, conditional, parallel
+**Rationale**: Minimal surface area. Scripts with `on_fail` cover gates. Loops cover iteration. Scheduler handles parallelism.
 
-### Decision 2: Sequential Steps with Fan-out
-**Choice**: Steps execute sequentially; `parallel-agents` is the only fan-out
-**Alternatives**: Full DAG engine, arbitrary parallelism
-**Rationale**: Keeps mental model simple. Most workflows are linear with one parallelization point (implement N beads). Can extend later if needed.
+### Decision 2: Spells Separate from Grimoires
+**Choice**: Prompts in `.coven/spells/`, referenced by name
+**Alternatives**: Inline only, embedded in grimoire
+**Rationale**: Reusable across grimoires, easy to override, readable. Inline option for quick stuff.
 
-### Decision 3: Arbiter Pattern for Loops
-**Choice**: Separate "arbiter" agent judges if loop should continue
-**Alternatives**: Same agent decides, fixed iteration count, script-based check
-**Rationale**: Fresh context avoids bias ("I just said this is fine, so it must be"). Separates "find issues" from "judge severity". More robust quality signal.
+### Decision 3: Labels for Grimoire Selection
+**Choice**: `grimoire:name` label on bead
+**Alternatives**: Separate field, type-only mapping
+**Rationale**: Flexible, no schema change, explicit per-bead control with fallbacks.
 
-### Decision 4: Prompts as Markdown Files
-**Choice**: Store prompts as .md files with template variables
-**Alternatives**: Inline in YAML, Go templates, external service
-**Rationale**: Markdown is readable, supports formatting, easy to edit. Template variables keep them reusable.
+### Decision 4: No Goto
+**Choice**: Linear with loops only
+**Alternatives**: Goto, full state machine
+**Rationale**: Simpler mental model. Loops handle iteration. If you need goto, your workflow is too complex.
 
-### Decision 5: Gates are Scripts
-**Choice**: Quality gates are shell commands (exit 0 = pass)
-**Alternatives**: Agent-based gates, built-in checks
-**Rationale**: Leverages existing tooling (npm test, eslint, etc). Users already know how to write these. More reliable than agent judgment for objective criteria.
+### Decision 5: Block on Max Iterations
+**Choice**: Flag for manual review, don't auto-retry forever
+**Alternatives**: Infinite retry, auto-close as failed
+**Rationale**: Prevents runaway costs. Human-in-loop for edge cases.
 
 ## Risks / Trade-offs
 
-### Risk 1: Workflow Complexity
-**Risk**: Users create overly complex workflows that are hard to debug
-**Mitigation**: Start with simple primitives, good error messages, workflow visualization in UI
+### Risk 1: Loop Doesn't Converge
+**Risk**: Quality loop keeps finding issues
+**Mitigation**: Hard max_iterations limit, block action, cost visibility
 
-### Risk 2: Agent Loop Divergence
-**Risk**: Review loops don't converge, burning tokens
-**Mitigation**: Hard max_iterations limit, arbiter pattern, cost tracking per workflow
+### Risk 2: Spell Template Errors
+**Risk**: Template syntax errors at runtime
+**Mitigation**: Validate templates on load, clear error messages
 
-### Risk 3: Handoff Context Loss
-**Risk**: Important context lost between steps
-**Mitigation**: Explicit output naming, full context available to prompts, step history in WorkflowContext
-
-### Risk 4: Gate Flakiness
-**Risk**: Tests flaky, gates fail intermittently
-**Mitigation**: Retry option for gates, clear error messages, don't block on warnings
+### Risk 3: Complex Workflows
+**Risk**: Users create deeply nested loops
+**Mitigation**: Recommend flat patterns, document best practices
 
 ## Migration Plan
 
-### Phase 1: Workflow Engine Core
-1. Define core types (Grimoire, Step, WorkflowContext)
-2. Implement workflow engine with basic step execution
-3. Support `agent` and `script` step types
-4. Unit tests for engine
+### Phase 1: Core Engine
+1. Define types (Grimoire, Step, WorkflowContext)
+2. Implement workflow engine with agent and script steps
+3. Implement variable resolution
+4. Unit tests
 
-### Phase 2: Grimoire Loading
-1. Implement YAML parser and validator
-2. Embed built-in grimoires
-3. Load custom grimoires from `.coven/grimoires/`
-4. Unit tests for loading
+### Phase 2: Loop and Spells
+1. Implement loop step type
+2. Implement spell loader (file + inline)
+3. Implement spell renderer (Go templates)
+4. Unit tests
 
-### Phase 3: Advanced Steps
-1. Implement `parallel-agents` with concurrency control
-2. Implement `agent-loop` with arbiter pattern
-3. Implement `gate` with failure handling
+### Phase 3: Grimoire Loading
+1. Implement grimoire loader
+2. Embed built-in grimoires and spells
+3. Implement label-based grimoire selection
 4. Integration tests
 
-### Phase 4: Built-in Grimoires
-1. Create `spec-to-beads` grimoire and prompt
-2. Create `implement-bead` grimoire and prompt
-3. Create `review-loop` grimoire with arbiter
-4. Create `prepare-pr` grimoire
-5. E2E tests for each built-in
+### Phase 4: Built-ins
+1. Create implement-bead grimoire with quality loop
+2. Create spec-to-beads grimoire
+3. Create all built-in spells
+4. E2E tests
 
 ### Phase 5: Integration
-1. Wire grimoire execution into daemon API
-2. Add workflow status to events/UI
-3. Documentation
-4. Full E2E test of spec→PR flow
+1. Wire into scheduler (bead lifecycle)
+2. Add workflow events to SSE
+3. Add API endpoints
+4. Full E2E test
 
 ## Open Questions
 
-1. **Workflow Persistence**: How much workflow state to persist? Just current step, or full history?
-2. **Cost Tracking**: Should we track token/cost per workflow for user visibility?
-3. **Partial Completion**: If workflow fails mid-way, how to resume vs restart?
-4. **Triggers**: Beyond manual, what events can trigger workflows? (openspec approval, bead creation, etc.)
+1. **Workflow Persistence**: Persist full state for resume on crash?
+2. **Cost Tracking**: Track tokens per workflow?
+3. **Spell Includes**: Support `{{include "partial.md"}}`?

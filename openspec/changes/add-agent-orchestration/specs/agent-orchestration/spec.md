@@ -3,178 +3,178 @@
 ## ADDED Requirements
 
 ### Requirement: Grimoire Definition
-The system SHALL support grimoire definitions that specify multi-step workflows.
+The system SHALL support grimoire definitions that specify workflows for processing beads.
 
-A grimoire definition SHALL include:
-- A unique name (kebab-case identifier)
-- A human-readable description
-- A trigger type (manual or event-based)
-- A list of steps to execute sequentially
-- Optional input parameters
+A grimoire operates on **one bead** at a time. The scheduler handles parallelism.
 
-#### Scenario: Grimoire loaded from built-in defaults
+#### Scenario: Grimoire structure
+- **GIVEN** a grimoire YAML file
+- **THEN** it SHALL contain: name, description, steps array
+- **AND** each step SHALL have: name, type, and type-specific fields
+
+#### Scenario: Grimoire loaded from built-in
 - **WHEN** the daemon starts
-- **THEN** built-in grimoires SHALL be available (spec-to-beads, implement-bead, review-loop, prepare-pr)
-- **AND** each grimoire SHALL have a complete step definition
+- **THEN** built-in grimoires SHALL be available (implement-bead, spec-to-beads, prepare-pr)
 
-#### Scenario: Grimoire loaded from custom file
+#### Scenario: Grimoire loaded from user directory
 - **WHEN** a YAML file exists in `.coven/grimoires/`
-- **THEN** the grimoire SHALL be loaded and available for execution
-- **AND** custom grimoires MAY override built-in grimoires of the same name
+- **THEN** the grimoire SHALL be loaded and available
+- **AND** user grimoires SHALL override built-in grimoires of the same name
 
 ### Requirement: Step Types
-The system SHALL support multiple step types for composing workflows.
+The system SHALL support three step types for composing workflows.
 
 | Step Type | Purpose |
 |-----------|---------|
-| `agent` | Single agent invocation with a prompt |
-| `agent-loop` | Repeated agent invocations until exit condition |
-| `parallel-agents` | Fan-out to multiple agents concurrently |
-| `script` | Execute a shell command |
-| `gate` | Quality checkpoint that blocks on failure |
+| `agent` | Invoke agent with a spell |
+| `script` | Run shell command |
+| `loop` | Repeat sub-steps until condition |
 
 #### Scenario: Agent step execution
-- **WHEN** a step with type `agent` is executed
-- **THEN** an agent SHALL be spawned with the specified prompt
-- **AND** the agent output SHALL be captured as the step output
-- **AND** the workflow SHALL wait for agent completion before proceeding
+- **WHEN** a step with type `agent` executes
+- **THEN** an agent SHALL be spawned with the rendered spell
+- **AND** agent output SHALL be captured as step output
+- **AND** workflow SHALL wait for agent completion
 
 #### Scenario: Script step execution
-- **WHEN** a step with type `script` is executed
-- **THEN** the specified command SHALL be run in a shell
-- **AND** stdout/stderr SHALL be captured as step output
-- **AND** exit code 0 indicates success
+- **WHEN** a step with type `script` executes
+- **THEN** the command SHALL be run in a shell
+- **AND** stdout/stderr SHALL be captured as output
+- **AND** `on_fail` and `on_success` handlers SHALL be evaluated
 
-#### Scenario: Gate step execution
-- **WHEN** a step with type `gate` is executed
-- **AND** the command exits with non-zero status
-- **THEN** the workflow SHALL be blocked
-- **AND** the user SHALL be notified of the failure
+#### Scenario: Loop step execution
+- **WHEN** a step with type `loop` executes
+- **THEN** nested steps SHALL execute sequentially
+- **AND** loop SHALL repeat until `exit_loop` or `max_iterations`
+- **WHEN** `max_iterations` is reached
+- **THEN** `on_max_iterations` action SHALL be taken (e.g., block)
 
-### Requirement: Parallel Agent Execution
-The system SHALL support spawning multiple agents concurrently for a step.
+### Requirement: Spell Templates
+The system SHALL support spell templates for agent prompts.
 
-#### Scenario: Fan-out to multiple agents
-- **WHEN** a step with type `parallel-agents` is executed
-- **AND** the `for_each` field references an array variable
-- **THEN** one agent SHALL be spawned for each item in the array
-- **AND** concurrent agents SHALL be limited by `max_concurrent`
+Spells are Markdown files with Go template syntax (`{{.variable}}`).
 
-#### Scenario: Parallel agent output aggregation
-- **WHEN** all parallel agents complete
-- **THEN** their outputs SHALL be aggregated into an array
-- **AND** the array SHALL be stored in the step's output variable
+#### Scenario: Spell loaded from file
+- **WHEN** a step references spell by name (no newlines)
+- **THEN** the system SHALL look for `.coven/spells/{name}.md`
+- **AND** fall back to built-in spells if not found
 
-#### Scenario: Partial failure handling
-- **WHEN** some parallel agents fail while others succeed
-- **THEN** the workflow MAY continue or block based on configuration
-- **AND** both successes and failures SHALL be reported
+#### Scenario: Inline spell
+- **WHEN** a step's spell field contains newlines
+- **THEN** the spell SHALL be treated as inline content
+- **AND** no file lookup SHALL occur
 
-### Requirement: Agent Loop with Arbiter
-The system SHALL support iterative agent execution with an arbiter pattern.
+#### Scenario: Spell rendering
+- **WHEN** a spell is rendered
+- **THEN** workflow context variables SHALL be available
+- **AND** `{{.bead}}` SHALL contain the current bead
+- **AND** `{{.variable}}` SHALL resolve step outputs
 
-The arbiter pattern uses two agents:
-1. **Primary agent**: Performs the work (e.g., review, fix)
-2. **Arbiter agent**: Judges if the loop should continue
+### Requirement: Grimoire Selection
+The system SHALL select grimoires based on bead labels with fallbacks.
 
-#### Scenario: Agent loop iteration
-- **WHEN** a step with type `agent-loop` is executed
-- **THEN** the primary agent SHALL be invoked
-- **THEN** the arbiter agent SHALL evaluate the primary agent's output
-- **AND** if arbiter signals "actionable", the loop SHALL continue
-- **AND** if arbiter signals "done", the loop SHALL exit
+#### Scenario: Label-based selection
+- **GIVEN** a bead with label `grimoire:custom-flow`
+- **WHEN** scheduler processes the bead
+- **THEN** the `custom-flow` grimoire SHALL be used
 
-#### Scenario: Agent loop max iterations
-- **WHEN** an agent loop reaches `max_iterations`
-- **THEN** the loop SHALL exit regardless of arbiter verdict
-- **AND** the workflow MAY proceed or block based on configuration
+#### Scenario: Type mapping fallback
+- **GIVEN** a bead without grimoire label
+- **AND** config maps type `feature` to `implement-bead`
+- **WHEN** bead has type `feature`
+- **THEN** the `implement-bead` grimoire SHALL be used
 
-#### Scenario: Arbiter context
-- **WHEN** the arbiter agent is invoked
-- **THEN** it SHALL receive the primary agent's output
-- **AND** it SHALL receive the iteration history
-- **AND** it SHALL NOT have access to modify the work
+#### Scenario: Default fallback
+- **GIVEN** a bead without grimoire label
+- **AND** no type mapping matches
+- **THEN** the default grimoire from config SHALL be used
 
 ### Requirement: Variable Passing
-The system SHALL support passing outputs between steps via named variables.
+The system SHALL support passing data between steps via variables.
 
-Variables use `${variable}` syntax and are resolved at step execution time.
+Variables use `${name}` syntax in YAML fields.
 
 #### Scenario: Step output stored
-- **WHEN** a step completes successfully
-- **AND** the step has an `output` field
-- **THEN** the step's result SHALL be stored under that variable name
+- **WHEN** a step has `output: findings`
+- **AND** step completes
+- **THEN** step result SHALL be stored as `${findings}`
 
-#### Scenario: Variable resolution in input
-- **WHEN** a step's input contains `${variable}`
-- **THEN** the variable SHALL be resolved from previous step outputs
-- **AND** if the variable is undefined, the workflow SHALL fail with error
+#### Scenario: Variable in input
+- **WHEN** a step has `input: { data: "${findings}" }`
+- **THEN** `${findings}` SHALL resolve to stored value
+- **AND** resolved value SHALL be passed to step
 
-#### Scenario: Variable resolution in for_each
-- **WHEN** a `parallel-agents` step references `${array_var}` in `for_each`
-- **THEN** the variable SHALL be resolved to an array
-- **AND** one agent SHALL be spawned per array element
+#### Scenario: Special variables
+- **THEN** `${bead}` SHALL contain the current bead
+- **AND** `${previous.output}` SHALL contain previous step's output
+- **AND** `${previous.failed}` SHALL be true if previous step failed
 
-### Requirement: Workflow Execution
-The system SHALL execute workflows as a sequence of steps with state tracking.
+### Requirement: Conditional Execution
+The system SHALL support conditional step execution.
 
-#### Scenario: Workflow start
-- **WHEN** a workflow is triggered
-- **THEN** a unique workflow ID SHALL be generated
-- **AND** the workflow state SHALL be initialized
-- **AND** execution SHALL begin with the first step
+#### Scenario: When condition true
+- **GIVEN** a step with `when: ${previous.failed}`
+- **AND** previous step failed
+- **THEN** step SHALL execute
 
-#### Scenario: Workflow completion
-- **WHEN** all steps complete successfully
-- **THEN** the workflow status SHALL be set to "completed"
-- **AND** a completion event SHALL be emitted
+#### Scenario: When condition false
+- **GIVEN** a step with `when: ${previous.failed}`
+- **AND** previous step succeeded
+- **THEN** step SHALL be skipped
 
-#### Scenario: Workflow failure
-- **WHEN** a step fails and cannot be recovered
-- **THEN** the workflow status SHALL be set to "failed"
-- **AND** the error details SHALL be recorded
-- **AND** a failure event SHALL be emitted
+### Requirement: Script Handlers
+The system SHALL support `on_fail` and `on_success` handlers for script steps.
 
-#### Scenario: Workflow blocking
-- **WHEN** a step requires user intervention
-- **THEN** the workflow status SHALL be set to "blocked"
-- **AND** an intervention request SHALL be emitted
-- **AND** the workflow SHALL resume when intervention is provided
+#### Scenario: on_fail continue
+- **GIVEN** a script step with `on_fail: continue`
+- **WHEN** script exits non-zero
+- **THEN** workflow SHALL continue to next step
+- **AND** `${previous.failed}` SHALL be true
 
-### Requirement: Workflow API
-The system SHALL expose workflow operations via HTTP API.
+#### Scenario: on_fail block
+- **GIVEN** a script step with `on_fail: block`
+- **WHEN** script exits non-zero
+- **THEN** workflow SHALL block
+- **AND** bead SHALL be flagged for manual review
 
-#### Scenario: Start workflow
-- **WHEN** POST /workflows is called with grimoire name and input
-- **THEN** a new workflow instance SHALL be created
-- **AND** the workflow ID SHALL be returned
-- **AND** execution SHALL begin asynchronously
+#### Scenario: on_success exit_loop
+- **GIVEN** a script step inside a loop with `on_success: exit_loop`
+- **WHEN** script exits zero
+- **THEN** loop SHALL exit immediately
+- **AND** workflow SHALL continue past the loop
 
-#### Scenario: Get workflow status
-- **WHEN** GET /workflows/:id is called
-- **THEN** the current workflow state SHALL be returned
-- **AND** state includes: status, current step, variables, errors
+### Requirement: Bead Lifecycle
+The system SHALL manage bead status during workflow execution.
 
-#### Scenario: Cancel workflow
-- **WHEN** DELETE /workflows/:id is called
-- **THEN** the workflow SHALL be stopped
-- **AND** any running agents SHALL be terminated
-- **AND** status SHALL be set to "cancelled"
+#### Scenario: Bead picked up
+- **WHEN** scheduler picks up a ready bead
+- **THEN** bead status SHALL be set to `in_progress`
+- **AND** grimoire execution SHALL begin
+
+#### Scenario: Workflow completes
+- **WHEN** grimoire completes successfully
+- **THEN** bead status SHALL be set to `closed`
+
+#### Scenario: Workflow blocks
+- **WHEN** grimoire triggers block action
+- **THEN** bead status SHALL be set to `blocked`
+- **AND** user SHALL be notified
 
 ### Requirement: Workflow Events
-The system SHALL emit real-time events for workflow state changes.
+The system SHALL emit events for workflow state changes.
 
-#### Scenario: Step started event
-- **WHEN** a step begins execution
-- **THEN** a `workflow.step.started` event SHALL be emitted
-- **AND** the event SHALL include: workflow ID, step name, step type
+#### Scenario: Workflow started
+- **WHEN** grimoire begins execution
+- **THEN** `workflow.started` event SHALL be emitted
+- **AND** event SHALL include: workflow ID, bead ID, grimoire name
 
-#### Scenario: Step completed event
-- **WHEN** a step completes
-- **THEN** a `workflow.step.completed` event SHALL be emitted
-- **AND** the event SHALL include: workflow ID, step name, output summary
+#### Scenario: Step events
+- **WHEN** step begins
+- **THEN** `workflow.step.started` event SHALL be emitted
+- **WHEN** step completes
+- **THEN** `workflow.step.completed` event SHALL be emitted
 
-#### Scenario: Intervention required event
-- **WHEN** a workflow blocks waiting for user input
-- **THEN** a `workflow.intervention.required` event SHALL be emitted
-- **AND** the event SHALL include: workflow ID, reason, options
+#### Scenario: Workflow blocked
+- **WHEN** workflow blocks
+- **THEN** `workflow.blocked` event SHALL be emitted
+- **AND** event SHALL include reason for blocking

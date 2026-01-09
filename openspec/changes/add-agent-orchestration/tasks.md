@@ -1,136 +1,146 @@
 # Tasks: Workflow-Based Agent Orchestration
 
-## Phase 1: Workflow Engine Core
+## Phase 1: Core Engine
 
 ### 1.1 Core Types
 - [ ] 1.1.1 Define `Grimoire` struct in `packages/daemon/internal/types/grimoire.go`
-- [ ] 1.1.2 Define `Step` struct with all step type fields
-- [ ] 1.1.3 Define `StepType` enum (agent, agent-loop, parallel-agents, script, gate)
+- [ ] 1.1.2 Define `Step` struct with fields for all step types
+- [ ] 1.1.3 Define `StepType` enum (agent, script, loop)
 - [ ] 1.1.4 Define `WorkflowContext` for state tracking
-- [ ] 1.1.5 Define `WorkflowStatus` enum (pending, running, blocked, completed, failed)
+- [ ] 1.1.5 Define `WorkflowStatus` enum (running, blocked, completed, failed)
 
 ### 1.2 Workflow Engine
 - [ ] 1.2.1 Create `packages/daemon/internal/workflow/` package
-- [ ] 1.2.2 Implement `Engine` struct with Start, Stop, Status methods
+- [ ] 1.2.2 Implement `Engine` struct with Run method
 - [ ] 1.2.3 Implement step execution loop (sequential)
-- [ ] 1.2.4 Implement variable resolution (`${variable}` syntax)
-- [ ] 1.2.5 Implement step output capture and storage
-- [ ] 1.2.6 Unit tests for engine
+- [ ] 1.2.4 Implement `when` condition evaluation
+- [ ] 1.2.5 Implement variable resolution (`${variable}` syntax)
+- [ ] 1.2.6 Implement special variables (`${bead}`, `${previous.output}`, `${previous.failed}`)
+- [ ] 1.2.7 Unit tests for engine
 
-### 1.3 Basic Step Executors
-- [ ] 1.3.1 Define `StepExecutor` interface
-- [ ] 1.3.2 Implement `AgentStepExecutor` (single agent invocation)
-- [ ] 1.3.3 Implement `ScriptStepExecutor` (shell command execution)
-- [ ] 1.3.4 Unit tests for step executors
+### 1.3 Agent Step Executor
+- [ ] 1.3.1 Implement agent step execution (spawn agent with spell)
+- [ ] 1.3.2 Capture agent output as step output
+- [ ] 1.3.3 Handle agent failure
+- [ ] 1.3.4 Unit tests for agent step
 
-### 1.4 Integration with Daemon
-- [ ] 1.4.1 Add workflow engine to daemon initialization
-- [ ] 1.4.2 Add API endpoints: POST /workflows, GET /workflows/:id, DELETE /workflows/:id
-- [ ] 1.4.3 Add workflow events to SSE stream
-- [ ] 1.4.4 Integration tests for workflow API
+### 1.4 Script Step Executor
+- [ ] 1.4.1 Implement script step execution (run shell command)
+- [ ] 1.4.2 Implement `on_fail` handling (continue, block)
+- [ ] 1.4.3 Implement `on_success` handling (exit_loop)
+- [ ] 1.4.4 Capture stdout/stderr as output
+- [ ] 1.4.5 Unit tests for script step
 
-## Phase 2: Grimoire Loading
+## Phase 2: Loop and Spells
 
-### 2.1 YAML Parser
-- [ ] 2.1.1 Create `packages/daemon/internal/grimoire/` package
-- [ ] 2.1.2 Implement YAML parser for grimoire files
-- [ ] 2.1.3 Implement schema validation (required fields, valid step types)
-- [ ] 2.1.4 Implement variable syntax validation
-- [ ] 2.1.5 Unit tests for parser
+### 2.1 Loop Step Executor
+- [ ] 2.1.1 Implement loop step execution
+- [ ] 2.1.2 Implement `max_iterations` limit
+- [ ] 2.1.3 Implement `on_max_iterations: block` action
+- [ ] 2.1.4 Implement `exit_loop` from nested steps
+- [ ] 2.1.5 Pass iteration context to nested steps
+- [ ] 2.1.6 Unit tests for loop step
 
-### 2.2 Grimoire Loader
-- [ ] 2.2.1 Implement loader to scan `.coven/grimoires/` directory
-- [ ] 2.2.2 Embed built-in grimoires as Go embed files
-- [ ] 2.2.3 Implement merging (user grimoires override built-in)
-- [ ] 2.2.4 Implement hot-reload on file changes (optional)
-- [ ] 2.2.5 Unit tests for loader
+### 2.2 Spell Loader
+- [ ] 2.2.1 Create `packages/daemon/internal/spell/` package
+- [ ] 2.2.2 Implement file-based spell loading (`.coven/spells/`)
+- [ ] 2.2.3 Implement inline spell detection (contains newlines)
+- [ ] 2.2.4 Embed built-in spells as Go embed files
+- [ ] 2.2.5 Implement resolution order (inline → user → builtin)
+- [ ] 2.2.6 Unit tests for spell loading
 
-### 2.3 Prompt Templates
-- [ ] 2.3.1 Create `packages/daemon/internal/prompts/` for embedded prompts
-- [ ] 2.3.2 Implement prompt template loading
-- [ ] 2.3.3 Implement Go template rendering for prompts
-- [ ] 2.3.4 Unit tests for prompt rendering
+### 2.3 Spell Renderer
+- [ ] 2.3.1 Implement Go template rendering for spells
+- [ ] 2.3.2 Pass workflow context variables to template
+- [ ] 2.3.3 Validate template syntax on load
+- [ ] 2.3.4 Clear error messages for template errors
+- [ ] 2.3.5 Unit tests for spell rendering
 
-## Phase 3: Advanced Step Types
+## Phase 3: Grimoire Loading
 
-### 3.1 Parallel Agents
-- [ ] 3.1.1 Implement `ParallelAgentsExecutor`
-- [ ] 3.1.2 Support `for_each` iteration over array variables
-- [ ] 3.1.3 Support `max_concurrent` limit
-- [ ] 3.1.4 Aggregate outputs from all parallel agents
-- [ ] 3.1.5 Handle partial failures (some agents fail)
-- [ ] 3.1.6 Unit tests for parallel execution
+### 3.1 Grimoire Parser
+- [ ] 3.1.1 Create `packages/daemon/internal/grimoire/` package
+- [ ] 3.1.2 Implement YAML parser for grimoire files
+- [ ] 3.1.3 Validate grimoire schema (required fields, valid step types)
+- [ ] 3.1.4 Validate variable references in steps
+- [ ] 3.1.5 Unit tests for parser
 
-### 3.2 Agent Loop with Arbiter
-- [ ] 3.2.1 Implement `AgentLoopExecutor`
-- [ ] 3.2.2 Support `max_iterations` limit
-- [ ] 3.2.3 Implement arbiter agent invocation after each iteration
-- [ ] 3.2.4 Implement `exit_when` condition evaluation
-- [ ] 3.2.5 Pass iteration history to subsequent iterations
-- [ ] 3.2.6 Unit tests for agent loop
+### 3.2 Grimoire Loader
+- [ ] 3.2.1 Implement loader to scan `.coven/grimoires/` directory
+- [ ] 3.2.2 Embed built-in grimoires as Go embed files
+- [ ] 3.2.3 Implement override (user grimoires replace built-in)
+- [ ] 3.2.4 Unit tests for loader
 
-### 3.3 Gate Step
-- [ ] 3.3.1 Implement `GateExecutor`
-- [ ] 3.3.2 Support `on_fail` options: block, retry, escalate
-- [ ] 3.3.3 Support retry with backoff
-- [ ] 3.3.4 Capture gate output for error messages
-- [ ] 3.3.5 Unit tests for gate execution
+### 3.3 Grimoire Selection
+- [ ] 3.3.1 Implement label-based selection (`grimoire:*` label)
+- [ ] 3.3.2 Implement type mapping fallback from config
+- [ ] 3.3.3 Implement default grimoire fallback
+- [ ] 3.3.4 Unit tests for selection
 
-## Phase 4: Built-in Grimoires
+## Phase 4: Built-in Grimoires and Spells
 
-### 4.1 Spec-to-Beads Grimoire
-- [ ] 4.1.1 Write `spec-to-beads.yaml` grimoire definition
-- [ ] 4.1.2 Write `spec-to-beads.md` prompt template
-- [ ] 4.1.3 Define expected output format (list of bead IDs)
-- [ ] 4.1.4 E2E test: openspec → beads created with AC and testing requirements
+### 4.1 Built-in Spells
+- [ ] 4.1.1 Create `implement.md` spell
+- [ ] 4.1.2 Create `fix-tests.md` spell
+- [ ] 4.1.3 Create `review.md` spell
+- [ ] 4.1.4 Create `is-actionable.md` arbiter spell
+- [ ] 4.1.5 Create `apply-review-fixes.md` spell
 
 ### 4.2 Implement-Bead Grimoire
-- [ ] 4.2.1 Write `implement-bead.yaml` grimoire definition
-- [ ] 4.2.2 Write `implement-bead.md` prompt template
-- [ ] 4.2.3 Ensure bead context (AC, testing requirements) passed to agent
-- [ ] 4.2.4 E2E test: bead → implementation in worktree
+- [ ] 4.2.1 Create `implement-bead.yaml` with quality loop pattern
+- [ ] 4.2.2 Test: implement step spawns agent correctly
+- [ ] 4.2.3 Test: quality loop iterates on test failure
+- [ ] 4.2.4 Test: quality loop iterates on review findings
+- [ ] 4.2.5 Test: exits on final test pass
+- [ ] 4.2.6 Test: blocks after max iterations
+- [ ] 4.2.7 E2E test: full implement-bead flow
 
-### 4.3 Review-Loop Grimoire
-- [ ] 4.3.1 Write `review-loop.yaml` grimoire definition
-- [ ] 4.3.2 Write `review-changes.md` prompt template
-- [ ] 4.3.3 Write `is-actionable.md` arbiter prompt template
-- [ ] 4.3.4 Define review output format (findings, verdict)
-- [ ] 4.3.5 E2E test: changes → review loop → fixes applied → passes
+### 4.3 Spec-to-Beads Grimoire
+- [ ] 4.3.1 Create `spec-to-beads.md` spell
+- [ ] 4.3.2 Create `spec-to-beads.yaml` grimoire
+- [ ] 4.3.3 E2E test: openspec → beads created with labels
 
 ### 4.4 Prepare-PR Grimoire
-- [ ] 4.4.1 Write `prepare-pr.yaml` grimoire definition
-- [ ] 4.4.2 Write `prepare-pr.md` prompt template
-- [ ] 4.4.3 Include gh CLI usage for PR creation
-- [ ] 4.4.4 Include final security/test review step
-- [ ] 4.4.5 E2E test: branch → PR created with summary
+- [ ] 4.4.1 Create `prepare-pr.md` spell
+- [ ] 4.4.2 Create `prepare-pr.yaml` grimoire
+- [ ] 4.4.3 E2E test: branch → PR created
 
-### 4.5 Full Pipeline Grimoire
-- [ ] 4.5.1 Write `implement-feature.yaml` combining all steps
-- [ ] 4.5.2 Test variable passing through full pipeline
-- [ ] 4.5.3 E2E test: openspec → beads → implement → review → PR
+## Phase 5: Scheduler Integration
 
-## Phase 5: Polish and Documentation
+### 5.1 Bead Lifecycle
+- [ ] 5.1.1 Query ready beads (open, no blockers)
+- [ ] 5.1.2 Set bead to `in_progress` on pickup
+- [ ] 5.1.3 Set bead to `closed` on grimoire success
+- [ ] 5.1.4 Set bead to `blocked` on grimoire block action
+- [ ] 5.1.5 Respect concurrency limit (N beads at a time)
+- [ ] 5.1.6 Unit tests for lifecycle
 
-### 5.1 Error Handling
-- [ ] 5.1.1 Implement workflow pause/resume on intervention needed
-- [ ] 5.1.2 Implement clear error messages for each failure mode
-- [ ] 5.1.3 Add workflow history/audit log
-- [ ] 5.1.4 Unit tests for error scenarios
+### 5.2 Workflow Events
+- [ ] 5.2.1 Emit `workflow.started` event
+- [ ] 5.2.2 Emit `workflow.step.started` event
+- [ ] 5.2.3 Emit `workflow.step.completed` event
+- [ ] 5.2.4 Emit `workflow.completed` event
+- [ ] 5.2.5 Emit `workflow.blocked` event with reason
+- [ ] 5.2.6 Integration tests for events
 
-### 5.2 User Intervention
-- [ ] 5.2.1 Define intervention request format
-- [ ] 5.2.2 Emit intervention events via SSE
-- [ ] 5.2.3 Add API endpoint to respond to intervention requests
-- [ ] 5.2.4 E2E test: workflow blocks, user responds, workflow continues
+### 5.3 Workflow API
+- [ ] 5.3.1 Add `GET /workflows` endpoint (list active)
+- [ ] 5.3.2 Add `GET /workflows/:id` endpoint (status)
+- [ ] 5.3.3 Add `DELETE /workflows/:id` endpoint (cancel)
+- [ ] 5.3.4 Integration tests for API
 
-### 5.3 Documentation
-- [ ] 5.3.1 Document grimoire YAML schema
-- [ ] 5.3.2 Document step types and their options
-- [ ] 5.3.3 Document built-in grimoires and how to customize
-- [ ] 5.3.4 Add example custom grimoires
+### 5.4 E2E Tests
+- [ ] 5.4.1 E2E: bead pickup → grimoire runs → bead closed
+- [ ] 5.4.2 E2E: grimoire blocks → bead blocked
+- [ ] 5.4.3 E2E: concurrent beads respect limit
+- [ ] 5.4.4 E2E: custom grimoire via label
 
-### 5.4 Final Validation
-- [ ] 5.4.1 Run full test suite (unit + E2E)
-- [ ] 5.4.2 Manual testing of spec → PR flow
-- [ ] 5.4.3 Performance testing (concurrent workflows)
-- [ ] 5.4.4 Update README with workflow features
+## Phase 6: Documentation
+
+### 6.1 Documentation
+- [ ] 6.1.1 Document grimoire YAML schema
+- [ ] 6.1.2 Document step types and options
+- [ ] 6.1.3 Document spell template syntax
+- [ ] 6.1.4 Document grimoire selection (labels, config)
+- [ ] 6.1.5 Add example custom grimoire
+- [ ] 6.1.6 Add example custom spell
