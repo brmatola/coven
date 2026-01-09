@@ -139,7 +139,7 @@ describe('ClaudeAgent', () => {
 
       expect(spawn).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['-p', '--dangerously-skip-permissions']),
+        expect.arrayContaining(['-p', '--dangerously-skip-permissions', '--output-format', 'stream-json']),
         expect.objectContaining({
           cwd: '/test/worktree',
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -214,16 +214,36 @@ describe('ClaudeAgent', () => {
   });
 
   describe('output handling', () => {
-    it('should emit output events for stdout', async () => {
+    it('should emit output events for stdout (streaming JSON)', async () => {
       const config = createMockConfig();
       await agent.spawn(config);
 
-      mockStdout.emit('data', Buffer.from('Processing task...'));
+      // Send a streaming JSON event with text content
+      const event = JSON.stringify({
+        type: 'content_block_delta',
+        delta: { type: 'text_delta', text: 'Processing task...' },
+      });
+      mockStdout.emit('data', Buffer.from(event + '\n'));
 
       expect(config.callbacks.onOutput).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'stdout',
           content: 'Processing task...',
+        })
+      );
+    });
+
+    it('should emit output events for plain text stdout (fallback)', async () => {
+      const config = createMockConfig();
+      await agent.spawn(config);
+
+      // Plain text with newline should be emitted as-is when JSON parsing fails
+      mockStdout.emit('data', Buffer.from('Plain text output\n'));
+
+      expect(config.callbacks.onOutput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'stdout',
+          content: 'Plain text output',
         })
       );
     });
@@ -248,7 +268,8 @@ describe('ClaudeAgent', () => {
       const config = createMockConfig();
       await agent.spawn(config);
 
-      mockStdout.emit('data', Buffer.from('Do you want to proceed?'));
+      // Send as plain text with newline (will fall back from JSON)
+      mockStdout.emit('data', Buffer.from('Do you want to proceed?\n'));
 
       expect(config.callbacks.onQuestion).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -262,7 +283,7 @@ describe('ClaudeAgent', () => {
       const config = createMockConfig();
       await agent.spawn(config);
 
-      mockStdout.emit('data', Buffer.from('Should I use TypeScript or JavaScript?'));
+      mockStdout.emit('data', Buffer.from('Should I use TypeScript or JavaScript?\n'));
 
       expect(config.callbacks.onQuestion).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -275,7 +296,7 @@ describe('ClaudeAgent', () => {
       const config = createMockConfig();
       await agent.spawn(config);
 
-      mockStdout.emit('data', Buffer.from("I'm blocked and cannot proceed."));
+      mockStdout.emit('data', Buffer.from("I'm blocked and cannot proceed.\n"));
 
       expect(config.callbacks.onQuestion).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -360,9 +381,9 @@ describe('ClaudeAgent', () => {
       const config = createMockConfig();
       await agent.spawn(config);
 
-      // Create output larger than 64KB limit
+      // Create output larger than 64KB limit, with newline to trigger processing
       const longOutput = 'x'.repeat(100 * 1024);
-      mockStdout.emit('data', Buffer.from(longOutput));
+      mockStdout.emit('data', Buffer.from(longOutput + '\n'));
 
       // Should have been truncated
       expect(config.callbacks.onOutput).toHaveBeenCalledWith(

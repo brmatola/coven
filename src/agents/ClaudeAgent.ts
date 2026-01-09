@@ -15,6 +15,31 @@ import { getLogger } from '../shared/logger';
 const logger = getLogger();
 
 /**
+ * Stream event types from Claude's stream-json format.
+ */
+interface StreamEvent {
+  type: string;
+  message?: {
+    content?: Array<{
+      type: string;
+      text?: string;
+    }>;
+  };
+  delta?: {
+    type?: string;
+    text?: string;
+  };
+  content_block?: {
+    type?: string;
+    text?: string;
+  };
+  result?: string;
+  error?: {
+    message?: string;
+  };
+}
+
+/**
  * Grace period for graceful termination before SIGKILL.
  */
 const TERMINATION_GRACE_MS = 5000;
@@ -85,13 +110,19 @@ const QUESTION_PATTERNS = [
 
 /**
  * Completion detection patterns.
+ * These patterns indicate successful task completion in Claude's output.
  */
 const COMPLETION_PATTERNS = [
   /Task complete/i,
-  /I've completed/i,
+  /I['']ve completed/i,
+  /I['']ve successfully/i,
   /Implementation complete/i,
+  /Successfully completed/i,
   /Done\.?$/m,
   /Finished\.?$/m,
+  /All (?:tests?|checks?) pass/i,
+  /Changes have been committed/i,
+  /Commit.*complete/i,
 ];
 
 /**
@@ -106,6 +137,8 @@ interface RunningAgent {
   outputBuffer: string[];
   outputBufferSize: number;
   pendingQuestion: AgentQuestion | null;
+  /** Buffer for incomplete JSON lines from stdout */
+  stdoutLineBuffer: string;
 }
 
 /**
@@ -189,6 +222,7 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       outputBuffer: [],
       outputBufferSize: 0,
       pendingQuestion: null,
+      stdoutLineBuffer: '',
     };
 
     this.runningAgents.set(taskId, runningAgent);
@@ -298,6 +332,9 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
 
     // Skip permission prompts for automated operation
     args.push('--dangerously-skip-permissions');
+
+    // Use streaming JSON output for real-time updates
+    args.push('--output-format', 'stream-json');
 
     // Add allowed tools if specified (enables those tools without prompting)
     // Pass each tool as a separate argument to avoid space injection
@@ -412,46 +449,138 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
   private setupOutputHandlers(agent: RunningAgent): void {
     const { process: proc } = agent;
 
-    // Handle stdout
+    // Handle stdout - streaming JSON, one JSON object per line
     proc.stdout?.on('data', (data: Buffer) => {
       const text = data.toString();
-      this.handleOutput(agent, 'stdout', text);
+      this.handleStreamingJsonOutput(agent, text);
     });
 
-    // Handle stderr
+    // Handle stderr - plain text, pass through directly
     proc.stderr?.on('data', (data: Buffer) => {
       const text = data.toString();
-      this.handleOutput(agent, 'stderr', text);
+      this.handleStderrOutput(agent, text);
     });
   }
 
   /**
-   * Handle output from an agent.
+   * Handle streaming JSON output from stdout.
+   * Claude's stream-json format outputs one JSON object per line.
    */
-  private handleOutput(agent: RunningAgent, type: 'stdout' | 'stderr', text: string): void {
+  private handleStreamingJsonOutput(agent: RunningAgent, text: string): void {
+    const taskId = agent.handle.taskId;
+
+    // Update activity time
+    agent.lastActivityTime = Date.now();
+
+    // Add incoming text to line buffer
+    agent.stdoutLineBuffer += text;
+
+    // Process complete lines
+    const lines = agent.stdoutLineBuffer.split('\n');
+
+    // Keep the last incomplete line in the buffer
+    agent.stdoutLineBuffer = lines.pop() || '';
+
+    // Process each complete line
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const event = JSON.parse(line) as StreamEvent;
+        this.processStreamEvent(agent, event);
+      } catch {
+        // If JSON parsing fails, treat as plain text output
+        logger.debug('Non-JSON line in stdout', { taskId, line: line.substring(0, 100) });
+        this.emitTextOutput(agent, line);
+      }
+    }
+  }
+
+  /**
+   * Process a streaming JSON event from Claude.
+   */
+  private processStreamEvent(agent: RunningAgent, event: StreamEvent): void {
+    const taskId = agent.handle.taskId;
+
+    // Extract text content based on event type
+    let textContent = '';
+
+    switch (event.type) {
+      case 'assistant':
+        // Final assistant message with full content
+        if (event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'text' && block.text) {
+              textContent += block.text;
+            }
+          }
+        }
+        break;
+
+      case 'content_block_delta':
+        // Streaming text delta
+        if (event.delta?.type === 'text_delta' && event.delta.text) {
+          textContent = event.delta.text;
+        }
+        break;
+
+      case 'content_block_start':
+        // Start of a content block - may have initial text
+        if (event.content_block?.type === 'text' && event.content_block.text) {
+          textContent = event.content_block.text;
+        }
+        break;
+
+      case 'result':
+        // Final result event
+        if (event.result) {
+          textContent = `\n${event.result}`;
+        }
+        break;
+
+      case 'error': {
+        // Error event
+        const errorMsg = event.error?.message || 'Unknown error';
+        logger.error('Stream error from Claude', { taskId, error: errorMsg });
+        this.emitTextOutput(agent, `Error: ${errorMsg}`);
+        return;
+      }
+
+      // Events we can ignore for output purposes
+      case 'message_start':
+      case 'message_delta':
+      case 'message_stop':
+      case 'content_block_stop':
+      case 'system':
+        // These are control events, not content
+        logger.debug('Stream control event', { taskId, type: event.type });
+        return;
+
+      default:
+        // Unknown event type - log it
+        logger.debug('Unknown stream event type', { taskId, type: event.type });
+        return;
+    }
+
+    // Emit text content if any
+    if (textContent) {
+      this.emitTextOutput(agent, textContent);
+    }
+  }
+
+  /**
+   * Emit text output to the callback and add to buffer.
+   */
+  private emitTextOutput(agent: RunningAgent, text: string): void {
     const { config } = agent;
     const timestamp = Date.now();
     const taskId = agent.handle.taskId;
 
-    // Update activity time
-    agent.lastActivityTime = timestamp;
-
-    // Log output for observability
-    logger.debug('Agent output received', {
-      taskId,
-      type,
-      length: text.length,
-      preview: text.substring(0, 200).replace(/\n/g, '\\n'),
-    });
-
-    // Limit individual output line size
+    // Limit individual output size
     let processedText = text;
     if (text.length > MAX_OUTPUT_LINE_SIZE) {
       processedText = text.substring(0, MAX_OUTPUT_LINE_SIZE) + '... (truncated)';
-      logger.warn('Output line truncated', {
-        taskId,
-        originalSize: text.length,
-      });
+      logger.warn('Output truncated', { taskId, originalSize: text.length });
     }
 
     // Add to buffer with size tracking
@@ -469,11 +598,11 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     }
 
     // Emit output event
-    const output: AgentOutput = { type, content: processedText, timestamp };
+    const output: AgentOutput = { type: 'stdout', content: processedText, timestamp };
     config.callbacks.onOutput(output);
 
-    // Check for questions (only in stdout)
-    if (type === 'stdout' && !agent.pendingQuestion) {
+    // Check for questions
+    if (!agent.pendingQuestion) {
       const question = this.detectQuestion(processedText);
       if (question) {
         logger.info('Agent question detected', { taskId, questionType: question.type });
@@ -481,6 +610,36 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
         config.callbacks.onQuestion(question);
       }
     }
+  }
+
+  /**
+   * Handle stderr output (plain text).
+   */
+  private handleStderrOutput(agent: RunningAgent, text: string): void {
+    const { config } = agent;
+    const timestamp = Date.now();
+    const taskId = agent.handle.taskId;
+
+    // Update activity time
+    agent.lastActivityTime = timestamp;
+
+    // Log for observability
+    logger.debug('Agent stderr', { taskId, length: text.length, preview: text.substring(0, 200) });
+
+    // Limit size
+    let processedText = text;
+    if (text.length > MAX_OUTPUT_LINE_SIZE) {
+      processedText = text.substring(0, MAX_OUTPUT_LINE_SIZE) + '... (truncated)';
+    }
+
+    // Add to buffer
+    const textSize = Buffer.byteLength(processedText, 'utf8');
+    agent.outputBuffer.push(processedText);
+    agent.outputBufferSize += textSize;
+
+    // Emit output event
+    const output: AgentOutput = { type: 'stderr', content: processedText, timestamp };
+    config.callbacks.onOutput(output);
   }
 
   /**
@@ -524,11 +683,12 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       // Remove from running agents
       this.runningAgents.delete(taskId);
 
-      // Determine success
+      // Determine success based on exit code
+      // Exit code 0 = success, non-zero = failure
       const success = code === 0;
       const fullOutput = agent.outputBuffer.join('');
 
-      // Check if output indicates completion
+      // Check if output indicates completion (for logging/confidence)
       const hasCompletionSignal = COMPLETION_PATTERNS.some((p) => p.test(fullOutput));
 
       // Try to extract files changed from output
@@ -537,15 +697,17 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       // Log detailed result info for debugging
       logger.info('Agent result analysis', {
         taskId,
+        exitCode: code,
         success,
         hasCompletionSignal,
         filesChangedCount: filesChanged.length,
         outputPreview: fullOutput.substring(0, 500).replace(/\n/g, '\\n'),
       });
 
-      // Build result - only include optional properties when defined
+      // Build result - success is based on exit code alone
+      // Completion patterns are just for confidence/logging, not for determining success
       const result: AgentResult = {
-        success: success && hasCompletionSignal,
+        success,
         summary: this.extractSummary(fullOutput) || (success ? 'Task completed' : 'Task failed'),
         filesChanged,
         durationMs,
@@ -556,6 +718,9 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       if (!success) {
         result.error = `Process exited with code ${code}`;
         logger.warn('Agent failed', { taskId, error: result.error, fullOutput: fullOutput.substring(0, 1000) });
+      } else if (!hasCompletionSignal) {
+        // Log a note if exit was 0 but no explicit completion signal found
+        logger.info('Agent exited successfully but no explicit completion signal found', { taskId });
       }
 
       config.callbacks.onComplete(result);
