@@ -334,7 +334,8 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     args.push('--dangerously-skip-permissions');
 
     // Use streaming JSON output for real-time updates
-    args.push('--output-format', 'stream-json');
+    // --verbose is required when using stream-json with -p
+    args.push('--output-format', 'stream-json', '--verbose');
 
     // Add allowed tools if specified (enables those tools without prompting)
     // Pass each tool as a separate argument to avoid space injection

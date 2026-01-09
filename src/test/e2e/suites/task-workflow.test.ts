@@ -138,18 +138,20 @@ async function closeTask(workspacePath: string, taskId: string): Promise<void> {
 
 /**
  * Run claude directly to perform a simple task.
- * Uses -p flag for prompt and --dangerously-skip-permissions for automated testing.
+ * Uses the same flags as ClaudeAgent for consistency.
  */
 async function runClaudeTask(
   workingDir: string,
   prompt: string,
   timeoutMs: number
-): Promise<{ success: boolean; output: string }> {
+): Promise<{ success: boolean; output: string; streamingWorked: boolean; chunkCount: number }> {
   return new Promise((resolve) => {
-    // Use -p for prompt and --dangerously-skip-permissions for non-interactive mode
+    // Use the EXACT same flags as ClaudeAgent
     const args = [
       '-p', prompt,
       '--dangerously-skip-permissions',
+      '--output-format', 'stream-json',
+      '--verbose',
       '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash',
     ];
 
@@ -159,15 +161,25 @@ async function runClaudeTask(
       env: process.env,
     });
 
-    let stdout = '';
-    let stderr = '';
+    let output = '';
+    let chunkCount = 0;
+    let firstChunkTime: number | null = null;
+    let lastChunkTime: number | null = null;
 
     proc.stdout?.on('data', (data: Buffer) => {
-      stdout += data.toString();
+      const text = data.toString();
+      output += text;
+      chunkCount++;
+
+      const now = Date.now();
+      if (firstChunkTime === null) {
+        firstChunkTime = now;
+      }
+      lastChunkTime = now;
     });
 
     proc.stderr?.on('data', (data: Buffer) => {
-      stderr += data.toString();
+      output += '\nStderr: ' + data.toString();
     });
 
     // Close stdin immediately since we're using -p flag
@@ -180,22 +192,79 @@ async function runClaudeTask(
           proc.kill('SIGKILL');
         }
       }, 1000);
-      resolve({ success: false, output: `TIMEOUT after ${timeoutMs}ms\nstdout: ${stdout}\nstderr: ${stderr}` });
+      resolve({
+        success: false,
+        output: `TIMEOUT after ${timeoutMs}ms\n${output}`,
+        streamingWorked: chunkCount > 1,
+        chunkCount,
+      });
     }, timeoutMs);
 
     proc.on('close', (code) => {
       clearTimeout(timeout);
+
+      // Streaming worked if we got multiple chunks spread over time
+      const streamingWorked = chunkCount > 1 &&
+        firstChunkTime !== null &&
+        lastChunkTime !== null &&
+        (lastChunkTime - firstChunkTime) > 100; // At least 100ms between first and last
+
       resolve({
         success: code === 0,
-        output: stdout + (stderr ? '\nStderr: ' + stderr : ''),
+        output,
+        streamingWorked,
+        chunkCount,
       });
     });
 
     proc.on('error', (err) => {
       clearTimeout(timeout);
-      resolve({ success: false, output: `Spawn error: ${err.message}` });
+      resolve({
+        success: false,
+        output: `Spawn error: ${err.message}`,
+        streamingWorked: false,
+        chunkCount: 0,
+      });
     });
   });
+}
+
+/**
+ * Parse streaming JSON output to extract text content.
+ */
+function parseStreamOutput(rawOutput: string): string {
+  const lines = rawOutput.split('\n');
+  let text = '';
+
+  for (const line of lines) {
+    if (!line.trim() || line.startsWith('Stderr:')) continue;
+
+    try {
+      const event = JSON.parse(line);
+
+      // Extract text from different event types
+      if (event.type === 'content_block_delta' && event.delta?.text) {
+        text += event.delta.text;
+      } else if (event.type === 'assistant' && event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            text += block.text;
+          }
+        }
+      } else if (event.type === 'content_block_start' && event.content_block?.text) {
+        text += event.content_block.text;
+      } else if (event.type === 'result' && event.result) {
+        text += event.result;
+      }
+    } catch {
+      // Non-JSON line, might be plain text fallback
+      if (!line.includes('"type"')) {
+        text += line + '\n';
+      }
+    }
+  }
+
+  return text.trim();
 }
 
 suite('Task Workflow E2E Tests', function () {
@@ -243,6 +312,135 @@ suite('Task Workflow E2E Tests', function () {
 
     test('Claude CLI must be available', function () {
       assert.ok(claudeAvailable, 'Claude CLI must be available (npm install -g @anthropic-ai/claude-code)');
+    });
+  });
+
+  suite('Streaming Output and Success Detection', function () {
+    this.timeout(120000); // 2 minutes
+
+    test('Claude CLI streaming JSON must work with correct flags', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'e2e-streaming-test-' + Date.now());
+      await fs.promises.mkdir(testDir, { recursive: true });
+
+      try {
+        const result = await runClaudeTask(
+          testDir,
+          'Say "Hello streaming test" and nothing else.',
+          30000
+        );
+
+        // Test must NOT fail with error about flags
+        assert.ok(
+          !result.output.includes('requires --verbose'),
+          `Should NOT fail with verbose error. Output: ${result.output.substring(0, 500)}`
+        );
+
+        // Should succeed
+        assert.ok(result.success, `Should succeed with exit code 0. Output: ${result.output.substring(0, 500)}`);
+
+        // Should have received multiple chunks (streaming)
+        console.log(`Streaming test: ${result.chunkCount} chunks, streamingWorked: ${result.streamingWorked}`);
+        assert.ok(result.chunkCount > 0, `Should have received chunks. Got ${result.chunkCount}`);
+
+        // Parse and verify content
+        const textContent = parseStreamOutput(result.output);
+        assert.ok(
+          textContent.toLowerCase().includes('hello') || textContent.toLowerCase().includes('streaming'),
+          `Should contain expected text. Got: ${textContent.substring(0, 200)}`
+        );
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
+      }
+    });
+
+    test('Streaming must produce real-time output (multiple chunks over time)', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'e2e-realtime-test-' + Date.now());
+      await fs.promises.mkdir(testDir, { recursive: true });
+
+      try {
+        // Request a longer response to ensure multiple chunks
+        const result = await runClaudeTask(
+          testDir,
+          'Count from 1 to 10, saying each number on a new line. Then say "Done counting."',
+          60000
+        );
+
+        assert.ok(result.success, `Task should succeed. Output: ${result.output.substring(0, 300)}`);
+
+        // For real-time streaming, we should get multiple chunks
+        console.log(`Real-time test: ${result.chunkCount} chunks over time, streamingWorked: ${result.streamingWorked}`);
+        assert.ok(
+          result.chunkCount >= 2,
+          `Should receive multiple chunks for streaming. Got ${result.chunkCount}`
+        );
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
+      }
+    });
+
+    test('Success detection must use exit code (not completion patterns)', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'e2e-success-test-' + Date.now());
+      await fs.promises.mkdir(testDir, { recursive: true });
+
+      try {
+        // Request output that does NOT contain standard completion patterns
+        // like "Done" or "Task complete" - success should still be detected via exit code
+        const result = await runClaudeTask(
+          testDir,
+          'Create a file called success.txt with the content "This is a success test". Do not say "Done" or "Task complete" at the end.',
+          60000
+        );
+
+        // Should succeed based on exit code 0, even without completion pattern
+        assert.ok(result.success, `Should succeed based on exit code. Output: ${result.output.substring(0, 500)}`);
+
+        // Verify file was created
+        const outputFile = path.join(testDir, 'success.txt');
+        assert.ok(fs.existsSync(outputFile), 'success.txt should be created');
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
+      }
+    });
+
+    test('JSON stream events must be parseable', async function () {
+      const testDir = path.join(workspacePath, '.coven', 'e2e-json-test-' + Date.now());
+      await fs.promises.mkdir(testDir, { recursive: true });
+
+      try {
+        const result = await runClaudeTask(
+          testDir,
+          'Write the word "PARSEABLE" exactly once.',
+          30000
+        );
+
+        assert.ok(result.success, `Task should succeed`);
+
+        // Verify we can parse the streaming JSON
+        const lines = result.output.split('\n').filter((l) => l.trim());
+        let validJsonCount = 0;
+
+        for (const line of lines) {
+          if (line.startsWith('Stderr:')) continue;
+          try {
+            JSON.parse(line);
+            validJsonCount++;
+          } catch {
+            // Skip non-JSON lines
+          }
+        }
+
+        console.log(`JSON parsing: ${validJsonCount} valid JSON lines out of ${lines.length} total lines`);
+        assert.ok(validJsonCount > 0, `Should have valid JSON lines. Found ${validJsonCount}`);
+
+        // Verify we can extract text content
+        const textContent = parseStreamOutput(result.output);
+        assert.ok(
+          textContent.includes('PARSEABLE'),
+          `Should be able to parse text content. Got: ${textContent.substring(0, 200)}`
+        );
+      } finally {
+        await fs.promises.rm(testDir, { recursive: true, force: true });
+      }
     });
   });
 

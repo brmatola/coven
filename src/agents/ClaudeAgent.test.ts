@@ -139,7 +139,7 @@ describe('ClaudeAgent', () => {
 
       expect(spawn).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['-p', '--dangerously-skip-permissions', '--output-format', 'stream-json']),
+        expect.arrayContaining(['-p', '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose']),
         expect.objectContaining({
           cwd: '/test/worktree',
           stdio: ['pipe', 'pipe', 'pipe'],
