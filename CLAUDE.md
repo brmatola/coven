@@ -2,6 +2,13 @@
 
 ## Testing & Coverage Policy
 
+**Testing Requirements - STRICTLY ENFORCED:**
+- ALWAYS run BOTH unit tests AND E2E tests before considering work complete
+- Unit tests: `npm test`
+- E2E tests: `npm run test:e2e`
+- ALL tests must pass - do not commit if any tests fail
+- If E2E tests fail, investigate and fix the root cause
+
 **Coverage Exclusion Policy - STRICTLY ENFORCED:**
 - NEVER exclude actual code files from coverage in `vitest.config.ts`
 - Only these exclusions are permitted:

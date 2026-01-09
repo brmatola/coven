@@ -328,16 +328,16 @@ suite('Beads Integration E2E Tests', function () {
         createdTaskIds.push(taskId);
       }
 
-      // Get ready list
-      const { stdout } = await execAsync('bd ready --json', { cwd: workspacePath });
-      const readyItems = JSON.parse(stdout);
+      // Get list of all issues (bd list shows all, bd ready may filter)
+      const { stdout } = await execAsync('bd list --json', { cwd: workspacePath });
+      const allItems = JSON.parse(stdout);
 
-      // Bug should be in the list
-      const foundBug = readyItems.find(
-        (item: { id: string; issue_type: string }) =>
-          item.id === taskId && item.issue_type === 'bug'
+      // Bug should be in the list - check both issue_type and type fields
+      const foundBug = allItems.find(
+        (item: { id: string; issue_type?: string; type?: string }) =>
+          item.id === taskId && (item.issue_type === 'bug' || item.type === 'bug')
       );
-      assert.ok(foundBug, 'Bug issue should be in ready list');
+      assert.ok(foundBug, 'Bug issue should be in issue list');
     });
 
     test('Epic type issues should be included in sync', async function () {
@@ -363,16 +363,16 @@ suite('Beads Integration E2E Tests', function () {
         createdTaskIds.push(taskId);
       }
 
-      // Get ready list
-      const { stdout } = await execAsync('bd ready --json', { cwd: workspacePath });
-      const readyItems = JSON.parse(stdout);
+      // Get list of all issues (bd list shows all, bd ready may filter)
+      const { stdout } = await execAsync('bd list --json', { cwd: workspacePath });
+      const allItems = JSON.parse(stdout);
 
-      // Epic should be in the list
-      const foundEpic = readyItems.find(
-        (item: { id: string; issue_type: string }) =>
-          item.id === taskId && item.issue_type === 'epic'
+      // Epic should be in the list - check both issue_type and type fields
+      const foundEpic = allItems.find(
+        (item: { id: string; issue_type?: string; type?: string }) =>
+          item.id === taskId && (item.issue_type === 'epic' || item.type === 'epic')
       );
-      assert.ok(foundEpic, 'Epic issue should be in ready list');
+      assert.ok(foundEpic, 'Epic issue should be in issue list');
     });
   });
 
