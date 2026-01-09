@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/coven/daemon/internal/daemon"
 )
 
 var version = "dev"
@@ -23,6 +26,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Starting covend for workspace: %s\n", *workspace)
-	// TODO: Implement daemon
+	d, err := daemon.New(*workspace, version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := d.Run(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
