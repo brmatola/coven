@@ -178,3 +178,57 @@ The system SHALL emit events for workflow state changes.
 - **WHEN** workflow blocks
 - **THEN** `workflow.blocked` event SHALL be emitted
 - **AND** event SHALL include reason for blocking
+
+### Requirement: Workflow Logging
+The system SHALL log workflow execution to JSONL files for observability.
+
+One log file per workflow run at `.coven/logs/workflows/{workflow-id}.jsonl`.
+
+#### Scenario: Log file creation
+- **WHEN** workflow starts
+- **THEN** a new JSONL log file SHALL be created
+- **AND** file SHALL be named `{workflow-id}.jsonl`
+
+#### Scenario: Log captures hierarchy
+- **WHEN** workflow executes
+- **THEN** log SHALL capture: workflow start/end, step start/end, inputs, outputs
+- **AND** loop iterations SHALL be logged with iteration number
+- **AND** log structure SHALL reflect step hierarchy
+
+#### Scenario: Log captures full output
+- **WHEN** agent or script step completes
+- **THEN** full stdout/stderr SHALL be logged
+- **AND** exit codes SHALL be logged for scripts
+- **AND** duration_ms SHALL be logged for each step
+
+#### Scenario: Token tracking
+- **WHEN** agent step completes
+- **AND** Claude CLI provides token usage
+- **THEN** input/output tokens SHALL be logged per step
+- **AND** total tokens SHALL be aggregated at workflow end
+
+### Requirement: Spell Partials
+The system SHALL support including spells within other spells with variable passing.
+
+#### Scenario: Include with literal variables
+- **GIVEN** a spell contains `{{include "partial.md" name="value"}}`
+- **WHEN** spell is rendered
+- **THEN** partial SHALL be loaded and rendered
+- **AND** `{{.name}}` in partial SHALL resolve to "value"
+
+#### Scenario: Include with context variables
+- **GIVEN** a spell contains `{{include "partial.md" title={{.bead.title}}}}`
+- **WHEN** spell is rendered
+- **THEN** `{{.bead.title}}` SHALL be resolved first
+- **AND** result SHALL be passed to partial as `{{.title}}`
+
+#### Scenario: Partial resolution
+- **WHEN** partial is referenced
+- **THEN** system SHALL check `.coven/spells/{name}`
+- **AND** fall back to built-in spells
+- **AND** error if not found
+
+#### Scenario: Nesting depth limit
+- **WHEN** partials include other partials
+- **THEN** nesting SHALL be limited (e.g., max 5 levels)
+- **AND** cycles SHALL be detected and rejected

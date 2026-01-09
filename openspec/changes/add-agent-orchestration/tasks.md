@@ -56,6 +56,14 @@
 - [ ] 2.3.4 Clear error messages for template errors
 - [ ] 2.3.5 Unit tests for spell rendering
 
+### 2.4 Spell Partials
+- [ ] 2.4.1 Implement `{{include "name.md" var="value"}}` syntax
+- [ ] 2.4.2 Support literal string variables: `var="value"`
+- [ ] 2.4.3 Support context references: `var={{.bead.title}}`
+- [ ] 2.4.4 Implement partial resolution (user → builtin)
+- [ ] 2.4.5 Implement nesting with depth limit (prevent cycles)
+- [ ] 2.4.6 Unit tests for spell partials
+
 ## Phase 3: Grimoire Loading
 
 ### 3.1 Grimoire Parser
@@ -123,17 +131,33 @@
 - [ ] 5.2.5 Emit `workflow.blocked` event with reason
 - [ ] 5.2.6 Integration tests for events
 
-### 5.3 Workflow API
-- [ ] 5.3.1 Add `GET /workflows` endpoint (list active)
-- [ ] 5.3.2 Add `GET /workflows/:id` endpoint (status)
-- [ ] 5.3.3 Add `DELETE /workflows/:id` endpoint (cancel)
-- [ ] 5.3.4 Integration tests for API
+### 5.3 Workflow Logging
+- [ ] 5.3.1 Create `.coven/logs/workflows/` directory structure
+- [ ] 5.3.2 Implement JSONL logger (one file per workflow: `{workflow-id}.jsonl`)
+- [ ] 5.3.3 Log `workflow.start` with workflow_id, bead_id, grimoire
+- [ ] 5.3.4 Log `step.start` with step name, type, spell/command
+- [ ] 5.3.5 Log `step.input` with resolved input variables
+- [ ] 5.3.6 Log `step.output` with full stdout/stderr, exit code
+- [ ] 5.3.7 Log `step.end` with status, duration_ms
+- [ ] 5.3.8 Log `loop.iteration` with iteration number, continue/exit reason
+- [ ] 5.3.9 Log `workflow.end` with final status, total duration
+- [ ] 5.3.10 Capture token usage from Claude CLI (if available)
+- [ ] 5.3.11 Aggregate token totals at workflow end
+- [ ] 5.3.12 Unit tests for logging
 
-### 5.4 E2E Tests
-- [ ] 5.4.1 E2E: bead pickup → grimoire runs → bead closed
-- [ ] 5.4.2 E2E: grimoire blocks → bead blocked
-- [ ] 5.4.3 E2E: concurrent beads respect limit
-- [ ] 5.4.4 E2E: custom grimoire via label
+### 5.4 Workflow API
+- [ ] 5.4.1 Add `GET /workflows` endpoint (list active)
+- [ ] 5.4.2 Add `GET /workflows/:id` endpoint (status)
+- [ ] 5.4.3 Add `GET /workflows/:id/log` endpoint (fetch log file)
+- [ ] 5.4.4 Add `DELETE /workflows/:id` endpoint (cancel)
+- [ ] 5.4.5 Integration tests for API
+
+### 5.5 E2E Tests
+- [ ] 5.5.1 E2E: bead pickup → grimoire runs → bead closed
+- [ ] 5.5.2 E2E: grimoire blocks → bead blocked
+- [ ] 5.5.3 E2E: concurrent beads respect limit
+- [ ] 5.5.4 E2E: custom grimoire via label
+- [ ] 5.5.5 E2E: workflow log file created with expected structure
 
 ## Phase 6: Documentation
 
@@ -141,6 +165,8 @@
 - [ ] 6.1.1 Document grimoire YAML schema
 - [ ] 6.1.2 Document step types and options
 - [ ] 6.1.3 Document spell template syntax
-- [ ] 6.1.4 Document grimoire selection (labels, config)
-- [ ] 6.1.5 Add example custom grimoire
-- [ ] 6.1.6 Add example custom spell
+- [ ] 6.1.4 Document spell partials with variable passing
+- [ ] 6.1.5 Document grimoire selection (labels, config)
+- [ ] 6.1.6 Document workflow logging format and location
+- [ ] 6.1.7 Add example custom grimoire
+- [ ] 6.1.8 Add example custom spell with partials

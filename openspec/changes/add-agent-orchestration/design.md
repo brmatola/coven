@@ -385,8 +385,95 @@ Workflow complete → close bead
 3. Add API endpoints
 4. Full E2E test
 
-## Open Questions
+## Workflow Logging
 
-1. **Workflow Persistence**: Persist full state for resume on crash?
-2. **Cost Tracking**: Track tokens per workflow?
-3. **Spell Includes**: Support `{{include "partial.md"}}`?
+One log file per workflow run for observability and debugging.
+
+### Log Location
+
+```
+.coven/logs/
+└── workflows/
+    └── {workflow-id}.jsonl    # One file per workflow run
+```
+
+### Log Structure
+
+JSONL format capturing hierarchy of primitive calls:
+
+```jsonl
+{"ts":"2026-01-09T14:30:00Z","type":"workflow.start","workflow_id":"wf-abc123","bead_id":"coven-xyz","grimoire":"implement-bead"}
+{"ts":"2026-01-09T14:30:01Z","type":"step.start","step":"implement","step_type":"agent","spell":"implement"}
+{"ts":"2026-01-09T14:30:01Z","type":"step.input","step":"implement","input":{"bead":{"id":"coven-xyz","title":"Add login"}}}
+{"ts":"2026-01-09T14:35:00Z","type":"step.output","step":"implement","output":"...agent stdout...","tokens":{"input":1500,"output":3200}}
+{"ts":"2026-01-09T14:35:00Z","type":"step.end","step":"implement","status":"success","duration_ms":299000}
+{"ts":"2026-01-09T14:35:01Z","type":"step.start","step":"quality-loop","step_type":"loop","iteration":1}
+{"ts":"2026-01-09T14:35:02Z","type":"step.start","step":"run-tests","step_type":"script","command":"npm test"}
+{"ts":"2026-01-09T14:35:10Z","type":"step.output","step":"run-tests","output":"...test output...","exit_code":1}
+{"ts":"2026-01-09T14:35:10Z","type":"step.end","step":"run-tests","status":"failed","duration_ms":8000}
+...
+{"ts":"2026-01-09T14:45:00Z","type":"workflow.end","status":"completed","total_tokens":{"input":8500,"output":15000},"duration_ms":900000}
+```
+
+### What Gets Logged
+
+| Event | Data |
+|-------|------|
+| `workflow.start` | workflow_id, bead_id, grimoire name |
+| `step.start` | step name, type, spell/command, iteration (for loops) |
+| `step.input` | resolved input variables passed to step |
+| `step.output` | full stdout/stderr, exit code, token usage |
+| `step.end` | status (success/failed/skipped), duration |
+| `loop.iteration` | iteration number, reason for continue/exit |
+| `workflow.end` | final status, total tokens, total duration |
+
+### Token Tracking
+
+If Claude CLI exposes token consumption (via `--usage` flag or output parsing):
+- Capture per-agent-step: `{"tokens": {"input": N, "output": M}}`
+- Aggregate at workflow end: `{"total_tokens": {"input": N, "output": M}}`
+
+### Usage
+
+Logs enable:
+1. **Debugging**: Feed log to Claude for analysis when things break
+2. **Optimization**: Identify slow steps, token-heavy spells
+3. **Audit**: Understand what happened in each workflow run
+
+## Spell Partials
+
+Spells can include other spells with parameterized variables.
+
+### Syntax
+
+```markdown
+{{include "common-guidelines.md" project="coven" style="functional"}}
+```
+
+Partials receive explicit variables, not implicit context:
+
+```markdown
+# .coven/spells/common-guidelines.md
+You are working on the {{.project}} project.
+Follow {{.style}} programming style.
+```
+
+### Variable Passing
+
+Variables can be:
+- Literal strings: `variable="value"`
+- Context references: `variable={{.bead.title}}`
+
+```markdown
+{{include "task-context.md" title={{.bead.title}} description={{.bead.description}}}}
+```
+
+### Resolution
+
+1. Check `.coven/spells/{name}.md`
+2. Fall back to built-in spells
+3. Error if not found
+
+### Nesting
+
+Partials can include other partials (with depth limit to prevent cycles).
