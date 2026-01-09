@@ -202,6 +202,16 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     // Set up idle timeout checker
     this.setupIdleChecker(runningAgent);
 
+    // Close stdin immediately since we're using -p flag for prompt
+    // This signals to the process that there's no interactive input
+    proc.stdin?.end();
+
+    logger.info('Agent spawned successfully', {
+      taskId,
+      pid: proc.pid,
+      args: this.buildArgs(config).map((a) => (a.length > 100 ? a.substring(0, 100) + '...' : a)),
+    });
+
     return Promise.resolve(handle);
   }
 
@@ -283,8 +293,11 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     // Use the prompt from config or generate from task
     const prompt = config.prompt || this.generatePrompt(config);
 
-    // Print output without interactive mode
-    args.push('--print');
+    // Use -p flag to pass prompt for non-interactive mode
+    args.push('-p', prompt);
+
+    // Skip permission prompts for automated operation
+    args.push('--dangerously-skip-permissions');
 
     // Add allowed tools if specified (enables those tools without prompting)
     // Pass each tool as a separate argument to avoid space injection
@@ -295,8 +308,6 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
         args.push('--allowedTools', ...safeTools);
       }
     }
-
-    args.push(prompt);
 
     return args;
   }
@@ -420,16 +431,25 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
   private handleOutput(agent: RunningAgent, type: 'stdout' | 'stderr', text: string): void {
     const { config } = agent;
     const timestamp = Date.now();
+    const taskId = agent.handle.taskId;
 
     // Update activity time
     agent.lastActivityTime = timestamp;
+
+    // Log output for observability
+    logger.debug('Agent output received', {
+      taskId,
+      type,
+      length: text.length,
+      preview: text.substring(0, 200).replace(/\n/g, '\\n'),
+    });
 
     // Limit individual output line size
     let processedText = text;
     if (text.length > MAX_OUTPUT_LINE_SIZE) {
       processedText = text.substring(0, MAX_OUTPUT_LINE_SIZE) + '... (truncated)';
       logger.warn('Output line truncated', {
-        taskId: agent.handle.taskId,
+        taskId,
         originalSize: text.length,
       });
     }
@@ -456,6 +476,7 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     if (type === 'stdout' && !agent.pendingQuestion) {
       const question = this.detectQuestion(processedText);
       if (question) {
+        logger.info('Agent question detected', { taskId, questionType: question.type });
         agent.pendingQuestion = question;
         config.callbacks.onQuestion(question);
       }
@@ -488,8 +509,17 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
     proc.on('close', (code, signal) => {
       const durationMs = Date.now() - startTime;
       const taskId = handle.taskId;
+      const outputSize = agent.outputBufferSize;
+      const outputLineCount = agent.outputBuffer.length;
 
-      logger.info('Claude agent exited', { taskId, code, signal, durationMs });
+      logger.info('Claude agent exited', {
+        taskId,
+        code,
+        signal,
+        durationMs,
+        outputSize,
+        outputLineCount,
+      });
 
       // Remove from running agents
       this.runningAgents.delete(taskId);
@@ -504,6 +534,15 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       // Try to extract files changed from output
       const filesChanged = this.extractFilesChanged(fullOutput);
 
+      // Log detailed result info for debugging
+      logger.info('Agent result analysis', {
+        taskId,
+        success,
+        hasCompletionSignal,
+        filesChangedCount: filesChanged.length,
+        outputPreview: fullOutput.substring(0, 500).replace(/\n/g, '\\n'),
+      });
+
       // Build result - only include optional properties when defined
       const result: AgentResult = {
         success: success && hasCompletionSignal,
@@ -516,12 +555,14 @@ export class ClaudeAgent extends EventEmitter implements AgentProvider {
       }
       if (!success) {
         result.error = `Process exited with code ${code}`;
+        logger.warn('Agent failed', { taskId, error: result.error, fullOutput: fullOutput.substring(0, 1000) });
       }
 
       config.callbacks.onComplete(result);
     });
 
     proc.on('error', (error) => {
+      logger.error('Agent process error', { taskId: handle.taskId, error: error.message });
       config.callbacks.onError(error);
     });
   }

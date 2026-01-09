@@ -9,6 +9,22 @@
 - ALL tests must pass - do not commit if any tests fail
 - If E2E tests fail, investigate and fix the root cause
 
+**E2E Test Design - CRITICAL:**
+- E2E tests MUST test the actual Coven extension, not external tools
+- NEVER call `claude` CLI directly in E2E tests - the extension does this internally
+- E2E tests should use VS Code commands (e.g., `vscode.commands.executeCommand('coven.startTask', taskId)`)
+- Test the full workflow: create task → start session → start task → verify agent runs → verify changes
+- Using `bd` and `git` commands to SET UP test data is acceptable
+- Using `bd` and `git` commands to VERIFY results is acceptable
+- But the actual functionality being tested must go through the Coven extension
+
+**What E2E Tests Should Verify:**
+1. Session lifecycle: start → active → stop
+2. Task lifecycle: create → start (spawns agent in worktree) → complete → review → merge
+3. Agent execution: worktree created, agent spawned, output captured, task completed
+4. Review workflow: changes visible, approve/revert works
+5. Error handling: graceful failures with clear messages
+
 **Coverage Exclusion Policy - STRICTLY ENFORCED:**
 - NEVER exclude actual code files from coverage in `vitest.config.ts`
 - Only these exclusions are permitted:

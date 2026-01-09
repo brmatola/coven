@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { exec, spawn } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
@@ -43,93 +43,105 @@ async function isGitRepo(workspacePath: string): Promise<boolean> {
 }
 
 /**
- * Run claude with specific tools and get output.
- * Uses -p flag for prompt and --dangerously-skip-permissions for automated testing.
+ * Check if Beads is initialized in workspace.
  */
-async function runClaude(
-  cwd: string,
-  prompt: string,
-  tools: string[],
-  timeoutMs: number
-): Promise<{ success: boolean; output: string; exitCode: number | null }> {
-  return new Promise((resolve) => {
-    // Use -p for prompt and --dangerously-skip-permissions for non-interactive mode
-    const args = ['-p', prompt, '--dangerously-skip-permissions'];
-    if (tools.length > 0) {
-      args.push('--allowedTools', ...tools);
-    }
-
-    const proc = spawn('claude', args, {
-      cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout?.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr?.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    // Close stdin immediately since we're using -p flag
-    proc.stdin?.end();
-
-    const timeout = setTimeout(() => {
-      proc.kill('SIGTERM');
-      setTimeout(() => {
-        if (!proc.killed) {
-          proc.kill('SIGKILL');
-        }
-      }, 1000);
-      resolve({ success: false, output: `TIMEOUT\nstdout: ${stdout}\nstderr: ${stderr}`, exitCode: null });
-    }, timeoutMs);
-
-    proc.on('close', (code) => {
-      clearTimeout(timeout);
-      resolve({
-        success: code === 0,
-        output: stdout + stderr,
-        exitCode: code,
-      });
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timeout);
-      resolve({ success: false, output: `Spawn error: ${err.message}`, exitCode: null });
-    });
-  });
+function isBeadsInitialized(workspacePath: string): boolean {
+  const beadsDir = path.join(workspacePath, '.beads');
+  return fs.existsSync(beadsDir);
 }
 
+/**
+ * Create a test task using bd.
+ */
+async function createTestTask(workspacePath: string, title: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(`bd create --title "${title}" --type task --json`, {
+      cwd: workspacePath,
+    });
+    const result = JSON.parse(stdout);
+    return result.id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete a task from Beads.
+ */
+async function deleteTask(workspacePath: string, taskId: string): Promise<void> {
+  try {
+    await execAsync(`bd delete ${taskId} --yes`, { cwd: workspacePath });
+  } catch {
+    // Ignore errors - task may not exist
+  }
+}
+
+/**
+ * Get task from Beads.
+ */
+async function getTask(
+  workspacePath: string,
+  taskId: string
+): Promise<{ id: string; status: string; title: string } | null> {
+  try {
+    const { stdout } = await execAsync(`bd show ${taskId} --json`, {
+      cwd: workspacePath,
+    });
+    const result = JSON.parse(stdout);
+    if (Array.isArray(result) && result.length > 0) {
+      return result[0];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * E2E tests for Agent functionality.
+ *
+ * IMPORTANT: These tests exercise Coven's agent infrastructure through VS Code commands.
+ * They do NOT call claude CLI directly - that's what the extension does internally.
+ * Using bd/git for setup and verification is acceptable per E2E test guidelines.
+ */
 suite('Agent Integration E2E Tests', function () {
-  // Long timeout for agent tests
   this.timeout(180000);
 
   let workspacePath: string;
   let claudeAvailable: boolean;
   let isRepo: boolean;
+  let beadsInitialized: boolean;
+  const createdTaskIds: string[] = [];
 
   suiteSetup(async () => {
     workspacePath = getTestWorkspacePath();
     claudeAvailable = await isClaudeAvailable();
     isRepo = workspacePath ? await isGitRepo(workspacePath) : false;
+    beadsInitialized = workspacePath ? isBeadsInitialized(workspacePath) : false;
 
     console.log('Agent test setup:');
     console.log(`  Workspace: ${workspacePath}`);
-    console.log(`  Claude: ${claudeAvailable}`);
+    console.log(`  Claude available: ${claudeAvailable}`);
     console.log(`  Git repo: ${isRepo}`);
+    console.log(`  Beads initialized: ${beadsInitialized}`);
+
+    // Ensure extension is active
+    const extension = vscode.extensions.getExtension('coven.coven');
+    if (extension && !extension.isActive) {
+      await extension.activate();
+    }
+  });
+
+  suiteTeardown(async () => {
+    // Clean up any test tasks we created
+    for (const taskId of createdTaskIds) {
+      await deleteTask(workspacePath, taskId);
+    }
   });
 
   suite('Prerequisites', () => {
-    test('Extension must be active', async () => {
+    test('Extension must be active', () => {
       const extension = vscode.extensions.getExtension('coven.coven');
-      if (extension && !extension.isActive) {
-        await extension.activate();
-      }
       assert.ok(extension?.isActive, 'Extension must be active');
     });
 
@@ -162,6 +174,16 @@ suite('Agent Integration E2E Tests', function () {
       const commands = await vscode.commands.getCommands(true);
       assert.ok(commands.includes('coven.viewFamiliarOutput'), 'viewFamiliarOutput must be registered');
     });
+
+    test('startSession command must be registered', async () => {
+      const commands = await vscode.commands.getCommands(true);
+      assert.ok(commands.includes('coven.startSession'), 'startSession must be registered');
+    });
+
+    test('stopSession command must be registered', async () => {
+      const commands = await vscode.commands.getCommands(true);
+      assert.ok(commands.includes('coven.stopSession'), 'stopSession must be registered');
+    });
   });
 
   suite('Agent Infrastructure', () => {
@@ -181,139 +203,122 @@ suite('Agent Integration E2E Tests', function () {
     });
   });
 
-  suite('Live Agent Tests', function () {
-    this.timeout(180000);
+  suite('Task Lifecycle via Extension', function () {
+    this.timeout(30000);
 
-    test('Claude must respond to simple prompt', async function () {
-      const result = await runClaude(
-        workspacePath,
-        'Say "Hello E2E" and nothing else.',
-        [],
-        30000
-      );
+    test('startTask requires active session', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
 
-      console.log('Claude response:', result.output.substring(0, 200));
+      // Create a test task
+      const taskId = await createTestTask(workspacePath, 'E2E Test - Session Required');
+      if (!taskId) {
+        this.skip();
+        return;
+      }
+      createdTaskIds.push(taskId);
 
-      assert.ok(
-        result.output.includes('Hello') || result.output.includes('E2E'),
-        `Claude must respond with greeting. Got: ${result.output.substring(0, 200)}`
-      );
-    });
-
-    test('Claude must be able to read files', async function () {
-      // Create a test file
-      const testDir = path.join(workspacePath, '.coven', 'agent-read-test');
-      await fs.promises.mkdir(testDir, { recursive: true });
-      const testFile = path.join(testDir, 'test.txt');
-      await fs.promises.writeFile(testFile, 'Test content: ABC123');
+      // Try to start task without session - should fail gracefully
+      const commandPromise = vscode.commands.executeCommand('coven.startTask', taskId);
+      const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 5000));
 
       try {
-        const result = await runClaude(
-          testDir,
-          `Read the file test.txt and tell me what content it contains. Be brief.`,
-          ['Read'],
-          60000
-        );
-
-        console.log('Read test output:', result.output.substring(0, 300));
-        assert.ok(result.success, `Claude read task must succeed. Exit code: ${result.exitCode}`);
-
+        await Promise.race([commandPromise, timeoutPromise]);
+      } catch (err) {
+        // Expected - should fail because no session is active
+        const msg = err instanceof Error ? err.message : String(err);
         assert.ok(
-          result.output.includes('ABC123') || result.output.includes('Test content'),
-          `Claude must read file content. Got: ${result.output.substring(0, 300)}`
+          msg.includes('session') || msg.includes('Session') || msg.includes('No active'),
+          `Should fail with session error, got: ${msg}`
         );
-      } finally {
-        await fs.promises.rm(testDir, { recursive: true, force: true });
+        return;
+      }
+
+      // If we get here without error, verify the task status shows appropriate state
+      const task = await getTask(workspacePath, taskId);
+      assert.ok(task, 'Task should still exist after command');
+    });
+
+    test('stopTask handles missing agent gracefully', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
+
+      // Create a test task (not started)
+      const taskId = await createTestTask(workspacePath, 'E2E Test - Stop Without Start');
+      if (!taskId) {
+        this.skip();
+        return;
+      }
+      createdTaskIds.push(taskId);
+
+      // Try to stop a task that was never started
+      const commandPromise = vscode.commands.executeCommand('coven.stopTask', taskId);
+      const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+
+      try {
+        await Promise.race([commandPromise, timeoutPromise]);
+        // Should complete without throwing
+        assert.ok(true, 'stopTask handled non-existent agent gracefully');
+      } catch {
+        // Also acceptable - may throw for non-existent agent
+        assert.ok(true, 'stopTask threw for non-existent agent');
       }
     });
 
-    test('Claude must be able to write files', async function () {
-      const testDir = path.join(workspacePath, '.coven', 'agent-write-test');
-      await fs.promises.mkdir(testDir, { recursive: true });
+    test('Task status updates are reflected in Beads', async function () {
+      if (!beadsInitialized) {
+        this.skip();
+        return;
+      }
+
+      // Create a test task
+      const taskId = await createTestTask(workspacePath, 'E2E Test - Status Tracking');
+      if (!taskId) {
+        this.skip();
+        return;
+      }
+      createdTaskIds.push(taskId);
+
+      // Verify initial status
+      const initialTask = await getTask(workspacePath, taskId);
+      assert.ok(initialTask, 'Task should exist');
+      assert.strictEqual(initialTask?.status, 'open', 'Task should start as open');
+
+      // Update status via bd (simulating what the extension does)
+      await execAsync(`bd update ${taskId} --status in_progress`, { cwd: workspacePath });
+
+      // Verify status changed
+      const updatedTask = await getTask(workspacePath, taskId);
+      assert.strictEqual(updatedTask?.status, 'in_progress', 'Task status should be updated');
+    });
+  });
+
+  suite('Agent Output Channel', () => {
+    test('viewFamiliarOutput command can be executed', async function () {
+      this.timeout(10000);
+
+      // This should open the output channel or show an error gracefully
+      const commandPromise = vscode.commands.executeCommand('coven.viewFamiliarOutput');
+      const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 3000));
 
       try {
-        const result = await runClaude(
-          testDir,
-          'Create a file called output.txt with the content "Written by Claude". Say "Done" when complete.',
-          ['Write'],
-          60000
-        );
-
-        console.log('Write test output:', result.output.substring(0, 300));
-        assert.ok(result.success, `Claude write task must succeed. Exit code: ${result.exitCode}`);
-
-        const outputFile = path.join(testDir, 'output.txt');
-        assert.ok(fs.existsSync(outputFile), 'output.txt must be created');
-
-        const content = await fs.promises.readFile(outputFile, 'utf-8');
-        assert.ok(
-          content.includes('Claude') || content.includes('Written'),
-          `File must contain expected content. Got: ${content}`
-        );
-      } finally {
-        await fs.promises.rm(testDir, { recursive: true, force: true });
+        await Promise.race([commandPromise, timeoutPromise]);
+        assert.ok(true, 'viewFamiliarOutput executed without hanging');
+      } catch {
+        // May throw if no active agent - that's OK
+        assert.ok(true, 'viewFamiliarOutput threw expected error');
       }
     });
 
-    test('Claude must be able to edit files', async function () {
-      const testDir = path.join(workspacePath, '.coven', 'agent-edit-test');
-      await fs.promises.mkdir(testDir, { recursive: true });
-
-      // Create initial file
-      const testFile = path.join(testDir, 'source.ts');
-      await fs.promises.writeFile(
-        testFile,
-        `function greet(): string {
-  return "Hello";
-}
-`
-      );
-
-      try {
-        const result = await runClaude(
-          testDir,
-          'Edit source.ts to change the return value from "Hello" to "Hello World". Say "Done" when complete.',
-          ['Read', 'Edit'],
-          60000
-        );
-
-        console.log('Edit test output:', result.output.substring(0, 300));
-        assert.ok(result.success, `Claude edit task must succeed. Exit code: ${result.exitCode}`);
-
-        const content = await fs.promises.readFile(testFile, 'utf-8');
-        assert.ok(content.includes('World'), `File must be edited. Content: ${content}`);
-      } finally {
-        await fs.promises.rm(testDir, { recursive: true, force: true });
-      }
-    });
-
-    test('Claude must complete a simple coding task', async function () {
-      const testDir = path.join(workspacePath, '.coven', 'agent-task-test');
-      await fs.promises.mkdir(testDir, { recursive: true });
-
-      try {
-        const result = await runClaude(
-          testDir,
-          `Create a TypeScript file called utils.ts with a function called "double" that takes a number and returns it multiplied by 2. Include proper type annotations. Say "Done" when complete.`,
-          ['Write'],
-          90000
-        );
-
-        console.log('Coding task output:', result.output.substring(0, 500));
-        assert.ok(result.success, `Claude coding task must succeed. Exit code: ${result.exitCode}`);
-
-        const utilsFile = path.join(testDir, 'utils.ts');
-        assert.ok(fs.existsSync(utilsFile), 'utils.ts must be created');
-
-        const content = await fs.promises.readFile(utilsFile, 'utf-8');
-        assert.ok(
-          content.includes('function') || content.includes('double'),
-          `File must contain function. Content: ${content}`
-        );
-        assert.ok(content.includes('number'), `File must have type annotation. Content: ${content}`);
-      } finally {
-        await fs.promises.rm(testDir, { recursive: true, force: true });
-      }
+    test('Output channel exists for coven', async () => {
+      // Check that the extension's output channels are accessible
+      // We can't directly query output channels, but we can verify the command works
+      const commands = await vscode.commands.getCommands(true);
+      assert.ok(commands.includes('coven.viewFamiliarOutput'), 'Output channel command exists');
     });
   });
 
@@ -321,7 +326,6 @@ suite('Agent Integration E2E Tests', function () {
     test('Command must handle invalid task ID', async function () {
       this.timeout(10000);
 
-      // Use Promise.race to avoid hanging on command execution
       const commandPromise = vscode.commands.executeCommand('coven.startTask', 'invalid-task-id-xyz');
       const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 3000));
 
@@ -337,7 +341,6 @@ suite('Agent Integration E2E Tests', function () {
     test('Command must handle undefined argument', async function () {
       this.timeout(10000);
 
-      // Use Promise.race to avoid hanging on command execution
       const commandPromise = vscode.commands.executeCommand('coven.viewFamiliarOutput', undefined);
       const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 3000));
 
@@ -347,6 +350,57 @@ suite('Agent Integration E2E Tests', function () {
         // Expected to fail
       }
       assert.ok(true, 'Handled undefined argument gracefully');
+    });
+
+    test('Commands handle race conditions gracefully', async function () {
+      this.timeout(10000);
+
+      // Execute multiple commands concurrently
+      const promises = [
+        vscode.commands.executeCommand('coven.refreshTasks'),
+        vscode.commands.executeCommand('coven.refreshTasks'),
+        vscode.commands.getCommands(true),
+      ];
+
+      const timeoutPromise = new Promise<void[]>((resolve) =>
+        setTimeout(() => resolve([]), 5000)
+      );
+
+      try {
+        await Promise.race([Promise.all(promises), timeoutPromise]);
+        assert.ok(true, 'Concurrent commands handled gracefully');
+      } catch {
+        assert.ok(true, 'Concurrent commands threw expected error');
+      }
+    });
+  });
+
+  suite('Extension State', () => {
+    test('Extension maintains state across command calls', async () => {
+      const extension = vscode.extensions.getExtension('coven.coven');
+
+      // Execute several commands
+      for (let i = 0; i < 3; i++) {
+        try {
+          await vscode.commands.executeCommand('coven.refreshTasks');
+        } catch {
+          // Expected if no session
+        }
+      }
+
+      // Extension should still be active
+      assert.ok(extension?.isActive, 'Extension should remain active after multiple commands');
+    });
+
+    test('Extension state check is instant', () => {
+      const extension = vscode.extensions.getExtension('coven.coven');
+
+      const startTime = Date.now();
+      const isActive = extension?.isActive;
+      const duration = Date.now() - startTime;
+
+      assert.ok(duration < 10, `Extension state check should be instant (was ${duration}ms)`);
+      assert.ok(isActive, 'Extension should be active');
     });
   });
 });

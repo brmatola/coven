@@ -8,6 +8,7 @@ import { Task } from '../shared/types';
 const mockStdin = {
   writable: true,
   write: vi.fn(),
+  end: vi.fn(),
 };
 
 const mockStdout = new EventEmitter();
@@ -138,7 +139,7 @@ describe('ClaudeAgent', () => {
 
       expect(spawn).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['--print']),
+        expect.arrayContaining(['-p', '--dangerously-skip-permissions']),
         expect.objectContaining({
           cwd: '/test/worktree',
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -146,6 +147,8 @@ describe('ClaudeAgent', () => {
       );
       expect(handle.pid).toBe(12345);
       expect(handle.taskId).toBe('task-1');
+      // Should have closed stdin immediately
+      expect(mockStdin.end).toHaveBeenCalled();
     });
 
     it('should include allowedTools when specified', async () => {
@@ -472,7 +475,7 @@ describe('ClaudeAgent', () => {
       vi.mocked(spawn).mockReturnValueOnce(
         Object.assign(new EventEmitter(), {
           pid: 12346,
-          stdin: mockStdin,
+          stdin: { writable: true, write: vi.fn(), end: vi.fn() },
           stdout: new EventEmitter(),
           stderr: new EventEmitter(),
           killed: false,
