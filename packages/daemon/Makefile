@@ -1,8 +1,12 @@
 .PHONY: build test test-e2e clean lint fmt coverage
 
+# Output directory for builds (used by E2E tests)
+BUILD_DIR := ../../build
+
 # Build the daemon binary
 build:
-	go build -o bin/covend ./cmd/covend
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/covend ./cmd/covend
 
 # Run unit tests with coverage
 test:
@@ -34,7 +38,7 @@ fmt:
 
 # Clean build artifacts
 clean:
-	rm -rf bin/ coverage.out coverage.html
+	rm -rf $(BUILD_DIR)/covend* coverage.out coverage.html
 
 # Install development tools
 tools:
@@ -43,7 +47,8 @@ tools:
 
 # Cross-compile for all platforms
 build-all:
-	GOOS=darwin GOARCH=arm64 go build -o bin/covend-darwin-arm64 ./cmd/covend
-	GOOS=darwin GOARCH=amd64 go build -o bin/covend-darwin-amd64 ./cmd/covend
-	GOOS=linux GOARCH=amd64 go build -o bin/covend-linux-amd64 ./cmd/covend
-	GOOS=linux GOARCH=arm64 go build -o bin/covend-linux-arm64 ./cmd/covend
+	@mkdir -p $(BUILD_DIR)
+	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/covend-darwin-arm64 ./cmd/covend
+	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/covend-darwin-amd64 ./cmd/covend
+	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/covend-linux-amd64 ./cmd/covend
+	GOOS=linux GOARCH=arm64 go build -o $(BUILD_DIR)/covend-linux-arm64 ./cmd/covend

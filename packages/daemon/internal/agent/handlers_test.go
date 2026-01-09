@@ -367,7 +367,9 @@ func TestHandleAgentRespond(t *testing.T) {
 		}
 	})
 
-	t.Run("POST with response returns acknowledged", func(t *testing.T) {
+	t.Run("POST with response fails when no process running", func(t *testing.T) {
+		// Note: This test verifies error handling when there's no actual process.
+		// E2E tests cover the full respond flow with a running process.
 		store.AddAgent(&types.Agent{
 			TaskID:    "task-respond2",
 			Status:    types.AgentStatusRunning,
@@ -381,21 +383,9 @@ func TestHandleAgentRespond(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Status = %d, want %d", resp.StatusCode, http.StatusOK)
-		}
-
-		var result struct {
-			TaskID  string `json:"task_id"`
-			Status  string `json:"status"`
-			Message string `json:"message"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			t.Fatalf("Decode error: %v", err)
-		}
-
-		if result.Status != "acknowledged" {
-			t.Errorf("Status = %q, want %q", result.Status, "acknowledged")
+		// Should fail because there's no actual process to write to
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("Status = %d, want %d (no process running)", resp.StatusCode, http.StatusInternalServerError)
 		}
 	})
 }

@@ -83,9 +83,28 @@ func New(workspace, version string) (*Daemon, error) {
 	sched := scheduler.NewScheduler(store, beadsClient, processManager, worktreeManager, logger)
 	beadsPoller := beads.NewPoller(beadsClient, store, eventBroker, logger)
 
-	// Wire up event callbacks
+	// Apply config settings
+	sched.SetMaxAgents(cfg.MaxConcurrentAgents)
+	if cfg.AgentCommand != "" {
+		sched.SetAgentCommand(cfg.AgentCommand, []string{})
+	}
+
+	// Wire up event callbacks - this handles both state updates and event emission
 	processManager.OnComplete(func(result *agent.ProcessResult) {
-		// Get agent for completed event
+		logger.Info("agent completed",
+			"task_id", result.TaskID,
+			"exit_code", result.ExitCode,
+			"duration", result.Duration,
+		)
+
+		// Update agent status in store
+		store.UpdateAgentStatus(result.TaskID, result.ToAgentStatus())
+		store.SetAgentExitCode(result.TaskID, result.ExitCode)
+		if result.Error != "" {
+			store.SetAgentError(result.TaskID, result.Error)
+		}
+
+		// Emit event
 		agnt := store.GetAgent(result.TaskID)
 		if agnt != nil {
 			if result.Error != "" {
@@ -159,6 +178,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	d.startTime = time.Now()
 	d.logger.Info("daemon started", "workspace", d.workspace, "version", d.version)
+
+	// Start beads poller
+	d.beadsPoller.Start()
+	defer d.beadsPoller.Stop()
 
 	// Handle signals
 	sigCh := make(chan os.Signal, 1)

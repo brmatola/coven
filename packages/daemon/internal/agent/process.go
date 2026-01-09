@@ -59,6 +59,7 @@ type runningProcess struct {
 	info     ProcessInfo
 	cmd      *exec.Cmd
 	output   *RingBuffer
+	stdin    io.WriteCloser
 	cancel   context.CancelFunc
 	doneCh   chan struct{}
 	result   *ProcessResult
@@ -133,7 +134,13 @@ func (m *ProcessManager) Spawn(ctx context.Context, cfg SpawnConfig) (*ProcessIn
 		Setpgid: true,
 	}
 
-	// Create pipes for output capture
+	// Create pipes for input/output
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -165,6 +172,7 @@ func (m *ProcessManager) Spawn(ctx context.Context, cfg SpawnConfig) (*ProcessIn
 		info:   info,
 		cmd:    cmd,
 		output: NewRingBuffer(DefaultMaxBufferSize),
+		stdin:  stdin,
 		cancel: cancel,
 		doneCh: make(chan struct{}),
 	}
@@ -365,6 +373,37 @@ func (m *ProcessManager) GetOutputSince(taskID string, afterSeq uint64) ([]Outpu
 	}
 
 	return proc.output.GetSince(afterSeq), nil
+}
+
+// WriteToStdin writes data to the stdin of a running process.
+func (m *ProcessManager) WriteToStdin(taskID string, data string) error {
+	m.mu.RLock()
+	proc, exists := m.processes[taskID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("no process found for task %s", taskID)
+	}
+
+	// Check if process is still running
+	select {
+	case <-proc.doneCh:
+		return fmt.Errorf("process for task %s has already completed", taskID)
+	default:
+	}
+
+	if proc.stdin == nil {
+		return fmt.Errorf("stdin pipe not available for task %s", taskID)
+	}
+
+	// Write data with newline
+	_, err := fmt.Fprintf(proc.stdin, "%s\n", data)
+	if err != nil {
+		return fmt.Errorf("failed to write to stdin: %w", err)
+	}
+
+	m.logger.Debug("wrote to stdin", "task_id", taskID, "data", data)
+	return nil
 }
 
 // GetInfo returns information about a running process.

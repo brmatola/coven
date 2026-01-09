@@ -373,3 +373,81 @@ func (c *APIClient) Shutdown() error {
 	}
 	return nil
 }
+
+// OutputLine represents a line of agent output.
+type OutputLine struct {
+	Sequence  uint64 `json:"sequence"`
+	Timestamp string `json:"timestamp"`
+	Stream    string `json:"stream"`
+	Data      string `json:"data"`
+}
+
+// AgentOutputResponse represents the agent output response.
+type AgentOutputResponse struct {
+	TaskID    string       `json:"task_id"`
+	Lines     []OutputLine `json:"lines"`
+	LineCount int          `json:"line_count"`
+	LastSeq   uint64       `json:"last_seq"`
+}
+
+// GetAgentOutput calls GET /agents/:id/output.
+func (c *APIClient) GetAgentOutput(taskID string) (*AgentOutputResponse, error) {
+	resp, err := c.Get("/agents/" + taskID + "/output")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+	var output AgentOutputResponse
+	if err := resp.JSON(&output); err != nil {
+		return nil, err
+	}
+	return &output, nil
+}
+
+// GetAgentOutputSince calls GET /agents/:id/output?since=N.
+func (c *APIClient) GetAgentOutputSince(taskID string, since uint64) (*AgentOutputResponse, error) {
+	resp, err := c.Get(fmt.Sprintf("/agents/%s/output?since=%d", taskID, since))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+	var output AgentOutputResponse
+	if err := resp.JSON(&output); err != nil {
+		return nil, err
+	}
+	return &output, nil
+}
+
+// KillAgent calls POST /agents/:id/kill.
+func (c *APIClient) KillAgent(taskID string) error {
+	resp, err := c.Post("/agents/"+taskID+"/kill", nil)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}
+
+// RespondToAgent calls POST /agents/:id/respond.
+func (c *APIClient) RespondToAgent(taskID, response string) error {
+	resp, err := c.Post("/agents/"+taskID+"/respond", map[string]string{"response": response})
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}

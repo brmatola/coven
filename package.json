@@ -9,7 +9,9 @@
     "build:daemon": "cd packages/daemon && make build",
     "test": "npm run test -w @coven/vscode",
     "test:daemon": "cd packages/daemon && make test",
+    "test:daemon:e2e": "npm run build:daemon && go test -tags=e2e -v ./e2e/daemon/...",
     "test:e2e": "npm run test:e2e -w @coven/vscode",
+    "test:all": "npm run test && npm run test:daemon && npm run test:daemon:e2e",
     "lint": "npm run lint -w @coven/vscode",
     "format": "npm run format -w @coven/vscode"
   }

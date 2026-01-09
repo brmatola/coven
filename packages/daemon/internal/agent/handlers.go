@@ -222,9 +222,11 @@ func (h *Handlers) handleAgentRespond(w http.ResponseWriter, r *http.Request, ta
 		return
 	}
 
-	// TODO: Actually send input to agent stdin
-	// For now, just acknowledge the request
-	// This will be implemented when we add stdin support to ProcessManager
+	// Send input to agent stdin
+	if err := h.processManager.WriteToStdin(taskID, req.Response); err != nil {
+		http.Error(w, "Failed to send response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	response := struct {
 		TaskID  string `json:"task_id"`
@@ -232,8 +234,8 @@ func (h *Handlers) handleAgentRespond(w http.ResponseWriter, r *http.Request, ta
 		Message string `json:"message"`
 	}{
 		TaskID:  taskID,
-		Status:  "acknowledged",
-		Message: "Response queued (stdin injection not yet implemented)",
+		Status:  "sent",
+		Message: "Response sent to agent",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
