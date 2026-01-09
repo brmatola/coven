@@ -60,20 +60,41 @@ export class WorktreeManager extends EventEmitter {
       throw new Error(`Worktree already exists for task: ${taskId}`);
     }
 
+    // Validate feature branch exists
+    const branchExists = await this.gitProvider.branchExists(featureBranch);
+    if (!branchExists) {
+      throw new Error(
+        `Feature branch '${featureBranch}' does not exist. ` +
+          `Please create the branch first or start a new session with an existing branch.`
+      );
+    }
+
     const worktreePath = this.getWorktreePath(taskId);
     const branchName = this.getTaskBranchName(taskId);
 
-    this.logger.info('Creating worktree for task', { taskId, worktreePath, branchName });
+    this.logger.info('Creating worktree for task', { taskId, worktreePath, branchName, featureBranch });
 
-    const worktree = await this.gitProvider.createWorktree(branchName, worktreePath, {
-      baseBranch: featureBranch,
-      createBranch: true,
-    });
+    try {
+      const worktree = await this.gitProvider.createWorktree(branchName, worktreePath, {
+        baseBranch: featureBranch,
+        createBranch: true,
+      });
 
-    this.activeWorktrees.set(taskId, worktree);
-    this.emit('worktree:created', { taskId, worktree });
+      this.activeWorktrees.set(taskId, worktree);
+      this.emit('worktree:created', { taskId, worktree });
 
-    return worktree;
+      return worktree;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // Provide more helpful error messages for common issues
+      if (errMsg.includes('already exists')) {
+        throw new Error(
+          `Cannot create worktree for task ${taskId}: branch or directory already exists. ` +
+            `Try cleaning up orphaned worktrees with 'git worktree prune'.`
+        );
+      }
+      throw err;
+    }
   }
 
   /**

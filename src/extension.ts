@@ -485,11 +485,21 @@ async function startTask(arg: unknown): Promise<void> {
     // Update task status to working
     await beadsTaskSource.updateTaskStatus(taskId, 'working');
 
-    // Spawn the agent
-    await covenSession.spawnAgentForTask(taskId);
+    try {
+      // Spawn the agent
+      await covenSession.spawnAgentForTask(taskId);
 
-    ctx.logger.info('Agent spawned for task', { taskId, taskTitle: task.title });
-    void vscode.window.showInformationMessage(`Agent started working on: ${task.title}`);
+      ctx.logger.info('Agent spawned for task', { taskId, taskTitle: task.title });
+      void vscode.window.showInformationMessage(`Agent started working on: ${task.title}`);
+    } catch (spawnErr) {
+      // Revert task status on spawn failure
+      ctx.logger.error('Agent spawn failed, reverting task status', {
+        taskId,
+        error: spawnErr instanceof Error ? spawnErr.message : String(spawnErr),
+      });
+      await beadsTaskSource.updateTaskStatus(taskId, 'ready');
+      throw spawnErr;
+    }
   } catch (err) {
     ctx.logger.error('Failed to start task', {
       taskId,
