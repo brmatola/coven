@@ -399,13 +399,20 @@ One log file per workflow run for observability and debugging.
 
 ### Log Structure
 
-JSONL format capturing hierarchy of primitive calls:
+JSONL format capturing hierarchy of primitive calls and agent internal state:
 
 ```jsonl
 {"ts":"2026-01-09T14:30:00Z","type":"workflow.start","workflow_id":"wf-abc123","bead_id":"coven-xyz","grimoire":"implement-bead"}
 {"ts":"2026-01-09T14:30:01Z","type":"step.start","step":"implement","step_type":"agent","spell":"implement"}
 {"ts":"2026-01-09T14:30:01Z","type":"step.input","step":"implement","input":{"bead":{"id":"coven-xyz","title":"Add login"}}}
-{"ts":"2026-01-09T14:35:00Z","type":"step.output","step":"implement","output":"...agent stdout...","tokens":{"input":1500,"output":3200}}
+{"ts":"2026-01-09T14:30:02Z","type":"agent.thinking","step":"implement","content":"I need to implement a login feature..."}
+{"ts":"2026-01-09T14:30:05Z","type":"agent.tool_call","step":"implement","tool":"Read","input":{"file_path":"/src/auth/login.ts"}}
+{"ts":"2026-01-09T14:30:06Z","type":"agent.tool_result","step":"implement","tool":"Read","output":"...file contents...","duration_ms":1000}
+{"ts":"2026-01-09T14:30:10Z","type":"agent.tool_call","step":"implement","tool":"Edit","input":{"file_path":"/src/auth/login.ts","old_string":"...","new_string":"..."}}
+{"ts":"2026-01-09T14:30:11Z","type":"agent.tool_result","step":"implement","tool":"Edit","output":"File updated","duration_ms":500}
+{"ts":"2026-01-09T14:30:15Z","type":"agent.tool_call","step":"implement","tool":"Bash","input":{"command":"npm test"}}
+{"ts":"2026-01-09T14:30:25Z","type":"agent.tool_result","step":"implement","tool":"Bash","output":"...test output...","exit_code":0,"duration_ms":10000}
+{"ts":"2026-01-09T14:35:00Z","type":"step.output","step":"implement","summary":"Implemented login feature","tokens":{"input":1500,"output":3200}}
 {"ts":"2026-01-09T14:35:00Z","type":"step.end","step":"implement","status":"success","duration_ms":299000}
 {"ts":"2026-01-09T14:35:01Z","type":"step.start","step":"quality-loop","step_type":"loop","iteration":1}
 {"ts":"2026-01-09T14:35:02Z","type":"step.start","step":"run-tests","step_type":"script","command":"npm test"}
@@ -422,10 +429,26 @@ JSONL format capturing hierarchy of primitive calls:
 | `workflow.start` | workflow_id, bead_id, grimoire name |
 | `step.start` | step name, type, spell/command, iteration (for loops) |
 | `step.input` | resolved input variables passed to step |
-| `step.output` | full stdout/stderr, exit code, token usage |
+| `agent.thinking` | agent reasoning/thinking content |
+| `agent.tool_call` | tool name, input parameters |
+| `agent.tool_result` | tool output, duration, exit code (for Bash) |
+| `step.output` | summary, token usage |
 | `step.end` | status (success/failed/skipped), duration |
 | `loop.iteration` | iteration number, reason for continue/exit |
 | `workflow.end` | final status, total tokens, total duration |
+
+### Agent Event Parsing
+
+Claude CLI outputs structured events that we parse and log:
+- **Thinking blocks**: Agent's reasoning before taking action
+- **Tool calls**: Read, Write, Edit, Bash, Glob, Grep, etc.
+- **Tool results**: Output from each tool invocation
+- **Assistant messages**: Agent's text responses
+
+This enables debugging questions like:
+- "What files did the agent read before making changes?"
+- "What command failed and why?"
+- "What was the agent's reasoning when it made that decision?"
 
 ### Token Tracking
 

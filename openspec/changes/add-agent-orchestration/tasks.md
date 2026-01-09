@@ -137,13 +137,22 @@
 - [ ] 5.3.3 Log `workflow.start` with workflow_id, bead_id, grimoire
 - [ ] 5.3.4 Log `step.start` with step name, type, spell/command
 - [ ] 5.3.5 Log `step.input` with resolved input variables
-- [ ] 5.3.6 Log `step.output` with full stdout/stderr, exit code
+- [ ] 5.3.6 Log `step.output` with summary, exit code
 - [ ] 5.3.7 Log `step.end` with status, duration_ms
 - [ ] 5.3.8 Log `loop.iteration` with iteration number, continue/exit reason
 - [ ] 5.3.9 Log `workflow.end` with final status, total duration
 - [ ] 5.3.10 Capture token usage from Claude CLI (if available)
 - [ ] 5.3.11 Aggregate token totals at workflow end
-- [ ] 5.3.12 Unit tests for logging
+- [ ] 5.3.12 Unit tests for workflow-level logging
+
+### 5.3b Agent Event Logging
+- [ ] 5.3b.1 Parse Claude CLI output stream for structured events
+- [ ] 5.3b.2 Log `agent.thinking` with reasoning content
+- [ ] 5.3b.3 Log `agent.tool_call` with tool name and input parameters
+- [ ] 5.3b.4 Log `agent.tool_result` with output, duration, exit code
+- [ ] 5.3b.5 Log `agent.message` for assistant text responses
+- [ ] 5.3b.6 Handle streaming output (log events as they arrive)
+- [ ] 5.3b.7 Unit tests for agent event parsing
 
 ### 5.4 Workflow API
 - [ ] 5.4.1 Add `GET /workflows` endpoint (list active)

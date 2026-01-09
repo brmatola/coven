@@ -207,6 +207,13 @@ One log file per workflow run at `.coven/logs/workflows/{workflow-id}.jsonl`.
 - **THEN** input/output tokens SHALL be logged per step
 - **AND** total tokens SHALL be aggregated at workflow end
 
+#### Scenario: Agent internal state logging
+- **WHEN** agent step executes
+- **THEN** agent thinking/reasoning SHALL be logged as `agent.thinking`
+- **AND** tool calls SHALL be logged as `agent.tool_call` with tool name and inputs
+- **AND** tool results SHALL be logged as `agent.tool_result` with output and duration
+- **AND** events SHALL be logged as they stream (not batched at end)
+
 ### Requirement: Spell Partials
 The system SHALL support including spells within other spells with variable passing.
 
