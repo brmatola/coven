@@ -83,7 +83,6 @@ func (s *Store) GetState() *types.DaemonState {
 
 	// Deep copy the state
 	stateCopy := &types.DaemonState{
-		Session:      s.state.Session,
 		Agents:       make(map[string]*types.Agent, len(s.state.Agents)),
 		Tasks:        make([]types.Task, len(s.state.Tasks)),
 		LastTaskSync: s.state.LastTaskSync,
@@ -97,58 +96,6 @@ func (s *Store) GetState() *types.DaemonState {
 	copy(stateCopy.Tasks, s.state.Tasks)
 
 	return stateCopy
-}
-
-// Session operations
-
-// GetSession returns the current session state.
-func (s *Store) GetSession() types.Session {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.state.Session
-}
-
-// StartSession starts a new session.
-func (s *Store) StartSession() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.state.Session.Status == types.SessionStatusActive {
-		return fmt.Errorf("session already active")
-	}
-
-	now := time.Now()
-	s.state.Session = types.Session{
-		Status:    types.SessionStatusActive,
-		StartedAt: &now,
-	}
-	s.dirty = true
-	return nil
-}
-
-// StopSession stops the current session.
-func (s *Store) StopSession() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.state.Session.Status != types.SessionStatusActive {
-		return fmt.Errorf("no active session")
-	}
-
-	now := time.Now()
-	s.state.Session.Status = types.SessionStatusStopping
-	s.state.Session.StoppedAt = &now
-	s.dirty = true
-	return nil
-}
-
-// SetSessionStopped marks the session as fully stopped.
-func (s *Store) SetSessionStopped() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.state.Session.Status = types.SessionStatusInactive
-	s.dirty = true
 }
 
 // Agent operations

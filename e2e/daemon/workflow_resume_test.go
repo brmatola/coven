@@ -120,9 +120,6 @@ steps:
 
 	// Start new session
 	api = helpers.NewAPIClient(env)
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	// Daemon should detect interrupted workflow and resume
 	// Wait for step 3 to complete (longer timeout since step 2 still needs to finish)

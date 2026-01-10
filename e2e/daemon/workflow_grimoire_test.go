@@ -100,9 +100,6 @@ steps:
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	waitForTask(t, api, bugTaskID, 5)
 

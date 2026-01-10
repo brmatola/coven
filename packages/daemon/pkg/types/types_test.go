@@ -13,29 +13,12 @@ func TestNewDaemonState(t *testing.T) {
 		t.Fatal("NewDaemonState() returned nil")
 	}
 
-	if state.Session.Status != SessionStatusInactive {
-		t.Errorf("Session.Status = %q, want %q", state.Session.Status, SessionStatusInactive)
-	}
-
 	if state.Agents == nil {
 		t.Error("Agents map not initialized")
 	}
 
 	if state.Tasks == nil {
 		t.Error("Tasks slice not initialized")
-	}
-}
-
-func TestSessionStatusConstants(t *testing.T) {
-	// Verify constants have expected values
-	if SessionStatusInactive != "inactive" {
-		t.Errorf("SessionStatusInactive = %q, want %q", SessionStatusInactive, "inactive")
-	}
-	if SessionStatusActive != "active" {
-		t.Errorf("SessionStatusActive = %q, want %q", SessionStatusActive, "active")
-	}
-	if SessionStatusStopping != "stopping" {
-		t.Errorf("SessionStatusStopping = %q, want %q", SessionStatusStopping, "stopping")
 	}
 }
 
@@ -82,8 +65,6 @@ func TestEventTypeConstants(t *testing.T) {
 		eventType string
 		want      string
 	}{
-		{EventTypeSessionStarted, "session.started"},
-		{EventTypeSessionStopped, "session.stopped"},
 		{EventTypeTasksUpdated, "tasks.updated"},
 		{EventTypeAgentStarted, "agent.started"},
 		{EventTypeAgentOutput, "agent.output"},
@@ -181,8 +162,6 @@ func TestAgentJSONSerialization(t *testing.T) {
 func TestDaemonStateJSONSerialization(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	state := NewDaemonState()
-	state.Session.Status = SessionStatusActive
-	state.Session.StartedAt = &now
 	state.Agents["task-1"] = &Agent{
 		TaskID:    "task-1",
 		PID:       1234,
@@ -204,9 +183,6 @@ func TestDaemonStateJSONSerialization(t *testing.T) {
 		t.Fatalf("Unmarshal error: %v", err)
 	}
 
-	if decoded.Session.Status != state.Session.Status {
-		t.Errorf("Session.Status = %q, want %q", decoded.Session.Status, state.Session.Status)
-	}
 	if len(decoded.Agents) != len(state.Agents) {
 		t.Errorf("Agents length = %d, want %d", len(decoded.Agents), len(state.Agents))
 	}

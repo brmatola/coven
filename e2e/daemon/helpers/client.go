@@ -123,64 +123,6 @@ func (c *APIClient) GetVersion() (*VersionResponse, error) {
 	return &version, nil
 }
 
-// SessionStatusResponse represents the session status response.
-type SessionStatusResponse struct {
-	Active   bool   `json:"active"`
-	Stopping bool   `json:"stopping"`
-	Status   string `json:"status"`
-}
-
-// GetSessionStatus calls GET /session/status.
-func (c *APIClient) GetSessionStatus() (*SessionStatusResponse, error) {
-	resp, err := c.Get("/session/status")
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-	var status SessionStatusResponse
-	if err := resp.JSON(&status); err != nil {
-		return nil, err
-	}
-	return &status, nil
-}
-
-// StartSession calls POST /session/start.
-func (c *APIClient) StartSession() error {
-	resp, err := c.Post("/session/start", nil)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
-	}
-	return nil
-}
-
-// StopSession calls POST /session/stop.
-func (c *APIClient) StopSession() error {
-	resp, err := c.Post("/session/stop", nil)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
-	}
-	return nil
-}
-
-// ForceStopSession calls POST /session/stop with force=true.
-func (c *APIClient) ForceStopSession() error {
-	resp, err := c.Post("/session/stop", map[string]bool{"force": true})
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
-	}
-	return nil
-}
 
 // Task represents a task in the API response.
 type Task struct {
@@ -348,10 +290,6 @@ func (c *APIClient) AnswerQuestion(questionID, answer string) error {
 // StateResponse represents the full state response.
 type StateResponse struct {
 	State struct {
-		Session struct {
-			Status    string `json:"status"`
-			StartedAt string `json:"started_at,omitempty"`
-		} `json:"session"`
 		Agents map[string]*Agent `json:"agents"`
 		Tasks  []Task            `json:"tasks"`
 	} `json:"state"`

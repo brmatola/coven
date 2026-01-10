@@ -41,9 +41,6 @@ steps:
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	// Wait for tasks to appear
 	waitForTask(t, api, taskID1, 5)
@@ -126,9 +123,6 @@ steps:
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	waitForTask(t, api, taskFast, 5)
 	waitForTask(t, api, taskSlow, 5)
@@ -194,9 +188,6 @@ steps:
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	for _, taskID := range taskIDs {
 		waitForTask(t, api, taskID, 5)
@@ -264,9 +255,6 @@ steps:
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	waitForTask(t, api, task1, 5)
 	waitForTask(t, api, task2, 5)

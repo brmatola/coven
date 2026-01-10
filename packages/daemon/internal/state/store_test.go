@@ -32,19 +32,14 @@ func TestStoreLoadNoFile(t *testing.T) {
 	}
 
 	state := store.GetState()
-	if state.Session.Status != types.SessionStatusInactive {
-		t.Errorf("Session.Status = %q, want %q", state.Session.Status, types.SessionStatusInactive)
+	if state.Agents == nil {
+		t.Error("Agents map should be initialized")
 	}
 }
 
 func TestStoreSaveAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := NewStore(tmpDir)
-
-	// Start session and add agent
-	if err := store.StartSession(); err != nil {
-		t.Fatalf("StartSession() error: %v", err)
-	}
 
 	now := time.Now()
 	store.AddAgent(&types.Agent{
@@ -66,68 +61,12 @@ func TestStoreSaveAndLoad(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	state := store2.GetState()
-	if state.Session.Status != types.SessionStatusActive {
-		t.Errorf("Session.Status = %q, want %q", state.Session.Status, types.SessionStatusActive)
-	}
-
 	agent := store2.GetAgent("task-1")
 	if agent == nil {
 		t.Fatal("Agent not found")
 	}
 	if agent.PID != 1234 {
 		t.Errorf("Agent.PID = %d, want %d", agent.PID, 1234)
-	}
-}
-
-func TestStoreSessionLifecycle(t *testing.T) {
-	tmpDir := t.TempDir()
-	store := NewStore(tmpDir)
-
-	// Initial state
-	session := store.GetSession()
-	if session.Status != types.SessionStatusInactive {
-		t.Errorf("Initial status = %q, want %q", session.Status, types.SessionStatusInactive)
-	}
-
-	// Start session
-	if err := store.StartSession(); err != nil {
-		t.Fatalf("StartSession() error: %v", err)
-	}
-
-	session = store.GetSession()
-	if session.Status != types.SessionStatusActive {
-		t.Errorf("Status after start = %q, want %q", session.Status, types.SessionStatusActive)
-	}
-	if session.StartedAt == nil {
-		t.Error("StartedAt should be set")
-	}
-
-	// Starting again should fail
-	if err := store.StartSession(); err == nil {
-		t.Error("StartSession() should fail when already active")
-	}
-
-	// Stop session
-	if err := store.StopSession(); err != nil {
-		t.Fatalf("StopSession() error: %v", err)
-	}
-
-	session = store.GetSession()
-	if session.Status != types.SessionStatusStopping {
-		t.Errorf("Status after stop = %q, want %q", session.Status, types.SessionStatusStopping)
-	}
-
-	// Stopping again should fail
-	if err := store.StopSession(); err == nil {
-		t.Error("StopSession() should fail when not active")
-	}
-
-	// Mark as fully stopped
-	store.SetSessionStopped()
-	session = store.GetSession()
-	if session.Status != types.SessionStatusInactive {
-		t.Errorf("Status after SetSessionStopped = %q, want %q", session.Status, types.SessionStatusInactive)
 	}
 }
 
@@ -280,16 +219,12 @@ func TestStoreClear(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := NewStore(tmpDir)
 
-	store.StartSession()
 	store.AddAgent(&types.Agent{TaskID: "task-1"})
 	store.SetTasks([]types.Task{{ID: "task-1"}})
 
 	store.Clear()
 
 	state := store.GetState()
-	if state.Session.Status != types.SessionStatusInactive {
-		t.Error("Session should be inactive after Clear")
-	}
 	if len(state.Agents) != 0 {
 		t.Error("Agents should be empty after Clear")
 	}

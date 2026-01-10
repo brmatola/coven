@@ -49,9 +49,6 @@ func TestQuestionDetectionAndAnswer(t *testing.T) {
 	api := helpers.NewAPIClient(env)
 
 	// Start session and task
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	// Wait for task to appear
 	time.Sleep(500 * time.Millisecond)
@@ -141,9 +138,6 @@ func TestRespondToCompletedAgent(t *testing.T) {
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	time.Sleep(500 * time.Millisecond)
 

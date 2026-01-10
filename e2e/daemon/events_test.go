@@ -77,9 +77,6 @@ func TestEventStreamAgentEvents(t *testing.T) {
 	api := helpers.NewAPIClient(env)
 
 	// Start session
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	// Connect to event stream
 	resp, err := env.Client.Get("http://unix/events")

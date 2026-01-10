@@ -70,11 +70,6 @@ func TestAgentExecutionLifecycle(t *testing.T) {
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	// Start session first (required for agent spawning)
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
-
 	// Wait for task to appear in daemon (beads polling)
 	var foundTask bool
 	for i := 0; i < 30; i++ { // Wait up to 3 seconds
@@ -240,11 +235,7 @@ func TestAgentOutputCapture(t *testing.T) {
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	// Start session and task
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
-
+	// Start task
 	if err := api.StartTask(taskID); err != nil {
 		t.Fatalf("Failed to start task: %v", err)
 	}
@@ -278,11 +269,7 @@ func TestAgentFailure(t *testing.T) {
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	// Start session and task
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
-
+	// Start task
 	if err := api.StartTask(taskID); err != nil {
 		t.Fatalf("Failed to start task: %v", err)
 	}
@@ -323,11 +310,7 @@ func TestAgentKill(t *testing.T) {
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
 
-	// Start session and task
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
-
+	// Start task
 	if err := api.StartTask(taskID); err != nil {
 		t.Fatalf("Failed to start task: %v", err)
 	}

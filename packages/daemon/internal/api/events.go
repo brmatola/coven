@@ -134,24 +134,6 @@ func (b *EventBroker) sendHeartbeat() {
 
 // Event helper methods for common events
 
-// EmitSessionStarted broadcasts a session started event.
-func (b *EventBroker) EmitSessionStarted() {
-	b.Broadcast(&types.Event{
-		Type:      types.EventTypeSessionStarted,
-		Data:      b.store.GetSession(),
-		Timestamp: time.Now(),
-	})
-}
-
-// EmitSessionStopped broadcasts a session stopped event.
-func (b *EventBroker) EmitSessionStopped() {
-	b.Broadcast(&types.Event{
-		Type:      types.EventTypeSessionStopped,
-		Data:      b.store.GetSession(),
-		Timestamp: time.Now(),
-	})
-}
-
 // EmitTasksUpdated broadcasts a tasks updated event.
 func (b *EventBroker) EmitTasksUpdated(tasks []types.Task) {
 	b.Broadcast(&types.Event{

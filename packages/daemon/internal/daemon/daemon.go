@@ -21,7 +21,6 @@ import (
 	"github.com/coven/daemon/internal/logging"
 	"github.com/coven/daemon/internal/questions"
 	"github.com/coven/daemon/internal/scheduler"
-	"github.com/coven/daemon/internal/session"
 	"github.com/coven/daemon/internal/state"
 	"github.com/coven/daemon/pkg/types"
 )
@@ -38,9 +37,8 @@ type Daemon struct {
 	shutdownCh chan struct{}
 
 	// Components
-	store            *state.Store
-	sessionManager   *session.Manager
-	beadsClient      *beads.Client
+	store           *state.Store
+	beadsClient     *beads.Client
 	beadsPoller      *beads.Poller
 	processManager   *agent.ProcessManager
 	worktreeManager  *git.WorktreeManager
@@ -92,7 +90,6 @@ func New(workspace, version string) (*Daemon, error) {
 	worktreeManager := git.NewWorktreeManager(workspace, logger)
 	questionStore := questions.NewStore(covenDir)
 	questionDetector := questions.NewDetector()
-	sessionManager := session.NewManager(store, logger)
 	sched := scheduler.NewScheduler(store, beadsClient, processManager, worktreeManager, logger, covenDir)
 	beadsPoller := beads.NewPoller(beadsClient, store, eventBroker, logger)
 
@@ -186,7 +183,6 @@ func New(workspace, version string) (*Daemon, error) {
 		version:          version,
 		shutdownCh:       make(chan struct{}),
 		store:            store,
-		sessionManager:   sessionManager,
 		beadsClient:      beadsClient,
 		beadsPoller:      beadsPoller,
 		processManager:   processManager,
@@ -338,10 +334,6 @@ func (d *Daemon) registerHandlers() {
 	// API handlers (health, version, state, tasks)
 	apiHandlers := api.NewHandlers(d.store, d.version, "", "", d.workspace)
 	apiHandlers.Register(d.server)
-
-	// Session handlers
-	sessionHandlers := session.NewHandlers(d.sessionManager)
-	sessionHandlers.Register(d.server)
 
 	// Beads handlers
 	beadsHandlers := beads.NewHandlers(d.store)

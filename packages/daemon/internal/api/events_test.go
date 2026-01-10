@@ -71,7 +71,7 @@ func TestEventBrokerBroadcast(t *testing.T) {
 	ch2 := broker.Subscribe()
 
 	event := &types.Event{
-		Type:      types.EventTypeSessionStarted,
+		Type:      types.EventTypeTasksUpdated,
 		Data:      "test",
 		Timestamp: time.Now(),
 	}
@@ -214,16 +214,6 @@ func TestEventEmitters(t *testing.T) {
 		emit     func()
 		wantType string
 	}{
-		{
-			name:     "SessionStarted",
-			emit:     broker.EmitSessionStarted,
-			wantType: types.EventTypeSessionStarted,
-		},
-		{
-			name:     "SessionStopped",
-			emit:     broker.EmitSessionStopped,
-			wantType: types.EventTypeSessionStopped,
-		},
 		{
 			name:     "TasksUpdated",
 			emit:     func() { broker.EmitTasksUpdated([]types.Task{}) },
@@ -388,7 +378,7 @@ func TestHandleEventsBroadcast(t *testing.T) {
 	// Broadcast an event
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		broker.EmitSessionStarted()
+		broker.EmitTasksUpdated([]types.Task{})
 	}()
 
 	// Read the broadcasted event
@@ -397,8 +387,8 @@ func TestHandleEventsBroadcast(t *testing.T) {
 		t.Fatalf("Failed to read event: %v", err)
 	}
 
-	if !strings.Contains(eventLine, types.EventTypeSessionStarted) {
-		t.Errorf("Expected session.started event, got: %s", eventLine)
+	if !strings.Contains(eventLine, types.EventTypeTasksUpdated) {
+		t.Errorf("Expected tasks.updated event, got: %s", eventLine)
 	}
 }
 

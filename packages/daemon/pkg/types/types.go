@@ -3,15 +3,6 @@ package types
 
 import "time"
 
-// SessionStatus represents the current state of a session.
-type SessionStatus string
-
-const (
-	SessionStatusInactive SessionStatus = "inactive"
-	SessionStatusActive   SessionStatus = "active"
-	SessionStatusStopping SessionStatus = "stopping"
-)
-
 // AgentStatus represents the current state of an agent.
 type AgentStatus string
 
@@ -62,18 +53,8 @@ type Agent struct {
 	Error     string      `json:"error,omitempty"`
 }
 
-// Session represents the current daemon session.
-type Session struct {
-	Status    SessionStatus `json:"status"`
-	StartedAt *time.Time    `json:"started_at,omitempty"`
-	StoppedAt *time.Time    `json:"stopped_at,omitempty"`
-}
-
 // DaemonState represents the complete state of the daemon.
 type DaemonState struct {
-	// Session is the current session state.
-	Session Session `json:"session"`
-
 	// Agents maps task IDs to their agent state.
 	Agents map[string]*Agent `json:"agents"`
 
@@ -87,9 +68,6 @@ type DaemonState struct {
 // NewDaemonState creates a new empty daemon state.
 func NewDaemonState() *DaemonState {
 	return &DaemonState{
-		Session: Session{
-			Status: SessionStatusInactive,
-		},
 		Agents: make(map[string]*Agent),
 		Tasks:  []Task{},
 	}
@@ -133,9 +111,7 @@ type Event struct {
 
 // Event types for SSE.
 const (
-	EventTypeSessionStarted  = "session.started"
-	EventTypeSessionStopped  = "session.stopped"
-	EventTypeTasksUpdated    = "tasks.updated"
+	EventTypeTasksUpdated = "tasks.updated"
 	EventTypeAgentStarted    = "agent.started"
 	EventTypeAgentOutput     = "agent.output"
 	EventTypeAgentCompleted  = "agent.completed"

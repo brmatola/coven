@@ -140,9 +140,6 @@ func readDaemonLog(t *testing.T, env *helpers.TestEnv) string {
 func startSessionAndWaitForTask(t *testing.T, env *helpers.TestEnv, api *helpers.APIClient, taskID string) {
 	t.Helper()
 
-	if err := api.StartSession(); err != nil {
-		t.Fatalf("Failed to start session: %v", err)
-	}
 
 	waitForTask(t, api, taskID, 5)
 }

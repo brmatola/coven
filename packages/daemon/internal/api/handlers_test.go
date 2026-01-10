@@ -152,14 +152,13 @@ func TestHandleState(t *testing.T) {
 		if stateResp.State == nil {
 			t.Fatal("State should not be nil")
 		}
-		if stateResp.State.Session.Status != types.SessionStatusInactive {
-			t.Errorf("Session.Status = %q, want %q", stateResp.State.Session.Status, types.SessionStatusInactive)
+		if stateResp.State.Agents == nil {
+			t.Error("State.Agents should be initialized")
 		}
 	})
 
 	t.Run("GET returns state with agents", func(t *testing.T) {
 		// Add some state
-		handlers.store.StartSession()
 		handlers.store.AddAgent(&types.Agent{
 			TaskID:    "task-1",
 			PID:       1234,
@@ -181,9 +180,6 @@ func TestHandleState(t *testing.T) {
 			t.Fatalf("Decode error: %v", err)
 		}
 
-		if stateResp.State.Session.Status != types.SessionStatusActive {
-			t.Errorf("Session.Status = %q, want %q", stateResp.State.Session.Status, types.SessionStatusActive)
-		}
 		if len(stateResp.State.Agents) != 1 {
 			t.Errorf("Agents count = %d, want 1", len(stateResp.State.Agents))
 		}

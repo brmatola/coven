@@ -21,9 +21,9 @@ func TestStateEndpoint(t *testing.T) {
 		t.Fatalf("Get state error: %v", err)
 	}
 
-	// State should have session info
-	if state.State.Session.Status == "" {
-		t.Error("State should have session status")
+	// State should have agents map (even if empty)
+	if state.State.Agents == nil {
+		t.Error("State should have agents map")
 	}
 }
 
