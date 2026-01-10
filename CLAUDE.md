@@ -1,13 +1,90 @@
 # Coven Project Instructions
 
+## Project Structure
+
+```
+coven/
+├── packages/
+│   ├── daemon/          # Go daemon (covend) - agent orchestration
+│   │   ├── internal/    # Internal packages (workflow, grimoire, spell, scheduler, etc.)
+│   │   └── e2e/         # (empty - use root e2e/daemon instead)
+│   └── vscode/          # VS Code extension
+├── e2e/                 # End-to-end tests
+│   ├── daemon/          # Daemon E2E tests (Go)
+│   │   ├── helpers/     # Test utilities (TestEnv, APIClient, fixtures)
+│   │   ├── mockagent/   # Mock agent binary for testing
+│   │   └── *_test.go    # E2E test files
+│   └── extension/       # VS Code extension E2E tests
+└── CLAUDE.md            # This file
+```
+
 ## Testing & Coverage Policy
+
+### Test Commands
+
+| Component | Unit Tests | E2E Tests |
+|-----------|-----------|-----------|
+| **Daemon (Go)** | `cd packages/daemon && go test ./...` | `make test-e2e` |
+| **Extension (TS)** | `npm test` | `npm run test:e2e` |
+| **Full suite** | `make test` | Runs both unit + E2E |
+
+### Daemon E2E Tests (`e2e/daemon/`)
+
+**Location:** `e2e/daemon/` (NOT `packages/daemon/e2e/`)
+
+**Running tests:**
+```bash
+make build           # Build daemon + mockagent first
+make test-e2e        # Run E2E tests
+# Or directly:
+cd e2e/daemon && go test -v -tags=e2e ./...
+```
+
+**Test infrastructure:**
+- `helpers/daemon.go` - TestEnv with temp dirs, git repos, socket clients
+- `helpers/client.go` - Typed API client for all daemon endpoints
+- `helpers/fixtures.go` - Setup helpers (beads, mock agent, tasks)
+- `mockagent/` - Mock agent binary simulating claude behavior
+
+**Writing tests:**
+```go
+//go:build e2e
+
+func TestExample(t *testing.T) {
+    env := helpers.NewTestEnv(t)
+    defer env.Stop()
+
+    // Set up beads, mock agent, and create a task
+    taskID := env.SetupWithMockAgentAndTask(t, "Test task")
+
+    env.MustStart()
+    api := helpers.NewAPIClient(env)
+
+    // Start session and task
+    api.StartSession()
+    api.StartTask(taskID)
+
+    // Wait for completion
+    env.WaitForAgentStatus(t, api, taskID, "completed", 15)
+}
+```
+
+**Current E2E coverage:**
+- ✅ Daemon lifecycle (start/stop, health, shutdown)
+- ✅ Session control (start/stop, force stop)
+- ✅ Agent execution (spawn, output, completion, failure, kill)
+- ✅ Questions API
+- ✅ Events/SSE streaming
+- ❌ Workflow orchestration (grimoire execution, loops, conditions)
+- ❌ Spell rendering with context
+- ❌ Multi-step workflows
+- ❌ Timeout enforcement
+
+### VS Code Extension E2E Tests
 
 **Testing Requirements - STRICTLY ENFORCED:**
 - ALWAYS run BOTH unit tests AND E2E tests before considering work complete
-- Unit tests: `npm test`
-- E2E tests: `npm run test:e2e`
 - ALL tests must pass - do not commit if any tests fail
-- If E2E tests fail, investigate and fix the root cause
 
 **E2E Test Design - CRITICAL:**
 - E2E tests MUST test the actual Coven extension, not external tools
@@ -25,16 +102,13 @@
 4. Review workflow: changes visible, approve/revert works
 5. Error handling: graceful failures with clear messages
 
-**Coverage Exclusion Policy - STRICTLY ENFORCED:**
-- NEVER exclude actual code files from coverage in `vitest.config.ts`
-- Only these exclusions are permitted:
-  - `src/**/*.test.ts` and `src/**/*.test.tsx` (test files themselves)
-  - `src/test/**` (test infrastructure and E2E tests)
-  - `src/__mocks__/**` (mock implementations)
-- Entry points, re-export modules, type-only files, and "hard to test" code must NOT be excluded
-- If code seems untestable, refactor it to be testable or write the necessary tests
-- Comments like "covered by E2E tests" or "no logic to test" are not valid exclusion reasons
-- The 80% coverage threshold applies to ALL source code without exception
+### Coverage Policy - STRICTLY ENFORCED
+
+- **80% coverage threshold** applies to ALL source code without exception
+- NEVER exclude actual code files from coverage
+- Only permitted exclusions: test files (`*.test.ts`), test infrastructure, mocks
+- If code seems untestable, refactor it to be testable
+- Comments like "covered by E2E tests" are not valid exclusion reasons
 
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions
