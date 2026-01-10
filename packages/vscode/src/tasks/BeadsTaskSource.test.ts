@@ -1,10 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BeadsTaskSource } from './BeadsTaskSource';
 import { BeadsClient, BeadData } from './BeadsClient';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient } from '../daemon/sse';
+import { DaemonTask, DaemonClientError } from '../daemon/types';
 
 vi.mock('./BeadsClient');
+vi.mock('../daemon/client');
+vi.mock('../daemon/sse');
 
 const MockBeadsClient = BeadsClient as unknown as ReturnType<typeof vi.fn>;
+const MockDaemonClient = DaemonClient as unknown as ReturnType<typeof vi.fn>;
+const MockSSEClient = SSEClient as unknown as ReturnType<typeof vi.fn>;
 
 function createMockBead(overrides: Partial<BeadData> = {}): BeadData {
   return {
@@ -16,6 +23,20 @@ function createMockBead(overrides: Partial<BeadData> = {}): BeadData {
     created_at: '2026-01-06T12:00:00Z',
     created_by: 'testuser',
     updated_at: '2026-01-06T12:00:00Z',
+    ...overrides,
+  };
+}
+
+function createMockDaemonTask(overrides: Partial<DaemonTask> = {}): DaemonTask {
+  return {
+    id: 'test-abc',
+    title: 'Test Task',
+    description: 'Test description',
+    status: 'ready',
+    priority: 2,
+    dependencies: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
     ...overrides,
   };
 }
@@ -694,6 +715,362 @@ describe('BeadsTaskSource', () => {
 
       expect(result.updated).toHaveLength(1);
       expect(result.updated[0].dependencies).toContain('dep-1');
+    });
+  });
+});
+
+describe('BeadsTaskSource with Daemon Integration', () => {
+  let source: BeadsTaskSource;
+  let mockBeadsClient: {
+    isAvailable: ReturnType<typeof vi.fn>;
+    isInitialized: ReturnType<typeof vi.fn>;
+    listReady: ReturnType<typeof vi.fn>;
+    getTask: ReturnType<typeof vi.fn>;
+    createTask: ReturnType<typeof vi.fn>;
+    updateStatus: ReturnType<typeof vi.fn>;
+  };
+  let mockDaemonClient: {
+    getTasks: ReturnType<typeof vi.fn>;
+    getTask: ReturnType<typeof vi.fn>;
+  };
+  let mockSSEClient: {
+    on: ReturnType<typeof vi.fn>;
+    off: ReturnType<typeof vi.fn>;
+  };
+  let sseEventHandler: ((event: { type: string; data: unknown }) => void) | null = null;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+
+    mockBeadsClient = {
+      isAvailable: vi.fn().mockResolvedValue(true),
+      isInitialized: vi.fn().mockResolvedValue(true),
+      listReady: vi.fn().mockResolvedValue([]),
+      getTask: vi.fn().mockResolvedValue(null),
+      createTask: vi.fn().mockResolvedValue({ success: true, id: 'new-id' }),
+      updateStatus: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    mockDaemonClient = {
+      getTasks: vi.fn().mockResolvedValue([]),
+      getTask: vi.fn().mockResolvedValue(null),
+    };
+
+    mockSSEClient = {
+      on: vi.fn().mockImplementation((event: string, handler: typeof sseEventHandler) => {
+        if (event === 'event') {
+          sseEventHandler = handler;
+        }
+      }),
+      off: vi.fn().mockImplementation((event: string, handler: typeof sseEventHandler) => {
+        if (event === 'event' && sseEventHandler === handler) {
+          sseEventHandler = null;
+        }
+      }),
+    };
+
+    MockBeadsClient.mockImplementation(() => mockBeadsClient);
+    MockDaemonClient.mockImplementation(() => mockDaemonClient);
+    MockSSEClient.mockImplementation(() => mockSSEClient);
+
+    source = new BeadsTaskSource('/mock/workspace', { autoWatch: false });
+  });
+
+  afterEach(() => {
+    source.dispose();
+    sseEventHandler = null;
+    vi.useRealTimers();
+  });
+
+  describe('setDaemonClients', () => {
+    it('enables daemon mode', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'daemon-task' })]);
+
+      source.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+
+      const tasks = await source.fetchTasks();
+
+      expect(mockDaemonClient.getTasks).toHaveBeenCalled();
+      expect(mockBeadsClient.listReady).not.toHaveBeenCalled();
+      expect(tasks[0].id).toBe('daemon-task');
+    });
+  });
+
+  describe('fetchTasks with daemon', () => {
+    beforeEach(() => {
+      source.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+    });
+
+    it('returns empty array when no tasks', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([]);
+      const tasks = await source.fetchTasks();
+      expect(tasks).toEqual([]);
+    });
+
+    it('converts daemon tasks to Coven tasks', async () => {
+      const daemonTasks = [
+        createMockDaemonTask({ id: 'task-1', title: 'Task 1' }),
+        createMockDaemonTask({ id: 'task-2', title: 'Task 2' }),
+      ];
+      mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
+
+      const tasks = await source.fetchTasks();
+
+      expect(tasks).toHaveLength(2);
+      expect(tasks[0].id).toBe('task-1');
+      expect(tasks[0].title).toBe('Task 1');
+      expect(tasks[0].sourceId).toBe('beads');
+    });
+
+    it('maps daemon status correctly', async () => {
+      const daemonTasks = [
+        createMockDaemonTask({ id: 'task-1', status: 'ready' }),
+        createMockDaemonTask({ id: 'task-2', status: 'running' }),
+        createMockDaemonTask({ id: 'task-3', status: 'complete' }),
+        createMockDaemonTask({ id: 'task-4', status: 'failed' }),
+        createMockDaemonTask({ id: 'task-5', status: 'pending' }),
+        createMockDaemonTask({ id: 'task-6', status: 'blocked' }),
+      ];
+      mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
+
+      const tasks = await source.fetchTasks();
+
+      expect(tasks[0].status).toBe('ready');
+      expect(tasks[1].status).toBe('working');
+      expect(tasks[2].status).toBe('done');
+      expect(tasks[3].status).toBe('blocked'); // failed maps to blocked
+      expect(tasks[4].status).toBe('ready'); // pending maps to ready
+      expect(tasks[5].status).toBe('blocked');
+    });
+
+    it('maps daemon priority correctly', async () => {
+      const daemonTasks = [
+        createMockDaemonTask({ id: 'task-0', priority: 0 }),
+        createMockDaemonTask({ id: 'task-1', priority: 1 }),
+        createMockDaemonTask({ id: 'task-2', priority: 2 }),
+        createMockDaemonTask({ id: 'task-3', priority: 3 }),
+        createMockDaemonTask({ id: 'task-4', priority: 4 }),
+      ];
+      mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
+
+      const tasks = await source.fetchTasks();
+
+      expect(tasks[0].priority).toBe('critical');
+      expect(tasks[1].priority).toBe('critical');
+      expect(tasks[2].priority).toBe('high');
+      expect(tasks[3].priority).toBe('medium');
+      expect(tasks[4].priority).toBe('low');
+    });
+
+    it('marks tasks with dependencies as blocked', async () => {
+      const daemonTasks = [
+        createMockDaemonTask({
+          id: 'task-1',
+          status: 'ready',
+          dependencies: ['dep-1', 'dep-2'],
+        }),
+      ];
+      mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
+
+      const tasks = await source.fetchTasks();
+
+      expect(tasks[0].status).toBe('blocked');
+      expect(tasks[0].dependencies).toEqual(['dep-1', 'dep-2']);
+    });
+  });
+
+  describe('sync with daemon', () => {
+    beforeEach(() => {
+      source.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+    });
+
+    it('detects added tasks via daemon', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([]);
+      await source.fetchTasks();
+
+      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'new-task' })]);
+      const result = await source.sync();
+
+      expect(result.added).toHaveLength(1);
+      expect(result.added[0].id).toBe('new-task');
+    });
+
+    it('detects removed tasks via daemon', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'old-task' })]);
+      await source.fetchTasks();
+
+      mockDaemonClient.getTasks.mockResolvedValue([]);
+      const result = await source.sync();
+
+      expect(result.removed).toEqual(['old-task']);
+    });
+  });
+
+  describe('watch with SSE', () => {
+    beforeEach(() => {
+      source.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+    });
+
+    it('subscribes to SSE events', () => {
+      source.watch();
+
+      expect(mockSSEClient.on).toHaveBeenCalledWith('event', expect.any(Function));
+    });
+
+    it('handles task.created events', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([]);
+      await source.fetchTasks();
+
+      source.watch();
+
+      mockDaemonClient.getTask.mockResolvedValue(createMockDaemonTask({ id: 'new-task' }));
+
+      const syncHandler = vi.fn();
+      source.on('sync', syncHandler);
+
+      // Simulate SSE event
+      sseEventHandler?.({ type: 'task.created', data: { taskId: 'new-task' } });
+
+      // Wait for async operations - use waitFor to avoid infinite timer loop
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getTask).toHaveBeenCalledWith('new-task');
+      });
+
+      source.stopWatch();
+    });
+
+    it('handles task.updated events', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      await source.fetchTasks();
+
+      source.watch();
+
+      mockDaemonClient.getTask.mockResolvedValue(
+        createMockDaemonTask({ id: 'task-1', title: 'Updated Title' })
+      );
+
+      const syncHandler = vi.fn();
+      source.on('sync', syncHandler);
+
+      sseEventHandler?.({ type: 'task.updated', data: { taskId: 'task-1' } });
+
+      await vi.waitFor(() => {
+        expect(syncHandler).toHaveBeenCalledWith({
+          added: [],
+          updated: [expect.objectContaining({ id: 'task-1', title: 'Updated Title' })],
+          removed: [],
+        });
+      });
+
+      source.stopWatch();
+    });
+
+    it('handles task.completed events', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      await source.fetchTasks();
+
+      source.watch();
+
+      mockDaemonClient.getTask.mockResolvedValue(
+        createMockDaemonTask({ id: 'task-1', status: 'complete' })
+      );
+
+      sseEventHandler?.({ type: 'task.completed', data: { taskId: 'task-1' } });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getTask).toHaveBeenCalledWith('task-1');
+      });
+
+      source.stopWatch();
+    });
+
+    it('handles task removal when task not found', async () => {
+      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      await source.fetchTasks();
+      expect(source.getTask('task-1')).toBeDefined();
+
+      source.watch();
+
+      const error = new DaemonClientError('task_not_found', 'Task not found');
+      mockDaemonClient.getTask.mockRejectedValue(error);
+
+      const syncHandler = vi.fn();
+      source.on('sync', syncHandler);
+
+      sseEventHandler?.({ type: 'task.failed', data: { taskId: 'task-1' } });
+
+      await vi.waitFor(() => {
+        expect(source.getTask('task-1')).toBeUndefined();
+      });
+
+      expect(syncHandler).toHaveBeenCalledWith({
+        added: [],
+        updated: [],
+        removed: ['task-1'],
+      });
+
+      source.stopWatch();
+    });
+
+    it('unsubscribes from SSE on stopWatch', () => {
+      source.watch();
+      source.stopWatch();
+
+      expect(mockSSEClient.off).toHaveBeenCalledWith('event', expect.any(Function));
+    });
+  });
+
+  describe('fetchTask with daemon', () => {
+    beforeEach(() => {
+      source.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+    });
+
+    it('fetches single task from daemon', async () => {
+      mockDaemonClient.getTask.mockResolvedValue(
+        createMockDaemonTask({ id: 'task-1', title: 'Single Task' })
+      );
+
+      const task = await source.fetchTask('task-1');
+
+      expect(task).toBeDefined();
+      expect(task?.id).toBe('task-1');
+      expect(task?.title).toBe('Single Task');
+      expect(mockDaemonClient.getTask).toHaveBeenCalledWith('task-1');
+    });
+
+    it('caches fetched task', async () => {
+      mockDaemonClient.getTask.mockResolvedValue(
+        createMockDaemonTask({ id: 'task-1' })
+      );
+
+      await source.fetchTask('task-1');
+
+      const cached = source.getTask('task-1');
+      expect(cached).toBeDefined();
+    });
+
+    it('returns null on error', async () => {
+      mockDaemonClient.getTask.mockRejectedValue(new Error('Network error'));
+
+      const task = await source.fetchTask('task-1');
+
+      expect(task).toBeNull();
     });
   });
 });

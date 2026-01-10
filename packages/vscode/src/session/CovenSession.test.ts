@@ -3,6 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CovenSession } from './CovenSession';
 import { DEFAULT_SESSION_CONFIG } from '../shared/types';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient } from '../daemon/sse';
+
+vi.mock('../daemon/client');
+vi.mock('../daemon/sse');
 
 // Mock fs
 vi.mock('fs', async () => {
@@ -363,6 +368,99 @@ describe('CovenSession', () => {
       // Verify that event listeners are removed by checking no error when emitting
       expect(() => beadsTaskSource.emit('test', {})).not.toThrow();
       expect(() => familiarManager.emit('test', {})).not.toThrow();
+    });
+  });
+
+  describe('daemon integration', () => {
+    let mockDaemonClient: {
+      startTask: ReturnType<typeof vi.fn>;
+      killTask: ReturnType<typeof vi.fn>;
+      answerQuestion: ReturnType<typeof vi.fn>;
+      getTasks: ReturnType<typeof vi.fn>;
+      getTask: ReturnType<typeof vi.fn>;
+    };
+    let mockSSEClient: {
+      on: ReturnType<typeof vi.fn>;
+      off: ReturnType<typeof vi.fn>;
+    };
+
+    beforeEach(() => {
+      mockDaemonClient = {
+        startTask: vi.fn().mockResolvedValue(undefined),
+        killTask: vi.fn().mockResolvedValue(undefined),
+        answerQuestion: vi.fn().mockResolvedValue(undefined),
+        getTasks: vi.fn().mockResolvedValue([]),
+        getTask: vi.fn().mockResolvedValue(null),
+      };
+      mockSSEClient = {
+        on: vi.fn(),
+        off: vi.fn(),
+      };
+    });
+
+    it('should not be in daemon mode by default', () => {
+      expect(session.isDaemonMode()).toBe(false);
+    });
+
+    it('should enable daemon mode when clients are set', () => {
+      session.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+
+      expect(session.isDaemonMode()).toBe(true);
+    });
+
+    it('should use daemon to start task when in daemon mode', async () => {
+      session.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+
+      // Start session first
+      await session.start('feature/test');
+
+      // Spawn agent for task
+      await session.spawnAgentForTask('task-1');
+
+      expect(mockDaemonClient.startTask).toHaveBeenCalledWith('task-1');
+    });
+
+    it('should use daemon to kill task when in daemon mode', async () => {
+      session.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+
+      await session.terminateAgent('task-1', 'test reason');
+
+      expect(mockDaemonClient.killTask).toHaveBeenCalledWith('task-1', 'test reason');
+    });
+
+    it('should use daemon to answer question when in daemon mode', async () => {
+      session.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+
+      await session.respondToAgentQuestion('task-1', 'yes', 'question-1');
+
+      expect(mockDaemonClient.answerQuestion).toHaveBeenCalledWith('question-1', 'yes');
+    });
+
+    it('should forward daemon clients to BeadsTaskSource', () => {
+      const beadsTaskSource = session.getBeadsTaskSource();
+      const setDaemonClientsSpy = vi.spyOn(beadsTaskSource, 'setDaemonClients');
+
+      session.setDaemonClients(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient
+      );
+
+      expect(setDaemonClientsSpy).toHaveBeenCalledWith(
+        mockDaemonClient,
+        mockSSEClient
+      );
     });
   });
 });

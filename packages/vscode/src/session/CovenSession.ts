@@ -9,6 +9,9 @@ import { OrphanRecovery, OrphanState } from './OrphanRecovery';
 import { WorktreeManager } from '../git/WorktreeManager';
 import { Worktree } from '../git/types';
 import { AgentResult } from '../agents/types';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient } from '../daemon/sse';
+import { getLogger } from '../shared/logger';
 import {
   CovenState,
   SessionConfig,
@@ -46,6 +49,10 @@ export class CovenSession extends EventEmitter {
   private configWatcher: fs.FSWatcher | null = null;
   private sessionId: string;
   private activityLog: ActivityEntry[] = [];
+  private daemonClient: DaemonClient | null = null;
+  private sseClient: SSEClient | null = null;
+  private useDaemon = false;
+  private logger = getLogger();
 
   constructor(workspaceRoot: string) {
     super();
@@ -435,14 +442,44 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
+   * Set daemon clients for thin-client operation.
+   * When set, the session will use daemon APIs for task management.
+   */
+  setDaemonClients(daemonClient: DaemonClient, sseClient: SSEClient): void {
+    this.daemonClient = daemonClient;
+    this.sseClient = sseClient;
+    this.useDaemon = true;
+
+    // Forward to BeadsTaskSource
+    this.beadsTaskSource.setDaemonClients(daemonClient, sseClient);
+
+    this.logger.info('Daemon clients set for CovenSession');
+  }
+
+  /**
+   * Check if daemon mode is enabled.
+   */
+  isDaemonMode(): boolean {
+    return this.useDaemon && this.daemonClient !== null;
+  }
+
+  /**
    * Spawn an agent to work on a task.
-   * Creates worktree isolation and starts the agent process.
+   * Uses daemon API when available, otherwise creates worktree isolation and starts agent directly.
    */
   async spawnAgentForTask(taskId: string): Promise<void> {
     if (this.status !== 'active') {
       throw new Error('Cannot spawn agent: session not active');
     }
 
+    // In daemon mode, use daemon API to start task
+    if (this.useDaemon && this.daemonClient) {
+      this.logger.info('Starting task via daemon', { taskId });
+      await this.daemonClient.startTask(taskId);
+      return;
+    }
+
+    // Fall back to direct orchestration
     if (!this.featureBranch) {
       throw new Error('Cannot spawn agent: no feature branch set');
     }
@@ -465,15 +502,27 @@ export class CovenSession extends EventEmitter {
 
   /**
    * Terminate an agent working on a task.
+   * Uses daemon API when available, otherwise terminates via orchestrator.
    */
   async terminateAgent(taskId: string, reason = 'user requested'): Promise<void> {
+    if (this.useDaemon && this.daemonClient) {
+      this.logger.info('Killing task via daemon', { taskId, reason });
+      await this.daemonClient.killTask(taskId, reason);
+      return;
+    }
     await this.agentOrchestrator.terminateAgent(taskId, reason);
   }
 
   /**
    * Respond to an agent question.
+   * Uses daemon API when available, otherwise responds via orchestrator.
    */
-  async respondToAgentQuestion(taskId: string, response: string): Promise<void> {
+  async respondToAgentQuestion(taskId: string, response: string, questionId?: string): Promise<void> {
+    if (this.useDaemon && this.daemonClient && questionId) {
+      this.logger.info('Answering question via daemon', { questionId });
+      await this.daemonClient.answerQuestion(questionId, response);
+      return;
+    }
     await this.agentOrchestrator.respondToQuestion(taskId, response);
   }
 
