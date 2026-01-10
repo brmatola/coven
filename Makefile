@@ -53,6 +53,11 @@ test-e2e-v: $(DAEMON_BIN) $(MOCKAGENT_BIN)
 	@echo "Running E2E tests (verbose)..."
 	@cd e2e/daemon && $(GO) test -v -tags=e2e ./...
 
+# Run VS Code extension E2E tests
+test-e2e-extension:
+	@echo "Running VS Code extension E2E tests..."
+	@cd packages/vscode && npm run test:e2e:new
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)

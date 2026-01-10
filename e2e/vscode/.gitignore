@@ -1,0 +1,8 @@
+# Build output
+out/
+
+# Dependencies
+node_modules/
+
+# Test artifacts
+.vscode-test/

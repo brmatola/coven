@@ -112,6 +112,25 @@
         "title": "Coven: Initialize Coven"
       },
       {
+        "command": "coven.stopDaemon",
+        "title": "Coven: Stop Daemon",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "coven.restartDaemon",
+        "title": "Coven: Restart Daemon",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "coven.viewDaemonLogs",
+        "title": "Coven: View Daemon Logs",
+        "icon": "$(output)"
+      },
+      {
+        "command": "coven.initializeWorkspace",
+        "title": "Coven: Initialize Workspace"
+      },
+      {
         "command": "coven.daemon.startTask",
         "title": "Coven: Start Task (Daemon)",
         "icon": "$(play)"
@@ -262,7 +281,9 @@
     "test:watch": "vitest",
     "test:no-coverage": "vitest run",
     "pretest:e2e": "npm run build && npm run build:e2e",
-    "test:e2e": "tsx scripts/run-e2e-tests.ts"
+    "test:e2e": "tsx scripts/run-e2e-tests.ts",
+    "pretest:e2e:new": "npm run build && cd ../../e2e/vscode && npx tsc",
+    "test:e2e:new": "node ../../e2e/vscode/out/runTest.js"
   },
   "dependencies": {
     "react": "^18.2.0",
