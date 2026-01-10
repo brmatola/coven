@@ -1,63 +1,48 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CovenStatusBar } from './CovenStatusBar';
-import { CovenSession } from '../session/CovenSession';
-import { CovenState } from '../shared/types';
+import { StateCache, SessionState } from '../daemon/cache';
+import { WorkflowState } from '../daemon/types';
 import { window } from 'vscode';
 
-// Mock CovenSession
-vi.mock('../session/CovenSession', () => ({
-  CovenSession: vi.fn().mockImplementation(() => ({
+// Mock StateCache
+vi.mock('../daemon/cache', () => ({
+  StateCache: vi.fn().mockImplementation(() => ({
     on: vi.fn(),
     off: vi.fn(),
-    getState: vi.fn(),
+    getSessionState: vi.fn(),
+    getWorkflow: vi.fn(),
+    getQuestions: vi.fn(),
   })),
 }));
 
-function createMockState(overrides: Partial<CovenState> = {}): CovenState {
+// Mock daemon types
+vi.mock('../daemon/types', () => ({}));
+
+function createMockSessionState(overrides: Partial<SessionState> = {}): SessionState {
   return {
-    sessionStatus: 'active',
-    featureBranch: 'feature/test',
-    config: {
-      maxConcurrentAgents: 3,
-      worktreeBasePath: '.coven/worktrees',
-      beadsSyncIntervalMs: 30000,
-      agentTimeoutMs: 600000,
-      mergeConflictMaxRetries: 2,
-      preMergeChecks: { enabled: false, commands: [] },
-      logging: { level: 'info', retentionDays: 7 },
-      outputRetentionDays: 7,
-      notifications: {
-        questions: 'modal',
-        completions: 'toast',
-        conflicts: 'toast',
-        errors: 'toast',
-      },
-      agentPermissions: {
-        allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep'],
-      },
-    },
-    tasks: {
-      ready: [],
-      working: [],
-      review: [],
-      done: [],
-      blocked: [],
-    },
-    familiars: [],
-    pendingQuestions: [],
-    timestamp: Date.now(),
+    active: true,
+    ...overrides,
+  };
+}
+
+function createMockWorkflowState(
+  overrides: Partial<WorkflowState> = {}
+): WorkflowState {
+  return {
+    id: 'wf-1',
+    status: 'running',
     ...overrides,
   };
 }
 
 describe('CovenStatusBar', () => {
   let statusBar: CovenStatusBar;
-  let mockSession: CovenSession;
+  let mockStateCache: StateCache;
 
   beforeEach(() => {
     vi.clearAllMocks();
     statusBar = new CovenStatusBar();
-    mockSession = new CovenSession('/mock/workspace');
+    mockStateCache = new StateCache();
   });
 
   afterEach(() => {
@@ -69,9 +54,9 @@ describe('CovenStatusBar', () => {
       expect(window.createStatusBarItem).toHaveBeenCalled();
     });
 
-    it('shows inactive state initially', () => {
+    it('shows disconnected state initially', () => {
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(circle-outline) Coven: Inactive');
+      expect(item.text).toBe('$(circle-outline) Coven: Disconnected');
     });
 
     it('shows status bar item', () => {
@@ -80,165 +65,87 @@ describe('CovenStatusBar', () => {
     });
   });
 
-  describe('setSession', () => {
+  describe('setStateCache', () => {
     beforeEach(() => {
-      // Ensure session has a default state
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(createMockState());
+      // Ensure cache has default state
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState()
+      );
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([]);
     });
 
-    it('subscribes to state changes', () => {
-      statusBar.setSession(mockSession);
-      expect(mockSession.on).toHaveBeenCalledWith('state:changed', expect.any(Function));
+    it('subscribes to workflow changes', () => {
+      statusBar.setStateCache(mockStateCache);
+      expect(mockStateCache.on).toHaveBeenCalledWith('workflows.changed', expect.any(Function));
     });
 
-    it('unsubscribes from previous session', () => {
-      statusBar.setSession(mockSession);
-      statusBar.setSession(null);
-      expect(mockSession.off).toHaveBeenCalled();
+    it('unsubscribes from previous cache', () => {
+      statusBar.setStateCache(mockStateCache);
+      statusBar.setStateCache(null);
+      expect(mockStateCache.off).toHaveBeenCalled();
     });
 
-    it('updates to inactive when session is null', () => {
-      statusBar.setSession(mockSession);
-      statusBar.setSession(null);
+    it('updates to disconnected when cache is null', () => {
+      statusBar.setStateCache(mockStateCache);
+      statusBar.setStateCache(null);
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toBe('$(circle-outline) Coven: Disconnected');
+    });
+
+    it('updates based on initial session state', () => {
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState({ active: true })
+      );
+
+      statusBar.setStateCache(mockStateCache);
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toContain('Coven: Connected');
+    });
+  });
+
+  describe('state updates', () => {
+    beforeEach(() => {
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    });
+
+    it('shows inactive state when session not active', () => {
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState({ active: false })
+      );
+
+      statusBar.setStateCache(mockStateCache);
 
       const item = statusBar.getStatusBarItem();
       expect(item.text).toBe('$(circle-outline) Coven: Inactive');
     });
 
-    it('updates based on initial session state', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({ sessionStatus: 'active' })
+    it('shows running workflow count', () => {
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState({ active: true })
+      );
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockWorkflowState({ status: 'running' })
       );
 
-      statusBar.setSession(mockSession);
+      statusBar.setStateCache(mockStateCache);
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('Coven: Active');
-    });
-  });
-
-  describe('state updates', () => {
-    it('shows starting state', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({ sessionStatus: 'starting' })
-      );
-
-      statusBar.setSession(mockSession);
-
-      const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(sync~spin) Coven: Starting...');
-    });
-
-    it('shows stopping state', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({ sessionStatus: 'stopping' })
-      );
-
-      statusBar.setSession(mockSession);
-
-      const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(sync~spin) Coven: Stopping...');
-    });
-
-    it('shows paused state', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({ sessionStatus: 'paused' })
-      );
-
-      statusBar.setSession(mockSession);
-
-      const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(debug-pause) Coven: Paused');
-    });
-
-    it('shows working task count', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({
-          tasks: {
-            ready: [],
-            working: [
-              {
-                id: 'task-1',
-                title: 'Task 1',
-                description: '',
-                status: 'working',
-                priority: 'medium',
-                dependencies: [],
-                sourceId: 'manual',
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-              },
-              {
-                id: 'task-2',
-                title: 'Task 2',
-                description: '',
-                status: 'working',
-                priority: 'medium',
-                dependencies: [],
-                sourceId: 'manual',
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-              },
-            ],
-            review: [],
-            done: [],
-            blocked: [],
-          },
-        })
-      );
-
-      statusBar.setSession(mockSession);
-
-      const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('2 working');
-    });
-
-    it('shows review task count', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({
-          tasks: {
-            ready: [],
-            working: [],
-            review: [
-              {
-                id: 'task-1',
-                title: 'Task 1',
-                description: '',
-                status: 'review',
-                priority: 'medium',
-                dependencies: [],
-                sourceId: 'manual',
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-              },
-            ],
-            done: [],
-            blocked: [],
-          },
-        })
-      );
-
-      statusBar.setSession(mockSession);
-
-      const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('1 review');
+      expect(item.text).toContain('1 running');
     });
 
     it('shows pending questions count', () => {
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockState({
-          pendingQuestions: [
-            {
-              familiarId: 'task-1',
-              taskId: 'task-1',
-              question: 'Test?',
-              askedAt: Date.now(),
-            },
-          ],
-        })
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState({ active: true })
       );
+      (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([
+        { id: 'q-1', taskId: 'task-1', question: 'Test?', askedAt: Date.now() },
+      ]);
 
-      statusBar.setSession(mockSession);
+      statusBar.setStateCache(mockStateCache);
 
       const item = statusBar.getStatusBarItem();
       expect(item.text).toContain('1 awaiting response');
@@ -247,8 +154,12 @@ describe('CovenStatusBar', () => {
 
   describe('dispose', () => {
     beforeEach(() => {
-      // Ensure session has a default state
-      (mockSession.getState as ReturnType<typeof vi.fn>).mockReturnValue(createMockState());
+      // Ensure cache has default state
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState()
+      );
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([]);
     });
 
     it('disposes status bar item', () => {
@@ -258,11 +169,11 @@ describe('CovenStatusBar', () => {
       expect(item.dispose).toHaveBeenCalled();
     });
 
-    it('unsubscribes from session', () => {
-      statusBar.setSession(mockSession);
+    it('unsubscribes from cache', () => {
+      statusBar.setStateCache(mockStateCache);
       statusBar.dispose();
 
-      expect(mockSession.off).toHaveBeenCalled();
+      expect(mockStateCache.off).toHaveBeenCalled();
     });
   });
 

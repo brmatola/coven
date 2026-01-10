@@ -52,12 +52,12 @@ export class WorkflowDetailPanel extends WebviewPanel<
   /**
    * Create or reveal a workflow detail panel for the given workflow.
    */
-  public static async createOrShow(
+  public static createOrShow(
     extensionUri: vscode.Uri,
     client: DaemonClient,
     sseClient: SSEClient,
     workflowId: string
-  ): Promise<WorkflowDetailPanel | null> {
+  ): WorkflowDetailPanel | null {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
 
     // Check if panel already exists for this workflow
@@ -114,7 +114,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
       .on('resume', () => this.handleResume())
       .on('cancel', () => this.handleCancel())
       .on('retry', () => this.handleRetry())
-      .on('viewOutput', (msg) => this.handleViewOutput(msg.payload?.stepId));
+      .on('viewOutput', (msg: { payload?: { stepId?: string } }) => this.handleViewOutput(msg.payload?.stepId));
 
     // Subscribe to SSE events
     this.subscribeToEvents();
@@ -142,7 +142,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
   // ============================================================================
 
   private subscribeToEvents(): void {
-    this.eventHandler = (event: SSEEvent) => {
+    this.eventHandler = (event: SSEEvent): void => {
       switch (event.type) {
         case 'workflow.started':
         case 'workflow.completed':

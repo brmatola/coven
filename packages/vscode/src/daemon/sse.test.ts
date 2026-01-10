@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SSEClient } from './sse';
 import type { SSEEvent } from './sse';
-import { DaemonClientError } from './types';
 import { EventEmitter } from 'events';
 
 // Mock http module

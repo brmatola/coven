@@ -3,7 +3,8 @@
  * These mirror the Go daemon's API types.
  */
 
-import { Task, Familiar, PendingQuestion, SessionConfig } from '../shared/types';
+// Re-export shared types that are used by daemon - import them first for type checking
+import type {} from '../shared/types';
 
 // ============================================================================
 // Health API

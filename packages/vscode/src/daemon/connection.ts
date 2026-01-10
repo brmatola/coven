@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { DaemonClient } from './client';
 import { SSEClient, SSEEvent } from './sse';
 import { StateCache } from './cache';
-import { DaemonClientError, DaemonState } from './types';
+import { DaemonClientError } from './types';
 
 /**
  * Connection configuration options
@@ -288,7 +288,7 @@ export class ConnectionManager extends EventEmitter {
     this.emit('reconnecting', this.reconnectAttempt, this.options.maxRetries);
 
     this.reconnectTimer = setTimeout(() => {
-      this.attemptReconnect();
+      void this.attemptReconnect();
     }, delay);
   }
 

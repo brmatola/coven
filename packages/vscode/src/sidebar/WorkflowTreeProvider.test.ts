@@ -436,18 +436,18 @@ describe('WorkflowTreeProvider', () => {
   });
 
   describe('toggleSectionExpanded', () => {
-    it('collapses expanded section', async () => {
+    it('collapses expanded section', () => {
       // 'active' is expanded by default, toggle once to collapse
       provider.toggleSectionExpanded('active');
 
-      const saved = await mockContext.workspaceState.get<SectionType[]>('workflow.expandedSections');
+      const saved = mockContext.workspaceState.get<SectionType[]>('workflow.expandedSections');
       expect(saved).not.toContain('active');
     });
 
-    it('expands collapsed section', async () => {
+    it('expands collapsed section', () => {
       provider.toggleSectionExpanded('completed'); // Should expand since collapsed by default
 
-      const saved = await mockContext.workspaceState.get<SectionType[]>('workflow.expandedSections');
+      const saved = mockContext.workspaceState.get<SectionType[]>('workflow.expandedSections');
       expect(saved).toContain('completed');
     });
 
@@ -463,10 +463,10 @@ describe('WorkflowTreeProvider', () => {
       });
     });
 
-    it('persists state to workspace storage', async () => {
+    it('persists state to workspace storage', () => {
       provider.toggleSectionExpanded('completed');
 
-      const saved = await mockContext.workspaceState.get<SectionType[]>('workflow.expandedSections');
+      const saved = mockContext.workspaceState.get<SectionType[]>('workflow.expandedSections');
       expect(saved).toBeDefined();
     });
   });

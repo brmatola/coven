@@ -2,8 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ReviewManager } from './ReviewManager';
 import { WorktreeManager } from '../git/WorktreeManager';
 import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
-import { FamiliarManager } from '../agents/FamiliarManager';
-import { SessionConfig, DEFAULT_SESSION_CONFIG } from '../shared/types';
 import { Worktree, MergeResult } from '../git/types';
 
 // Mock child_process
@@ -42,6 +40,13 @@ vi.mock('../shared/logger', () => ({
   }),
 }));
 
+interface ReviewConfig {
+  preMergeChecks: {
+    enabled: boolean;
+    commands: string[];
+  };
+}
+
 function createMockWorktree(taskId: string): Worktree {
   return {
     path: `/worktrees/${taskId}`,
@@ -51,9 +56,12 @@ function createMockWorktree(taskId: string): Worktree {
   };
 }
 
-function createMockConfig(overrides: Partial<SessionConfig> = {}): SessionConfig {
+function createMockConfig(overrides: Partial<ReviewConfig> = {}): ReviewConfig {
   return {
-    ...DEFAULT_SESSION_CONFIG,
+    preMergeChecks: {
+      enabled: false,
+      commands: [],
+    },
     ...overrides,
   };
 }
@@ -62,9 +70,8 @@ describe('ReviewManager', () => {
   let reviewManager: ReviewManager;
   let mockWorktreeManager: WorktreeManager;
   let mockBeadsTaskSource: BeadsTaskSource;
-  let mockFamiliarManager: FamiliarManager;
-  let mockGetConfig: () => SessionConfig;
-  let config: SessionConfig;
+  let mockGetConfig: () => ReviewConfig;
+  let config: ReviewConfig;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,15 +89,10 @@ describe('ReviewManager', () => {
       updateTaskStatus: vi.fn(),
     } as unknown as BeadsTaskSource;
 
-    mockFamiliarManager = {
-      getFamiliar: vi.fn(),
-    } as unknown as FamiliarManager;
-
     reviewManager = new ReviewManager(
       '/workspace',
       mockWorktreeManager,
       mockBeadsTaskSource,
-      mockFamiliarManager,
       mockGetConfig
     );
   });

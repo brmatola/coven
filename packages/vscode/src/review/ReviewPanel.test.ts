@@ -35,8 +35,8 @@ describe('ReviewPanel', () => {
     eventListeners: Map<string, Set<(...args: unknown[]) => void>>;
   };
   let mockPanel: ReturnType<typeof createMockPanel>;
-  let messageHandlers = new Map<string, (message: unknown) => void>();
-  let disposeHandlers = new Map<string, () => void>();
+  const messageHandlers = new Map<string, (message: unknown) => void>();
+  const disposeHandlers = new Map<string, () => void>();
   let createdPanels: ReviewPanel[] = [];
   let currentWorkflowId = 'workflow-1';
 
@@ -155,9 +155,9 @@ describe('ReviewPanel', () => {
     });
   });
 
-  async function createPanel(workflowId = 'workflow-1'): Promise<ReviewPanel | null> {
+  function createPanel(workflowId = 'workflow-1'): ReviewPanel | null {
     currentWorkflowId = workflowId;
-    const panel = await ReviewPanel.createOrShow(
+    const panel = ReviewPanel.createOrShow(
       new vscode.Uri('/test'),
       mockDaemonClient as unknown as DaemonClient,
       mockSSEClient as unknown as SSEClient,
@@ -170,8 +170,8 @@ describe('ReviewPanel', () => {
   }
 
   describe('createOrShow', () => {
-    it('should create a new panel', async () => {
-      const panel = await createPanel();
+    it('should create a new panel', () => {
+      const panel = createPanel();
 
       expect(panel).toBeDefined();
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
@@ -185,23 +185,23 @@ describe('ReviewPanel', () => {
       );
     });
 
-    it('should return existing panel if already open', async () => {
-      const panel1 = await createPanel();
-      const panel2 = await createPanel();
+    it('should return existing panel if already open', () => {
+      const panel1 = createPanel();
+      const panel2 = createPanel();
 
       expect(panel1).toBe(panel2);
       expect(mockPanel.reveal).toHaveBeenCalled();
     });
 
-    it('should create different panels for different workflows', async () => {
-      const panel1 = await createPanel('workflow-1');
+    it('should create different panels for different workflows', () => {
+      const panel1 = createPanel('workflow-1');
 
       const secondMockPanel = createMockPanel('workflow-2');
       vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(
         secondMockPanel as unknown as vscode.WebviewPanel
       );
 
-      const panel2 = await createPanel('workflow-2');
+      const panel2 = createPanel('workflow-2');
 
       expect(panel1).not.toBe(panel2);
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
@@ -209,8 +209,8 @@ describe('ReviewPanel', () => {
   });
 
   describe('get', () => {
-    it('should return existing panel', async () => {
-      await createPanel();
+    it('should return existing panel', () => {
+      createPanel();
 
       const panel = ReviewPanel.get('workflow-1');
       expect(panel).toBeDefined();
@@ -224,7 +224,7 @@ describe('ReviewPanel', () => {
 
   describe('ready message', () => {
     it('should fetch workflow review on ready', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -234,7 +234,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should send state after fetch', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -256,7 +256,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should update panel title after fetch', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -279,7 +279,7 @@ describe('ReviewPanel', () => {
     it('should handle fetch error', async () => {
       mockDaemonClient.getWorkflowReview.mockRejectedValue(new Error('Connection failed'));
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -297,7 +297,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should include step outputs in state', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -317,7 +317,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should build agent summary from step outputs', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -336,7 +336,7 @@ describe('ReviewPanel', () => {
 
   describe('approve action', () => {
     it('should approve workflow', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -357,7 +357,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should approve workflow without feedback', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -374,7 +374,7 @@ describe('ReviewPanel', () => {
     it('should show error on approve failure', async () => {
       mockDaemonClient.approveWorkflow.mockRejectedValue(new Error('Merge conflict'));
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -397,7 +397,7 @@ describe('ReviewPanel', () => {
         'Reject' as unknown as vscode.MessageItem
       );
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -422,7 +422,7 @@ describe('ReviewPanel', () => {
     it('should not reject if user cancels', async () => {
       vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -444,7 +444,7 @@ describe('ReviewPanel', () => {
       );
       mockDaemonClient.rejectWorkflow.mockRejectedValue(new Error('Cleanup failed'));
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -463,7 +463,7 @@ describe('ReviewPanel', () => {
 
   describe('viewDiff action', () => {
     it('should open diff view', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       // Wait for state to be fully loaded
@@ -511,7 +511,7 @@ describe('ReviewPanel', () => {
         stepOutputs: [],
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -530,7 +530,7 @@ describe('ReviewPanel', () => {
 
   describe('viewAllChanges action', () => {
     it('should open source control view', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       // Wait for state to be fully loaded
@@ -559,7 +559,7 @@ describe('ReviewPanel', () => {
 
   describe('runChecks action', () => {
     it('should show checking state', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -589,7 +589,7 @@ describe('ReviewPanel', () => {
         'Override and Approve' as unknown as vscode.MessageItem
       );
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -609,7 +609,7 @@ describe('ReviewPanel', () => {
     it('should not override if user cancels', async () => {
       vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -627,15 +627,15 @@ describe('ReviewPanel', () => {
   });
 
   describe('SSE events', () => {
-    it('should subscribe to SSE events on creation', async () => {
-      await createPanel();
+    it('should subscribe to SSE events on creation', () => {
+      createPanel();
 
       expect(mockSSEClient.on).toHaveBeenCalledWith('event', expect.any(Function));
       expect(mockSSEClient.listenerCount('event')).toBe(1);
     });
 
     it('should refresh on workflow.completed event', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -656,7 +656,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should refresh on workflow.failed event', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -677,7 +677,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should ignore events for other workflows', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -696,8 +696,8 @@ describe('ReviewPanel', () => {
       expect(mockDaemonClient.getWorkflowReview).not.toHaveBeenCalled();
     });
 
-    it('should unsubscribe from SSE events on dispose', async () => {
-      await createPanel();
+    it('should unsubscribe from SSE events on dispose', () => {
+      createPanel();
 
       expect(mockSSEClient.listenerCount('event')).toBe(1);
 
@@ -709,8 +709,8 @@ describe('ReviewPanel', () => {
   });
 
   describe('dispose', () => {
-    it('should remove panel from static map on dispose', async () => {
-      await createPanel();
+    it('should remove panel from static map on dispose', () => {
+      createPanel();
 
       expect(ReviewPanel.get('workflow-1')).toBeDefined();
 
@@ -721,14 +721,14 @@ describe('ReviewPanel', () => {
   });
 
   describe('closeAll', () => {
-    it('should close all panels', async () => {
-      await createPanel('workflow-1');
+    it('should close all panels', () => {
+      createPanel('workflow-1');
 
       const secondMockPanel = createMockPanel('workflow-2');
       vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(
         secondMockPanel as unknown as vscode.WebviewPanel
       );
-      await createPanel('workflow-2');
+      createPanel('workflow-2');
 
       expect(ReviewPanel.get('workflow-1')).toBeDefined();
       expect(ReviewPanel.get('workflow-2')).toBeDefined();

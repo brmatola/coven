@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { QuestionHandler, BadgeUpdateCallback } from './QuestionHandler';
+import { QuestionHandler } from './QuestionHandler';
 import { DaemonClient } from '../daemon/client';
 import { SSEClient, SSEEvent } from '../daemon/sse';
 import { EventEmitter } from 'events';
@@ -231,7 +231,7 @@ describe('QuestionHandler', () => {
     });
 
     describe('questions.asked event', () => {
-      it('should add question to pending', async () => {
+      it('should add question to pending', () => {
         // Mock showInformationMessage to not wait
         vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
 

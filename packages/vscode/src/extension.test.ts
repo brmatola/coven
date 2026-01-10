@@ -18,21 +18,74 @@ vi.mock('./setup/SetupPanel', () => ({
   },
 }));
 
-// Mock CovenSession to prevent file system access
-vi.mock('./session/CovenSession', () => ({
-  CovenSession: vi.fn().mockImplementation(() => {
-    throw new Error('Mock: Session initialization disabled in tests');
-  }),
+// Mock WorkflowTreeProvider
+vi.mock('./sidebar/WorkflowTreeProvider', () => ({
+  WorkflowTreeProvider: vi.fn().mockImplementation(() => ({
+    setCache: vi.fn(),
+    refresh: vi.fn(),
+    dispose: vi.fn(),
+    onDidChangeTreeData: {
+      event: vi.fn(),
+    },
+    getTreeItem: vi.fn(),
+    getChildren: vi.fn().mockResolvedValue([]),
+  })),
+}));
+
+// Mock daemon modules
+vi.mock('./daemon', () => ({
+  ConnectionManager: vi.fn().mockImplementation(() => ({
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn(),
+    getSocketPath: vi.fn().mockReturnValue('/tmp/test.sock'),
+  })),
+  DaemonClient: vi.fn().mockImplementation(() => ({
+    startSession: vi.fn().mockResolvedValue(undefined),
+    stopSession: vi.fn().mockResolvedValue(undefined),
+    startTask: vi.fn().mockResolvedValue(undefined),
+    killTask: vi.fn().mockResolvedValue(undefined),
+  })),
+  SSEClient: vi.fn().mockImplementation(() => ({
+    on: vi.fn(),
+    off: vi.fn(),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  })),
+  StateCache: vi.fn().mockImplementation(() => ({
+    handleEvent: vi.fn(),
+    getWorkflows: vi.fn().mockReturnValue([]),
+    getQuestions: vi.fn().mockReturnValue([]),
+    getSessionState: vi.fn().mockReturnValue({ active: false }),
+    on: vi.fn(),
+    off: vi.fn(),
+  })),
+  BinaryManager: vi.fn().mockImplementation(() => ({
+    getBinaryPath: vi.fn().mockReturnValue('/usr/bin/covend'),
+  })),
+  DaemonLifecycle: vi.fn().mockImplementation(() => ({
+    ensureRunning: vi.fn().mockResolvedValue(undefined),
+    getSocketPath: vi.fn().mockReturnValue('/tmp/test.sock'),
+    stop: vi.fn().mockResolvedValue(undefined),
+  })),
 }));
 
 // Mock FamiliarOutputChannel
 vi.mock('./agents/FamiliarOutputChannel', () => ({
-  FamiliarOutputChannel: vi.fn(),
+  FamiliarOutputChannel: vi.fn().mockImplementation(() => ({
+    initialize: vi.fn(),
+    dispose: vi.fn(),
+    hasChannel: vi.fn().mockReturnValue(false),
+    fetchHistory: vi.fn().mockResolvedValue(undefined),
+    showChannel: vi.fn(),
+  })),
 }));
 
 // Mock QuestionHandler
 vi.mock('./agents/QuestionHandler', () => ({
-  QuestionHandler: vi.fn(),
+  QuestionHandler: vi.fn().mockImplementation(() => ({
+    initialize: vi.fn(),
+    showAnswerDialogByTaskId: vi.fn().mockResolvedValue(true),
+  })),
 }));
 
 // Mock NotificationService
@@ -45,6 +98,27 @@ vi.mock('./tasks/TaskDetailPanel', () => ({
   TaskDetailPanel: {
     createOrShow: vi.fn(),
   },
+}));
+
+// Mock ReviewPanel
+vi.mock('./review/ReviewPanel', () => ({
+  ReviewPanel: {
+    createOrShow: vi.fn(),
+  },
+}));
+
+// Mock BeadsTaskSource
+vi.mock('./tasks/BeadsTaskSource', () => ({
+  BeadsTaskSource: vi.fn().mockImplementation(() => ({
+    watch: vi.fn(),
+    createTask: vi.fn().mockResolvedValue({ id: 'test-task' }),
+    sync: vi.fn().mockResolvedValue({ added: [], updated: [], removed: [] }),
+  })),
+}));
+
+// Mock WorktreeManager
+vi.mock('./git/WorktreeManager', () => ({
+  WorktreeManager: vi.fn().mockImplementation(() => ({})),
 }));
 
 import { checkPrerequisites } from './setup/prerequisites';
@@ -122,13 +196,15 @@ describe('extension', () => {
       expect(window.createStatusBarItem).toHaveBeenCalled();
     });
 
-    it('sets status bar text to inactive', async () => {
+    it('sets status bar text to inactive when no session is active', async () => {
       const mockCtx = createMockExtensionContext();
 
       await activate(mockCtx);
 
       const mockStatusBar = (window.createStatusBarItem as ReturnType<typeof vi.fn>).mock
         .results[0]?.value;
+      // After activation, status bar shows inactive (not disconnected) because
+      // the state cache is connected but no session is active
       expect(mockStatusBar?.text).toBe('$(circle-outline) Coven: Inactive');
     });
 
@@ -207,23 +283,12 @@ describe('extension', () => {
       expect(SetupPanel.createOrShow).not.toHaveBeenCalled();
     });
 
-    it('handles prerequisite check errors gracefully', async () => {
-      mockCheckPrerequisites.mockRejectedValue(new Error('Check failed'));
-      const mockCtx = createMockExtensionContext();
-
-      await activate(mockCtx);
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to check prerequisites')
-      );
-    });
-
     it('adds disposables to subscriptions', async () => {
       const mockCtx = createMockExtensionContext();
 
       await activate(mockCtx);
 
-      // Status bar, tree view, and 3 commands = at least 5 items
+      // Status bar, tree view, and commands = at least 5 items
       expect(mockCtx.subscriptions.length).toBeGreaterThanOrEqual(5);
     });
   });
@@ -244,26 +309,11 @@ describe('extension', () => {
   });
 
   describe('command handlers', () => {
-    it('startSession checks prerequisites', async () => {
+    it('startSession shows error when no workspace', async () => {
       const mockCtx = createMockExtensionContext();
+      __setWorkspaceFolders([]);
+
       await activate(mockCtx);
-
-      // Get the startSession handler
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const startSessionCall = registerCalls.find((call) => call[0] === 'coven.startSession');
-      const startSessionHandler = startSessionCall?.[1];
-
-      mockCheckPrerequisites.mockClear();
-      await startSessionHandler();
-
-      expect(checkPrerequisites).toHaveBeenCalled();
-    });
-
-    it('startSession shows warning when prerequisites not met', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      mockCheckPrerequisites.mockResolvedValue({ tools: [], inits: [], allMet: false });
 
       const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
       const startSessionCall = registerCalls.find((call) => call[0] === 'coven.startSession');
@@ -271,25 +321,9 @@ describe('extension', () => {
 
       await startSessionHandler();
 
-      expect(window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Prerequisites not met')
-      );
-    });
+      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No workspace folder open');
 
-    it('stopSession updates status bar', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      const mockStatusBar = (window.createStatusBarItem as ReturnType<typeof vi.fn>).mock
-        .results[0]?.value;
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const stopSessionCall = registerCalls.find((call) => call[0] === 'coven.stopSession');
-      const stopSessionHandler = stopSessionCall?.[1];
-
-      stopSessionHandler();
-
-      expect(mockStatusBar?.text).toBe('$(circle-outline) Coven: Inactive');
+      __resetWorkspaceFolders();
     });
 
     it('showSetup opens setup panel', async () => {
@@ -320,7 +354,7 @@ describe('extension', () => {
       expect(true).toBe(true);
     });
 
-    it('showTaskDetail shows error when no session', async () => {
+    it('showTaskDetail shows error when invalid reference', async () => {
       const mockCtx = createMockExtensionContext();
       await activate(mockCtx);
 
@@ -328,12 +362,12 @@ describe('extension', () => {
       const showTaskDetailCall = registerCalls.find((call) => call[0] === 'coven.showTaskDetail');
       const showTaskDetailHandler = showTaskDetailCall?.[1];
 
-      await showTaskDetailHandler('test-task-id');
+      await showTaskDetailHandler(null);
 
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
+      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: Invalid task reference');
     });
 
-    it('viewFamiliarOutput shows error when no session', async () => {
+    it('viewFamiliarOutput shows error when invalid reference', async () => {
       const mockCtx = createMockExtensionContext();
       await activate(mockCtx);
 
@@ -341,9 +375,11 @@ describe('extension', () => {
       const viewOutputCall = registerCalls.find((call) => call[0] === 'coven.viewFamiliarOutput');
       const viewOutputHandler = viewOutputCall?.[1];
 
-      await viewOutputHandler('test-task-id');
+      await viewOutputHandler(null);
 
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
+      expect(window.showErrorMessage).toHaveBeenCalledWith(
+        'Coven: Invalid task reference or no active session'
+      );
     });
 
     it('createTask returns early when user cancels input', async () => {
@@ -358,63 +394,10 @@ describe('extension', () => {
       await createTaskHandler();
 
       // Should not show error since user cancelled
-      expect(window.showErrorMessage).not.toHaveBeenCalledWith('Coven: No active session');
+      expect(window.showErrorMessage).not.toHaveBeenCalled();
     });
 
-    it('createTask shows error when no session and title provided', async () => {
-      const mockCtx = createMockExtensionContext();
-      (window.showInputBox as ReturnType<typeof vi.fn>).mockResolvedValue('Test Task');
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const createTaskCall = registerCalls.find((call) => call[0] === 'coven.createTask');
-      const createTaskHandler = createTaskCall?.[1];
-
-      await createTaskHandler();
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
-    });
-
-    it('startTask shows error when no session', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const startTaskCall = registerCalls.find((call) => call[0] === 'coven.startTask');
-      const startTaskHandler = startTaskCall?.[1];
-
-      await startTaskHandler('test-task-id');
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
-    });
-
-    it('stopTask shows error when no session', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const stopTaskCall = registerCalls.find((call) => call[0] === 'coven.stopTask');
-      const stopTaskHandler = stopTaskCall?.[1];
-
-      await stopTaskHandler('test-task-id');
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
-    });
-
-    it('respondToQuestion shows error when no session', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const respondCall = registerCalls.find((call) => call[0] === 'coven.respondToQuestion');
-      const respondHandler = respondCall?.[1];
-
-      await respondHandler('test-task-id');
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
-    });
-
-    it('refreshTasks does not throw when no session', async () => {
+    it('refreshTasks does not throw', async () => {
       const mockCtx = createMockExtensionContext();
       await activate(mockCtx);
 
@@ -424,118 +407,6 @@ describe('extension', () => {
 
       // Should not throw
       await expect(refreshHandler()).resolves.toBeUndefined();
-    });
-
-    it('stopSession shows info when no active session', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const stopSessionCall = registerCalls.find((call) => call[0] === 'coven.stopSession');
-      const stopSessionHandler = stopSessionCall?.[1];
-
-      await stopSessionHandler();
-
-      expect(window.showInformationMessage).toHaveBeenCalledWith('Coven: No active session to stop');
-    });
-
-    it('startSession shows error when no workspace', async () => {
-      // Create context with no workspace folders
-      const mockCtx = createMockExtensionContext();
-
-      // Clear workspace folders mock
-      __setWorkspaceFolders([]);
-
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const startSessionCall = registerCalls.find((call) => call[0] === 'coven.startSession');
-      const startSessionHandler = startSessionCall?.[1];
-
-      await startSessionHandler();
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No workspace folder open');
-
-      // Reset workspace folders for other tests
-      __resetWorkspaceFolders();
-    });
-
-    it('startSession returns when user cancels branch input', async () => {
-      const mockCtx = createMockExtensionContext();
-      (window.showInputBox as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const startSessionCall = registerCalls.find((call) => call[0] === 'coven.startSession');
-      const startSessionHandler = startSessionCall?.[1];
-
-      // Should not throw when user cancels
-      await expect(startSessionHandler()).resolves.toBeUndefined();
-    });
-
-    it('startSession validates branch name', async () => {
-      const mockCtx = createMockExtensionContext();
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const startSessionCall = registerCalls.find((call) => call[0] === 'coven.startSession');
-      const startSessionHandler = startSessionCall?.[1];
-
-      // Trigger the handler which will call showInputBox
-      const showInputBoxMock = window.showInputBox as ReturnType<typeof vi.fn>;
-      showInputBoxMock.mockResolvedValue(undefined);
-
-      await startSessionHandler();
-
-      // Verify showInputBox was called with validation
-      expect(showInputBoxMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          prompt: 'Enter feature branch name',
-          validateInput: expect.any(Function),
-        })
-      );
-
-      // Test the validation function
-      const validateInput = showInputBoxMock.mock.calls[0]?.[0]?.validateInput;
-      if (validateInput) {
-        expect(validateInput('')).toBe('Branch name is required');
-        expect(validateInput('   ')).toBe('Branch name is required');
-        expect(validateInput('invalid@branch')).toBe('Branch name contains invalid characters');
-        expect(validateInput('valid-branch')).toBeUndefined();
-        expect(validateInput('feature/my-feature')).toBeUndefined();
-      }
-    });
-
-    it('stopSession returns when user cancels confirmation', async () => {
-      const mockCtx = createMockExtensionContext();
-      // Mock showWarningMessage to return undefined (user cancelled)
-      (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const stopSessionCall = registerCalls.find((call) => call[0] === 'coven.stopSession');
-      const stopSessionHandler = stopSessionCall?.[1];
-
-      // Since covenSession is not initialized (mocked to throw), this will show "No active session"
-      await stopSessionHandler();
-
-      expect(window.showInformationMessage).toHaveBeenCalledWith('Coven: No active session to stop');
-    });
-
-    it('stopTask returns when user cancels confirmation', async () => {
-      const mockCtx = createMockExtensionContext();
-      // Mock showWarningMessage to return undefined (user cancelled)
-      (window.showWarningMessage as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-      await activate(mockCtx);
-
-      const registerCalls = (commands.registerCommand as ReturnType<typeof vi.fn>).mock.calls;
-      const stopTaskCall = registerCalls.find((call) => call[0] === 'coven.stopTask');
-      const stopTaskHandler = stopTaskCall?.[1];
-
-      // Since covenSession is null, should show error
-      await stopTaskHandler('test-task');
-
-      expect(window.showErrorMessage).toHaveBeenCalledWith('Coven: No active session');
     });
   });
 

@@ -9,9 +9,7 @@ import { promisify } from 'util';
 import { WorktreeManager } from '../git/WorktreeManager';
 import { GitCLI } from '../git/GitCLI';
 import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
-import { FamiliarManager } from '../agents/FamiliarManager';
 import { getLogger } from '../shared/logger';
-import { SessionConfig } from '../shared/types';
 import {
   ReviewStatus,
   ChangedFile,
@@ -21,6 +19,13 @@ import {
 const execAsync = promisify(exec);
 
 const CHECK_TIMEOUT_MS = 300000; // 5 minute timeout for checks
+
+interface ReviewConfig {
+  preMergeChecks: {
+    enabled: boolean;
+    commands: string[];
+  };
+}
 
 /**
  * Events emitted by ReviewManager.
@@ -51,9 +56,8 @@ export interface ReviewInfo {
 export class ReviewManager extends EventEmitter {
   private worktreeManager: WorktreeManager;
   private beadsTaskSource: BeadsTaskSource;
-  private familiarManager: FamiliarManager;
   private gitProvider: GitCLI;
-  private getConfig: () => SessionConfig;
+  private getConfig: () => ReviewConfig;
   private logger = getLogger();
   private activeReviews: Map<string, ReviewInfo> = new Map();
 
@@ -61,13 +65,11 @@ export class ReviewManager extends EventEmitter {
     workspaceRoot: string,
     worktreeManager: WorktreeManager,
     beadsTaskSource: BeadsTaskSource,
-    familiarManager: FamiliarManager,
-    getConfig: () => SessionConfig
+    getConfig: () => ReviewConfig
   ) {
     super();
     this.worktreeManager = worktreeManager;
     this.beadsTaskSource = beadsTaskSource;
-    this.familiarManager = familiarManager;
     this.getConfig = getConfig;
     this.gitProvider = new GitCLI(workspaceRoot);
   }
@@ -112,11 +114,8 @@ export class ReviewManager extends EventEmitter {
     }
 
     try {
-      // Get the feature branch from the familiar info
-      const familiar = this.familiarManager.getFamiliar(taskId);
-      const featureBranch = familiar
-        ? await this.getFeatureBranchFromWorktree(worktree.path)
-        : 'main';
+      // Get the feature branch from the worktree
+      const featureBranch = await this.getFeatureBranchFromWorktree(worktree.path);
 
       // Get diff between feature branch and task branch
       const diffSummary = await this.gitProvider.getDiff(

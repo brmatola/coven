@@ -32,8 +32,8 @@ describe('WorkflowDetailPanel', () => {
   };
   let mockPanel: ReturnType<typeof createMockPanel>;
   // Map from workflowId to handlers
-  let messageHandlers = new Map<string, (message: unknown) => void>();
-  let disposeHandlers = new Map<string, () => void>();
+  const messageHandlers = new Map<string, (message: unknown) => void>();
+  const disposeHandlers = new Map<string, () => void>();
   let createdPanels: WorkflowDetailPanel[] = [];
   let currentWorkflowId = 'workflow-1';
 
@@ -131,9 +131,9 @@ describe('WorkflowDetailPanel', () => {
     });
   });
 
-  async function createPanel(workflowId = 'workflow-1'): Promise<WorkflowDetailPanel | null> {
+  function createPanel(workflowId = 'workflow-1'): WorkflowDetailPanel | null {
     currentWorkflowId = workflowId;
-    const panel = await WorkflowDetailPanel.createOrShow(
+    const panel = WorkflowDetailPanel.createOrShow(
       new vscode.Uri('/test'),
       mockDaemonClient as unknown as DaemonClient,
       mockSSEClient as unknown as SSEClient,
@@ -154,8 +154,8 @@ describe('WorkflowDetailPanel', () => {
   }
 
   describe('createOrShow', () => {
-    it('should create a new panel', async () => {
-      const panel = await createPanel();
+    it('should create a new panel', () => {
+      const panel = createPanel();
 
       expect(panel).toBeDefined();
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
@@ -169,17 +169,17 @@ describe('WorkflowDetailPanel', () => {
       );
     });
 
-    it('should return existing panel if already open', async () => {
-      const panel1 = await createPanel();
+    it('should return existing panel if already open', () => {
+      const panel1 = createPanel();
 
-      const panel2 = await createPanel();
+      const panel2 = createPanel();
 
       expect(panel1).toBe(panel2);
       expect(mockPanel.reveal).toHaveBeenCalled();
     });
 
-    it('should create different panels for different workflows', async () => {
-      const panel1 = await createPanel('workflow-1');
+    it('should create different panels for different workflows', () => {
+      const panel1 = createPanel('workflow-1');
 
       // Reset mock for second call with new messageHandler/disposeHandler
       const secondMockPanel = createMockPanel();
@@ -187,7 +187,7 @@ describe('WorkflowDetailPanel', () => {
         secondMockPanel as unknown as vscode.WebviewPanel
       );
 
-      const panel2 = await createPanel('workflow-2');
+      const panel2 = createPanel('workflow-2');
 
       expect(panel1).not.toBe(panel2);
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
@@ -195,8 +195,8 @@ describe('WorkflowDetailPanel', () => {
   });
 
   describe('get', () => {
-    it('should return existing panel', async () => {
-      await createPanel();
+    it('should return existing panel', () => {
+      createPanel();
 
       const panel = WorkflowDetailPanel.get('workflow-1');
       expect(panel).toBeDefined();
@@ -210,7 +210,7 @@ describe('WorkflowDetailPanel', () => {
 
   describe('ready message', () => {
     it('should fetch workflow on ready', async () => {
-      await createPanel();
+      createPanel();
 
       // Simulate ready message
       getMessageHandler()?.({ type: 'ready' });
@@ -222,7 +222,7 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should send state after fetch', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -246,7 +246,7 @@ describe('WorkflowDetailPanel', () => {
     it('should handle fetch error', async () => {
       mockDaemonClient.getState.mockRejectedValue(new Error('Connection failed'));
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -267,7 +267,7 @@ describe('WorkflowDetailPanel', () => {
 
   describe('workflow actions', () => {
     it('should handle pause action', async () => {
-      await createPanel();
+      createPanel();
 
       // First fetch workflow and wait for it to load
       getMessageHandler()?.({ type: 'ready' });
@@ -301,7 +301,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -326,7 +326,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -354,7 +354,7 @@ describe('WorkflowDetailPanel', () => {
         'Cancel Workflow' as unknown as vscode.MessageItem
       );
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -382,7 +382,7 @@ describe('WorkflowDetailPanel', () => {
     it('should not cancel if user does not confirm', async () => {
       vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -410,7 +410,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
@@ -434,7 +434,7 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should handle viewOutput action', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'viewOutput', payload: { stepId: 'task-1' } });
 
@@ -448,15 +448,15 @@ describe('WorkflowDetailPanel', () => {
   });
 
   describe('SSE events', () => {
-    it('should subscribe to SSE events on creation', async () => {
-      await createPanel();
+    it('should subscribe to SSE events on creation', () => {
+      createPanel();
 
       expect(mockSSEClient.on).toHaveBeenCalledWith('event', expect.any(Function));
       expect(mockSSEClient.listenerCount('event')).toBe(1);
     });
 
     it('should update workflow status on workflow.completed event', async () => {
-      await createPanel();
+      createPanel();
 
       // First fetch the workflow and wait for it to load
       getMessageHandler()?.({ type: 'ready' });
@@ -497,7 +497,7 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should update step status on task.completed event', async () => {
-      await createPanel();
+      createPanel();
 
       // First fetch the workflow
       getMessageHandler()?.({ type: 'ready' });
@@ -521,7 +521,7 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should ignore events for other workflows', async () => {
-      await createPanel();
+      createPanel();
 
       // First fetch the workflow
       getMessageHandler()?.({ type: 'ready' });
@@ -542,8 +542,8 @@ describe('WorkflowDetailPanel', () => {
       expect(mockPanel.webview.postMessage).not.toHaveBeenCalled();
     });
 
-    it('should unsubscribe from SSE events on dispose', async () => {
-      await createPanel();
+    it('should unsubscribe from SSE events on dispose', () => {
+      createPanel();
 
       expect(mockSSEClient.listenerCount('event')).toBe(1);
 
@@ -557,7 +557,7 @@ describe('WorkflowDetailPanel', () => {
 
   describe('available actions', () => {
     it('should return pause and cancel for running workflow', async () => {
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -582,7 +582,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -607,7 +607,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -632,7 +632,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -665,7 +665,7 @@ describe('WorkflowDetailPanel', () => {
         timestamp: Date.now(),
       });
 
-      await createPanel();
+      createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
 
@@ -691,8 +691,8 @@ describe('WorkflowDetailPanel', () => {
   });
 
   describe('dispose', () => {
-    it('should remove panel from static map on dispose', async () => {
-      await createPanel();
+    it('should remove panel from static map on dispose', () => {
+      createPanel();
 
       expect(WorkflowDetailPanel.get('workflow-1')).toBeDefined();
 

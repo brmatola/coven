@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { ConnectionManager } from './connection';
 import type { DaemonClient } from './client';
@@ -191,7 +191,7 @@ describe('ConnectionManager', () => {
       vi.useFakeTimers();
       sseClient.autoSnapshot = false;
       sseClient.connect = vi.fn(() => {
-        (sseClient as MockSSEClient)['_connectionState'] = 'connected';
+        sseClient['_connectionState'] = 'connected';
         sseClient.emit('connected');
         // Disconnect immediately instead of sending snapshot
         setTimeout(() => sseClient.simulateDisconnect(), 0);

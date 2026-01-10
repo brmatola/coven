@@ -41,12 +41,12 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
   /**
    * Create or reveal a review panel for the given workflow.
    */
-  public static async createOrShow(
+  public static createOrShow(
     extensionUri: vscode.Uri,
     client: DaemonClient,
     sseClient: SSEClient,
     workflowId: string
-  ): Promise<ReviewPanel | null> {
+  ): ReviewPanel | null {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
 
     // Check if panel already exists for this workflow

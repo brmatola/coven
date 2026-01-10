@@ -166,10 +166,10 @@ export class QuestionHandler {
   // ============================================================================
 
   private subscribeToEvents(): void {
-    this.eventHandler = (event: SSEEvent) => {
+    this.eventHandler = (event: SSEEvent): void => {
       switch (event.type) {
         case 'questions.asked':
-          this.handleQuestionAsked(event.data as QuestionsAskedData);
+          void this.handleQuestionAsked(event.data as QuestionsAskedData);
           break;
         case 'questions.answered':
           this.handleQuestionAnswered(event.data as QuestionsAnsweredData);

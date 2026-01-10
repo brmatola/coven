@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
-import { CovenSession } from '../session/CovenSession';
-import { CovenState } from '../shared/types';
+import { StateCache, SessionState } from '../daemon/cache';
+import { WorkflowState } from '../daemon/types';
 
 /**
  * Manages the Coven status bar item.
- * Shows session state summary and provides quick access to actions.
+ * Shows daemon connection status and provides quick access to actions.
  */
 export class CovenStatusBar implements vscode.Disposable {
   private statusBarItem: vscode.StatusBarItem;
-  private _session: CovenSession | null = null;
-  private stateSubscription: (() => void) | null = null;
+  private stateCache: StateCache | null = null;
+  private workflowChangeHandler: ((workflow: WorkflowState) => void) | null = null;
   private pulseInterval: ReturnType<typeof setInterval> | null = null;
   private isPulsing = false;
 
@@ -19,61 +19,96 @@ export class CovenStatusBar implements vscode.Disposable {
       100
     );
     this.statusBarItem.name = 'Coven Session Status';
-    this.updateInactive();
+    this.updateDisconnected();
     this.statusBarItem.show();
   }
 
   /**
-   * Connect to a CovenSession and subscribe to state changes.
+   * Connect to a StateCache and subscribe to session changes.
    */
-  setSession(session: CovenSession | null): void {
-    // Unsubscribe from previous session
-    if (this.stateSubscription) {
-      this.stateSubscription();
-      this.stateSubscription = null;
+  setStateCache(cache: StateCache | null): void {
+    // Unsubscribe from previous cache
+    if (this.stateCache && this.workflowChangeHandler) {
+      this.stateCache.off('workflows.changed', this.workflowChangeHandler);
+      this.workflowChangeHandler = null;
     }
 
-    this._session = session;
+    this.stateCache = cache;
 
-    if (session) {
-      const handler = (): void => {
-        if (this._session) {
-          this.update(this._session.getState());
-        }
+    if (cache) {
+      this.workflowChangeHandler = (): void => {
+        this.updateFromSession(cache.getSessionState());
       };
-      session.on('state:changed', handler);
-      this.stateSubscription = (): void => {
-        session.off('state:changed', handler);
-      };
+      cache.on('workflows.changed', this.workflowChangeHandler);
 
       // Initial update
-      this.update(session.getState());
+      this.updateFromSession(cache.getSessionState());
     } else {
-      this.updateInactive();
+      this.updateDisconnected();
     }
   }
 
   /**
-   * Update the status bar based on current state.
+   * Update the status bar based on session state.
    */
-  private update(state: CovenState): void {
+  private updateFromSession(state: SessionState): void {
     this.stopPulse();
 
-    switch (state.sessionStatus) {
-      case 'inactive':
-        this.updateInactive();
-        break;
-      case 'starting':
-        this.updateStarting();
-        break;
-      case 'active':
-      case 'paused':
-        this.updateActive(state);
-        break;
-      case 'stopping':
-        this.updateStopping();
-        break;
+    if (!state.active) {
+      this.updateInactive();
+      return;
     }
+
+    // Active session - get workflow info
+    const workflow = this.stateCache?.getWorkflow();
+    const questions = this.stateCache?.getQuestions() ?? [];
+
+    const running = workflow?.status === 'running' ? 1 : 0;
+    const pendingQuestions = questions.length;
+
+    let text: string;
+    let icon: string;
+
+    if (pendingQuestions > 0) {
+      icon = '$(bell)';
+      text = `${icon} Coven: ${pendingQuestions} awaiting response`;
+      this.startPulse();
+    } else if (running > 0) {
+      icon = '$(sync~spin)';
+      text = `${icon} Coven: ${running} running`;
+    } else {
+      icon = '$(circle-filled)';
+      text = `${icon} Coven: Connected`;
+    }
+
+    this.statusBarItem.text = text;
+    this.statusBarItem.command = 'coven.revealSidebar';
+
+    // Build tooltip
+    const tooltipParts = [
+      `**Status:** Connected`,
+      '',
+      `**Workflows:** ${running} running`,
+      `**Questions:** ${pendingQuestions} pending`,
+    ];
+
+    if (pendingQuestions > 0) {
+      tooltipParts.push('', `**Questions need your response**`);
+    }
+
+    tooltipParts.push('', '_Click to reveal sidebar_');
+
+    this.statusBarItem.tooltip = new vscode.MarkdownString(tooltipParts.join('\n'));
+  }
+
+  /**
+   * Show disconnected state.
+   */
+  private updateDisconnected(): void {
+    this.statusBarItem.text = '$(circle-outline) Coven: Disconnected';
+    this.statusBarItem.tooltip = 'Daemon not connected';
+    this.statusBarItem.command = 'coven.startSession';
+    this.statusBarItem.backgroundColor = undefined;
   }
 
   /**
@@ -84,82 +119,6 @@ export class CovenStatusBar implements vscode.Disposable {
     this.statusBarItem.tooltip = 'Click to start a Coven session';
     this.statusBarItem.command = 'coven.startSession';
     this.statusBarItem.backgroundColor = undefined;
-  }
-
-  /**
-   * Show starting state.
-   */
-  private updateStarting(): void {
-    this.statusBarItem.text = '$(sync~spin) Coven: Starting...';
-    this.statusBarItem.tooltip = 'Session is starting...';
-    this.statusBarItem.command = undefined;
-    this.statusBarItem.backgroundColor = undefined;
-  }
-
-  /**
-   * Show stopping state.
-   */
-  private updateStopping(): void {
-    this.statusBarItem.text = '$(sync~spin) Coven: Stopping...';
-    this.statusBarItem.tooltip = 'Session is stopping...';
-    this.statusBarItem.command = undefined;
-    this.statusBarItem.backgroundColor = undefined;
-  }
-
-  /**
-   * Show active session state with summary.
-   */
-  private updateActive(state: CovenState): void {
-    const working = state.tasks.working.length;
-    const review = state.tasks.review.length;
-    const pendingQuestions = state.pendingQuestions.length;
-
-    // Build summary text
-    const parts: string[] = [];
-    if (working > 0) parts.push(`${working} working`);
-    if (review > 0) parts.push(`${review} review`);
-
-    let text: string;
-    let icon: string;
-
-    if (state.sessionStatus === 'paused') {
-      icon = '$(debug-pause)';
-      text = `${icon} Coven: Paused`;
-    } else if (pendingQuestions > 0) {
-      icon = '$(bell)';
-      text = `${icon} Coven: ${pendingQuestions} awaiting response`;
-      this.startPulse();
-    } else if (parts.length > 0) {
-      icon = '$(circle-filled)';
-      text = `${icon} Coven: ${parts.join(', ')}`;
-    } else {
-      icon = '$(circle-filled)';
-      text = `${icon} Coven: Active`;
-    }
-
-    this.statusBarItem.text = text;
-    this.statusBarItem.command = 'coven.revealSidebar';
-
-    // Build tooltip
-    const tooltipParts = [
-      `**Branch:** ${state.featureBranch ?? 'Unknown'}`,
-      `**Status:** ${state.sessionStatus}`,
-      '',
-      `**Tasks:**`,
-      `  Ready: ${state.tasks.ready.length}`,
-      `  Working: ${state.tasks.working.length}`,
-      `  Review: ${state.tasks.review.length}`,
-      `  Done: ${state.tasks.done.length}`,
-      `  Blocked: ${state.tasks.blocked.length}`,
-    ];
-
-    if (pendingQuestions > 0) {
-      tooltipParts.push('', `**⚠️ ${pendingQuestions} question(s) need your response**`);
-    }
-
-    tooltipParts.push('', '_Click to reveal sidebar_');
-
-    this.statusBarItem.tooltip = new vscode.MarkdownString(tooltipParts.join('\n'));
   }
 
   /**
@@ -199,8 +158,8 @@ export class CovenStatusBar implements vscode.Disposable {
    */
   dispose(): void {
     this.stopPulse();
-    if (this.stateSubscription) {
-      this.stateSubscription();
+    if (this.stateCache && this.workflowChangeHandler) {
+      this.stateCache.off('workflows.changed', this.workflowChangeHandler);
     }
     this.statusBarItem.dispose();
   }
