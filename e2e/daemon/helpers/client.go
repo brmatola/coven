@@ -454,17 +454,19 @@ func (c *APIClient) RespondToAgent(taskID, response string) error {
 
 // Workflow represents a workflow in the API response.
 type Workflow struct {
-	WorkflowID   string                 `json:"workflow_id"`
-	TaskID       string                 `json:"task_id"`
-	GrimoireName string                 `json:"grimoire_name"`
-	Status       string                 `json:"status"`
-	CurrentStep  int                    `json:"current_step"`
-	WorktreePath string                 `json:"worktree_path"`
-	StartedAt    string                 `json:"started_at,omitempty"`
-	UpdatedAt    string                 `json:"updated_at,omitempty"`
-	Error        string                 `json:"error,omitempty"`
-	Actions      []string               `json:"available_actions,omitempty"`
-	MergeReview  map[string]interface{} `json:"merge_review,omitempty"`
+	WorkflowID     string                 `json:"workflow_id"`
+	TaskID         string                 `json:"task_id"`
+	GrimoireName   string                 `json:"grimoire_name"`
+	Status         string                 `json:"status"`
+	CurrentStep    int                    `json:"current_step"`
+	WorktreePath   string                 `json:"worktree_path"`
+	StartedAt      string                 `json:"started_at,omitempty"`
+	UpdatedAt      string                 `json:"updated_at,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	Actions        []string               `json:"available_actions,omitempty"`
+	MergeReview    map[string]interface{} `json:"merge_review,omitempty"`
+	CompletedSteps map[string]interface{} `json:"completed_steps,omitempty"`
+	StepOutputs    map[string]string      `json:"step_outputs,omitempty"`
 }
 
 // WorkflowsResponse represents the workflows list response.
