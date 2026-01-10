@@ -189,7 +189,8 @@ func TestLoad_NoBuiltins(t *testing.T) {
 func TestList_Empty(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	loader := NewLoader(tmpDir)
+	// Use loader with no builtins to test empty case
+	loader := NewLoaderWithBuiltins(tmpDir, nil, "spells")
 	spells, err := loader.List()
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
@@ -221,7 +222,8 @@ func TestList_UserSpellsOnly(t *testing.T) {
 		t.Fatalf("Failed to write notes: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	// Use loader with no builtins to test user spells only
+	loader := NewLoaderWithBuiltins(tmpDir, nil, "spells")
 	spells, err := loader.List()
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
@@ -323,7 +325,8 @@ func TestList_IgnoresDirectories(t *testing.T) {
 		t.Fatalf("Failed to create subdir: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	// Use loader with no builtins to test user spells only
+	loader := NewLoaderWithBuiltins(tmpDir, nil, "spells")
 	spells, err := loader.List()
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
