@@ -296,7 +296,8 @@ steps: []
 func TestList_Empty(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	loader := NewLoader(tmpDir)
+	// Use nil builtinFS to avoid embedded grimoires
+	loader := NewLoaderWithBuiltins(tmpDir, nil, "grimoires")
 	grimoires, err := loader.List()
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
@@ -327,7 +328,8 @@ func TestList_UserGrimoires(t *testing.T) {
 		t.Fatalf("Failed to write notes: %v", err)
 	}
 
-	loader := NewLoader(tmpDir)
+	// Use nil builtinFS to avoid embedded grimoires
+	loader := NewLoaderWithBuiltins(tmpDir, nil, "grimoires")
 	grimoires, err := loader.List()
 	if err != nil {
 		t.Fatalf("List() error: %v", err)

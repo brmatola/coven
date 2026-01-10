@@ -101,6 +101,46 @@ func TestBuiltinSpells_ApplyReviewFixes(t *testing.T) {
 	}
 }
 
+func TestBuiltinSpells_AnalyzeSpec(t *testing.T) {
+	loader := NewLoader(t.TempDir())
+
+	spell, err := loader.Load("analyze-spec")
+	if err != nil {
+		t.Fatalf("Load(analyze-spec) error: %v", err)
+	}
+
+	if spell.Source != SourceBuiltIn {
+		t.Errorf("Source = %q, want %q", spell.Source, SourceBuiltIn)
+	}
+
+	if !strings.Contains(spell.Content, "{{.spec_path") {
+		t.Error("analyze-spec spell should contain {{.spec_path}}")
+	}
+	if !strings.Contains(spell.Content, "components") {
+		t.Error("analyze-spec spell should mention components")
+	}
+}
+
+func TestBuiltinSpells_CreateBeads(t *testing.T) {
+	loader := NewLoader(t.TempDir())
+
+	spell, err := loader.Load("create-beads")
+	if err != nil {
+		t.Fatalf("Load(create-beads) error: %v", err)
+	}
+
+	if spell.Source != SourceBuiltIn {
+		t.Errorf("Source = %q, want %q", spell.Source, SourceBuiltIn)
+	}
+
+	if !strings.Contains(spell.Content, "{{.analysis") {
+		t.Error("create-beads spell should contain {{.analysis}}")
+	}
+	if !strings.Contains(spell.Content, "bd create") {
+		t.Error("create-beads spell should mention bd create")
+	}
+}
+
 func TestBuiltinSpells_List(t *testing.T) {
 	loader := NewLoader(t.TempDir())
 
@@ -109,7 +149,7 @@ func TestBuiltinSpells_List(t *testing.T) {
 		t.Fatalf("List() error: %v", err)
 	}
 
-	expected := []string{"implement", "fix-tests", "review", "is-actionable", "apply-review-fixes"}
+	expected := []string{"implement", "fix-tests", "review", "is-actionable", "apply-review-fixes", "analyze-spec", "create-beads"}
 	for _, name := range expected {
 		found := false
 		for _, s := range spells {
