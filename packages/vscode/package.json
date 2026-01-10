@@ -269,7 +269,6 @@
   },
   "scripts": {
     "build": "npm run lint && tsx scripts/build.ts && npm run build:webviews",
-    "build:e2e": "tsc -p src/test/e2e/tsconfig.json",
     "watch": "tsx scripts/build.ts --watch",
     "package": "vsce package",
     "lint": "eslint src --ext .ts,.tsx",
@@ -280,10 +279,8 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:no-coverage": "vitest run",
-    "pretest:e2e": "npm run build && npm run build:e2e",
-    "test:e2e": "tsx scripts/run-e2e-tests.ts",
-    "pretest:e2e:new": "npm run build && cd ../../e2e/vscode && npx tsc",
-    "test:e2e:new": "node ../../e2e/vscode/out/runTest.js"
+    "pretest:e2e": "npm run build && cd ../../e2e/vscode && npm run build",
+    "test:e2e": "node ../../e2e/vscode/out/runTest.js"
   },
   "dependencies": {
     "react": "^18.2.0",
