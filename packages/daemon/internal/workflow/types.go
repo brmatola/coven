@@ -9,6 +9,9 @@ type StepResult struct {
 	// Success indicates whether the step completed successfully.
 	Success bool
 
+	// Skipped indicates whether the step was skipped due to a 'when' condition.
+	Skipped bool
+
 	// Output is the captured output from the step.
 	// For script steps, this is stdout+stderr.
 	// For agent steps, this is the AgentOutput JSON.
@@ -107,3 +110,31 @@ const (
 	WorkflowPendingMerge WorkflowStatus = "pending_merge"
 	WorkflowCancelled    WorkflowStatus = "cancelled"
 )
+
+// EventEmitter is an interface for emitting workflow events.
+// This allows decoupling the workflow engine from the event broker.
+type EventEmitter interface {
+	// EmitWorkflowStarted is called when a workflow begins execution.
+	EmitWorkflowStarted(workflowID, taskID, grimoireName string)
+
+	// EmitWorkflowStepStarted is called when a step begins execution.
+	EmitWorkflowStepStarted(workflowID, taskID, stepName, stepType string, stepIndex int)
+
+	// EmitWorkflowStepCompleted is called when a step finishes.
+	// success indicates whether the step completed without error.
+	// duration is the step execution time as a string.
+	// stepErr is the error message if the step failed.
+	EmitWorkflowStepCompleted(workflowID, taskID, stepName string, stepIndex int, success bool, duration string, stepErr string)
+
+	// EmitWorkflowBlocked is called when a workflow blocks (needs user action).
+	EmitWorkflowBlocked(workflowID, taskID, reason string)
+
+	// EmitWorkflowMergePending is called when a workflow is waiting for merge approval.
+	EmitWorkflowMergePending(workflowID, taskID string)
+
+	// EmitWorkflowCompleted is called when a workflow finishes successfully.
+	EmitWorkflowCompleted(workflowID, taskID, grimoireName, duration string)
+
+	// EmitWorkflowCancelled is called when a workflow is cancelled.
+	EmitWorkflowCancelled(workflowID, taskID string)
+}

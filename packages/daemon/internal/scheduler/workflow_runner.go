@@ -16,6 +16,7 @@ type WorkflowRunner struct {
 	covenDir       string
 	grimoireMapper *workflow.GrimoireMapper
 	logger         *logging.Logger
+	eventEmitter   workflow.EventEmitter
 }
 
 // NewWorkflowRunner creates a new workflow runner.
@@ -28,6 +29,11 @@ func NewWorkflowRunner(covenDir string, logger *logging.Logger) *WorkflowRunner 
 		grimoireMapper: mapper,
 		logger:         logger,
 	}
+}
+
+// SetEventEmitter sets the event emitter for workflow events.
+func (r *WorkflowRunner) SetEventEmitter(emitter workflow.EventEmitter) {
+	r.eventEmitter = emitter
 }
 
 // WorkflowConfig contains configuration for a workflow execution.
@@ -43,6 +49,9 @@ type WorkflowConfig struct {
 
 	// AgentRunner is the runner for agent steps (optional).
 	AgentRunner workflow.AgentRunner
+
+	// ResumeState contains saved state for resuming an interrupted workflow.
+	ResumeState *workflow.WorkflowState
 }
 
 // WorkflowResult represents the result of a workflow execution.
@@ -90,6 +99,10 @@ func (r *WorkflowRunner) Run(ctx context.Context, task types.Task, config Workfl
 
 	grimoireName, err := r.grimoireMapper.Resolve(beadInfo)
 	if err != nil {
+		r.logger.Error("failed to resolve grimoire",
+			"bead_id", config.BeadID,
+			"error", err,
+		)
 		return &WorkflowResult{
 			Success:      false,
 			Error:        fmt.Sprintf("failed to resolve grimoire: %v", err),
@@ -121,6 +134,11 @@ func (r *WorkflowRunner) Run(ctx context.Context, task types.Task, config Workfl
 		WorkflowID:   config.WorkflowID,
 		Bead:         beadData,
 	})
+
+	// Set event emitter if provided
+	if r.eventEmitter != nil {
+		engine.SetEventEmitter(r.eventEmitter)
+	}
 
 	// Set agent runner if provided
 	if config.AgentRunner != nil {
@@ -163,7 +181,97 @@ func (r *WorkflowRunner) Run(ctx context.Context, task types.Task, config Workfl
 	return workflowResult, nil
 }
 
+// RunFromState resumes a workflow from saved state.
+func (r *WorkflowRunner) RunFromState(ctx context.Context, task types.Task, config WorkflowConfig, state *workflow.WorkflowState) (*WorkflowResult, error) {
+	start := time.Now()
+
+	r.logger.Info("resuming workflow from state",
+		"bead_id", config.BeadID,
+		"grimoire", state.GrimoireName,
+		"from_step", state.CurrentStep+1,
+		"worktree", config.WorktreePath,
+	)
+
+	// Load the grimoire that was being executed
+	g, err := r.grimoireMapper.GetGrimoire(state.GrimoireName)
+	if err != nil {
+		r.logger.Error("failed to load grimoire for resume",
+			"bead_id", config.BeadID,
+			"grimoire", state.GrimoireName,
+			"error", err,
+		)
+		return &WorkflowResult{
+			Success:      false,
+			Error:        fmt.Sprintf("failed to load grimoire %q: %v", state.GrimoireName, err),
+			Duration:     time.Since(start),
+			GrimoireName: state.GrimoireName,
+		}, nil
+	}
+
+	// Create bead data for template context
+	beadData := &workflow.BeadData{
+		ID:       task.ID,
+		Title:    task.Title,
+		Body:     task.Description,
+		Type:     string(task.Type),
+		Priority: fmt.Sprintf("P%d", task.Priority),
+		Labels:   task.Labels,
+	}
+
+	// Create workflow engine
+	engine := workflow.NewEngine(workflow.EngineConfig{
+		CovenDir:     r.covenDir,
+		WorktreePath: config.WorktreePath,
+		BeadID:       config.BeadID,
+		WorkflowID:   config.WorkflowID,
+		Bead:         beadData,
+	})
+
+	// Set event emitter if provided
+	if r.eventEmitter != nil {
+		engine.SetEventEmitter(r.eventEmitter)
+	}
+
+	// Set agent runner if provided
+	if config.AgentRunner != nil {
+		engine.SetAgentRunner(config.AgentRunner)
+	}
+
+	// Execute from saved state
+	result := engine.ExecuteFromState(ctx, g, state)
+
+	r.logger.Info("resumed workflow completed",
+		"bead_id", config.BeadID,
+		"grimoire", state.GrimoireName,
+		"status", result.Status,
+		"duration", result.Duration,
+	)
+
+	// Determine the last step name
+	lastStepName := ""
+	if result.CurrentStep >= 0 && result.CurrentStep < len(g.Steps) {
+		lastStepName = g.Steps[result.CurrentStep].Name
+	}
+
+	workflowResult := &WorkflowResult{
+		Success:      result.Status == workflow.WorkflowCompleted,
+		Status:       result.Status,
+		GrimoireName: state.GrimoireName,
+		Duration:     result.Duration,
+		StepCount:    len(result.StepResults),
+		LastStepName: lastStepName,
+	}
+
+	if result.Error != nil {
+		workflowResult.Error = result.Error.Error()
+	}
+
+	return workflowResult, nil
+}
+
 // StatusForResult converts a workflow result to a task status.
+// Note: beads doesn't support "pending_merge" as a status, so we map it to "blocked".
+// The workflow status is still tracked internally for proper state management.
 func StatusForResult(result *WorkflowResult) types.TaskStatus {
 	if result == nil {
 		return types.TaskStatusOpen
@@ -173,7 +281,8 @@ func StatusForResult(result *WorkflowResult) types.TaskStatus {
 	case workflow.WorkflowCompleted:
 		return types.TaskStatusClosed
 	case workflow.WorkflowPendingMerge:
-		return types.TaskStatusPendingMerge
+		// Map pending_merge to blocked for beads compatibility
+		return types.TaskStatusBlocked
 	case workflow.WorkflowBlocked:
 		return types.TaskStatusBlocked
 	case workflow.WorkflowCancelled:

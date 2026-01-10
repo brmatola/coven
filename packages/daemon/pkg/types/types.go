@@ -143,4 +143,13 @@ const (
 	EventTypeAgentQuestion   = "agent.question"
 	EventTypeStateSnapshot   = "state.snapshot"
 	EventTypeHeartbeat       = "heartbeat"
+
+	// Workflow events
+	EventTypeWorkflowStarted       = "workflow.started"
+	EventTypeWorkflowStepStarted   = "workflow.step.started"
+	EventTypeWorkflowStepCompleted = "workflow.step.completed"
+	EventTypeWorkflowBlocked       = "workflow.blocked"
+	EventTypeWorkflowMergePending  = "workflow.merge_pending"
+	EventTypeWorkflowCompleted     = "workflow.completed"
+	EventTypeWorkflowCancelled     = "workflow.cancelled"
 )

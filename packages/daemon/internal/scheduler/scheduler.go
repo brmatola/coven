@@ -81,6 +81,16 @@ func NewScheduler(
 	}
 }
 
+// SetEventEmitter sets the event emitter for workflow events.
+// This should be called before Start() to ensure events are emitted.
+func (s *Scheduler) SetEventEmitter(emitter workflow.EventEmitter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workflowRunner != nil {
+		s.workflowRunner.SetEventEmitter(emitter)
+	}
+}
+
 // SetReconcileInterval sets the reconciliation interval.
 func (s *Scheduler) SetReconcileInterval(d time.Duration) {
 	s.mu.Lock()

@@ -203,6 +203,118 @@ func (b *EventBroker) EmitAgentFailed(agent *types.Agent, err string) {
 	})
 }
 
+// Workflow event emit methods
+
+// WorkflowEventData contains common workflow event data.
+type WorkflowEventData struct {
+	WorkflowID   string `json:"workflow_id"`
+	TaskID       string `json:"task_id"`
+	GrimoireName string `json:"grimoire_name,omitempty"`
+	StepName     string `json:"step_name,omitempty"`
+	StepType     string `json:"step_type,omitempty"`
+	StepIndex    int    `json:"step_index,omitempty"`
+	Success      bool   `json:"success,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Duration     string `json:"duration,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+// EmitWorkflowStarted broadcasts a workflow started event.
+func (b *EventBroker) EmitWorkflowStarted(workflowID, taskID, grimoireName string) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowStarted,
+		Data: WorkflowEventData{
+			WorkflowID:   workflowID,
+			TaskID:       taskID,
+			GrimoireName: grimoireName,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// EmitWorkflowStepStarted broadcasts a workflow step started event.
+func (b *EventBroker) EmitWorkflowStepStarted(workflowID, taskID, stepName, stepType string, stepIndex int) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowStepStarted,
+		Data: WorkflowEventData{
+			WorkflowID: workflowID,
+			TaskID:     taskID,
+			StepName:   stepName,
+			StepType:   stepType,
+			StepIndex:  stepIndex,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// EmitWorkflowStepCompleted broadcasts a workflow step completed event.
+func (b *EventBroker) EmitWorkflowStepCompleted(workflowID, taskID, stepName string, stepIndex int, success bool, duration string, err string) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowStepCompleted,
+		Data: WorkflowEventData{
+			WorkflowID: workflowID,
+			TaskID:     taskID,
+			StepName:   stepName,
+			StepIndex:  stepIndex,
+			Success:    success,
+			Duration:   duration,
+			Error:      err,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// EmitWorkflowBlocked broadcasts a workflow blocked event.
+func (b *EventBroker) EmitWorkflowBlocked(workflowID, taskID, reason string) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowBlocked,
+		Data: WorkflowEventData{
+			WorkflowID: workflowID,
+			TaskID:     taskID,
+			Reason:     reason,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// EmitWorkflowMergePending broadcasts a workflow merge pending event.
+func (b *EventBroker) EmitWorkflowMergePending(workflowID, taskID string) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowMergePending,
+		Data: WorkflowEventData{
+			WorkflowID: workflowID,
+			TaskID:     taskID,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// EmitWorkflowCompleted broadcasts a workflow completed event.
+func (b *EventBroker) EmitWorkflowCompleted(workflowID, taskID, grimoireName, duration string) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowCompleted,
+		Data: WorkflowEventData{
+			WorkflowID:   workflowID,
+			TaskID:       taskID,
+			GrimoireName: grimoireName,
+			Duration:     duration,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
+// EmitWorkflowCancelled broadcasts a workflow cancelled event.
+func (b *EventBroker) EmitWorkflowCancelled(workflowID, taskID string) {
+	b.Broadcast(&types.Event{
+		Type: types.EventTypeWorkflowCancelled,
+		Data: WorkflowEventData{
+			WorkflowID: workflowID,
+			TaskID:     taskID,
+		},
+		Timestamp: time.Now(),
+	})
+}
+
 // SSE HTTP Handler
 
 // HandleEvents handles the SSE endpoint.

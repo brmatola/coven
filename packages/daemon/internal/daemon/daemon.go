@@ -89,6 +89,9 @@ func New(workspace, version string) (*Daemon, error) {
 		sched.SetAgentCommand(cfg.AgentCommand, []string{})
 	}
 
+	// Wire up event emitter for workflow events
+	sched.SetEventEmitter(eventBroker)
+
 	// Wire up event callbacks - this handles both state updates and event emission
 	processManager.OnComplete(func(result *agent.ProcessResult) {
 		logger.Info("agent completed",

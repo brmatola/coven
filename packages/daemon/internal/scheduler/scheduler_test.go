@@ -83,6 +83,12 @@ func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, string) {
 	t.Helper()
 
 	repoDir := initTestRepo(t)
+	covenDir := filepath.Join(repoDir, ".coven")
+
+	// Ensure .coven directory exists
+	if err := os.MkdirAll(covenDir, 0755); err != nil {
+		t.Fatalf("Failed to create .coven directory: %v", err)
+	}
 
 	logPath := filepath.Join(t.TempDir(), "test.log")
 	logger, err := logging.New(logPath)
@@ -100,10 +106,19 @@ func newTestScheduler(t *testing.T) (*Scheduler, *state.Store, string) {
 	processManager := agent.NewProcessManager(logger)
 	worktreeManager := git.NewWorktreeManager(repoDir, logger)
 
-	covenDir := filepath.Join(repoDir, ".coven")
 	sched := NewScheduler(store, beadsClient, processManager, worktreeManager, logger, covenDir)
 	// Use echo as mock agent command for tests
 	sched.SetAgentCommand("echo", []string{})
+
+	// Clean up workflow state and worktrees before TempDir cleanup runs
+	t.Cleanup(func() {
+		sched.Stop()
+		// Give workflows time to clean up
+		time.Sleep(50 * time.Millisecond)
+		// Force clean the .coven/workflows directory
+		workflowsDir := filepath.Join(covenDir, "workflows")
+		os.RemoveAll(workflowsDir)
+	})
 
 	return sched, store, repoDir
 }
