@@ -7,6 +7,10 @@ import {
   startSession,
   stopSession,
   forceStopSession,
+  approveWorkflow,
+  rejectWorkflow,
+  retryTask,
+  showAnswerDialog,
   registerWorkflowCommands,
 } from './workflow';
 import { DaemonClient } from '../daemon/client';
@@ -20,6 +24,8 @@ vi.mock('../daemon/client', () => ({
     answerQuestion: vi.fn(),
     startSession: vi.fn(),
     stopSession: vi.fn(),
+    approveWorkflow: vi.fn(),
+    rejectWorkflow: vi.fn(),
   })),
 }));
 
@@ -30,6 +36,8 @@ describe('workflow commands', () => {
     answerQuestion: ReturnType<typeof vi.fn>;
     startSession: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
+    approveWorkflow: ReturnType<typeof vi.fn>;
+    rejectWorkflow: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -41,6 +49,8 @@ describe('workflow commands', () => {
       answerQuestion: vi.fn().mockResolvedValue(undefined),
       startSession: vi.fn().mockResolvedValue(undefined),
       stopSession: vi.fn().mockResolvedValue(undefined),
+      approveWorkflow: vi.fn().mockResolvedValue(undefined),
+      rejectWorkflow: vi.fn().mockResolvedValue(undefined),
     };
 
     // Mock withProgress to just execute the operation
@@ -347,8 +357,8 @@ describe('workflow commands', () => {
 
       registerWorkflowCommands(mockContext, mockClient as unknown as DaemonClient);
 
-      expect(mockContext.subscriptions).toHaveLength(6);
-      expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(6);
+      expect(mockContext.subscriptions).toHaveLength(10);
+      expect(vscode.commands.registerCommand).toHaveBeenCalledTimes(10);
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
         'coven.daemon.startTask',
         expect.any(Function)
@@ -359,6 +369,22 @@ describe('workflow commands', () => {
       );
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
         'coven.daemon.answerQuestion',
+        expect.any(Function)
+      );
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        'coven.daemon.showAnswerDialog',
+        expect.any(Function)
+      );
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        'coven.daemon.approveWorkflow',
+        expect.any(Function)
+      );
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        'coven.daemon.rejectWorkflow',
+        expect.any(Function)
+      );
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        'coven.daemon.retryTask',
         expect.any(Function)
       );
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
@@ -373,6 +399,222 @@ describe('workflow commands', () => {
         'coven.daemon.forceStopSession',
         expect.any(Function)
       );
+    });
+  });
+
+  describe('approveWorkflow', () => {
+    it('should approve a workflow with string ID', async () => {
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Approve');
+
+      const result = await approveWorkflow(mockClient as unknown as DaemonClient, 'workflow-123');
+
+      expect(result).toBe(true);
+      expect(mockClient.approveWorkflow).toHaveBeenCalledWith('workflow-123');
+    });
+
+    it('should approve a workflow with task tree item', async () => {
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Approve');
+
+      const result = await approveWorkflow(mockClient as unknown as DaemonClient, {
+        task: { id: 'task-456' },
+      });
+
+      expect(result).toBe(true);
+      expect(mockClient.approveWorkflow).toHaveBeenCalledWith('task-456');
+    });
+
+    it('should return false when user cancels confirmation', async () => {
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce(undefined);
+
+      const result = await approveWorkflow(mockClient as unknown as DaemonClient, 'workflow-123');
+
+      expect(result).toBe(false);
+      expect(mockClient.approveWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('should skip confirmation when skipConfirmation is true', async () => {
+      const result = await approveWorkflow(
+        mockClient as unknown as DaemonClient,
+        'workflow-123',
+        { skipConfirmation: true }
+      );
+
+      expect(result).toBe(true);
+      // Confirmation dialog not called (modal: true check)
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalledWith(
+        expect.anything(),
+        { modal: true },
+        expect.anything()
+      );
+      expect(mockClient.approveWorkflow).toHaveBeenCalledWith('workflow-123');
+    });
+
+    it('should return false for invalid workflow reference', async () => {
+      const result = await approveWorkflow(mockClient as unknown as DaemonClient, null);
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Invalid workflow reference');
+    });
+
+    it('should show error on daemon failure', async () => {
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Approve');
+      mockClient.approveWorkflow.mockRejectedValue(new Error('Merge failed'));
+
+      const result = await approveWorkflow(mockClient as unknown as DaemonClient, 'workflow-123');
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        'Failed to approve workflow: Merge failed'
+      );
+    });
+  });
+
+  describe('rejectWorkflow', () => {
+    it('should reject a workflow with string ID', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Reject');
+
+      const result = await rejectWorkflow(mockClient as unknown as DaemonClient, 'workflow-123');
+
+      expect(result).toBe(true);
+      expect(mockClient.rejectWorkflow).toHaveBeenCalledWith('workflow-123');
+    });
+
+    it('should return false when user cancels confirmation', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined);
+
+      const result = await rejectWorkflow(mockClient as unknown as DaemonClient, 'workflow-123');
+
+      expect(result).toBe(false);
+      expect(mockClient.rejectWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('should skip confirmation when skipConfirmation is true', async () => {
+      const result = await rejectWorkflow(
+        mockClient as unknown as DaemonClient,
+        'workflow-123',
+        { skipConfirmation: true }
+      );
+
+      expect(result).toBe(true);
+      expect(mockClient.rejectWorkflow).toHaveBeenCalledWith('workflow-123');
+    });
+
+    it('should return false for invalid workflow reference', async () => {
+      const result = await rejectWorkflow(mockClient as unknown as DaemonClient, null);
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Invalid workflow reference');
+    });
+
+    it('should show error on daemon failure', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Reject');
+      mockClient.rejectWorkflow.mockRejectedValue(new Error('Revert failed'));
+
+      const result = await rejectWorkflow(mockClient as unknown as DaemonClient, 'workflow-123');
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        'Failed to reject workflow: Revert failed'
+      );
+    });
+  });
+
+  describe('retryTask', () => {
+    it('should retry a task with string ID', async () => {
+      const result = await retryTask(mockClient as unknown as DaemonClient, 'task-123');
+
+      expect(result).toBe(true);
+      expect(mockClient.startTask).toHaveBeenCalledWith('task-123');
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith('Task restarted');
+    });
+
+    it('should retry a task with tree item', async () => {
+      const result = await retryTask(mockClient as unknown as DaemonClient, {
+        task: { id: 'task-456' },
+      });
+
+      expect(result).toBe(true);
+      expect(mockClient.startTask).toHaveBeenCalledWith('task-456');
+    });
+
+    it('should return false for invalid task reference', async () => {
+      const result = await retryTask(mockClient as unknown as DaemonClient, null);
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Invalid task reference');
+    });
+
+    it('should show error on daemon failure', async () => {
+      mockClient.startTask.mockRejectedValue(new Error('Task not found'));
+
+      const result = await retryTask(mockClient as unknown as DaemonClient, 'task-123');
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        'Failed to retry task: Task not found'
+      );
+    });
+  });
+
+  describe('showAnswerDialog', () => {
+    it('should show input box for free-form questions', async () => {
+      vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce('My answer');
+
+      const result = await showAnswerDialog(mockClient as unknown as DaemonClient, {
+        question: { id: 'q-123', text: 'What should I do?' },
+      });
+
+      expect(result).toBe(true);
+      expect(vscode.window.showInputBox).toHaveBeenCalledWith({
+        prompt: 'What should I do?',
+        placeHolder: 'Enter your answer...',
+        title: 'Answer Question',
+      });
+      expect(mockClient.answerQuestion).toHaveBeenCalledWith('q-123', 'My answer');
+    });
+
+    it('should show quick pick for questions with options', async () => {
+      vi.mocked(vscode.window.showQuickPick).mockResolvedValueOnce('Option A');
+
+      const result = await showAnswerDialog(mockClient as unknown as DaemonClient, {
+        question: {
+          id: 'q-456',
+          text: 'Choose an option',
+          options: ['Option A', 'Option B'],
+        },
+      });
+
+      expect(result).toBe(true);
+      expect(vscode.window.showQuickPick).toHaveBeenCalledWith(['Option A', 'Option B'], {
+        placeHolder: 'Choose an option',
+        title: 'Answer Question',
+      });
+      expect(mockClient.answerQuestion).toHaveBeenCalledWith('q-456', 'Option A');
+    });
+
+    it('should handle question ID only', async () => {
+      vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce('My answer');
+
+      const result = await showAnswerDialog(mockClient as unknown as DaemonClient, 'q-789');
+
+      expect(result).toBe(true);
+      expect(mockClient.answerQuestion).toHaveBeenCalledWith('q-789', 'My answer');
+    });
+
+    it('should return false when user cancels', async () => {
+      vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce(undefined);
+
+      const result = await showAnswerDialog(mockClient as unknown as DaemonClient, 'q-123');
+
+      expect(result).toBe(false);
+      expect(mockClient.answerQuestion).not.toHaveBeenCalled();
+    });
+
+    it('should return false for invalid question reference', async () => {
+      const result = await showAnswerDialog(mockClient as unknown as DaemonClient, null);
+
+      expect(result).toBe(false);
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Invalid question reference');
     });
   });
 

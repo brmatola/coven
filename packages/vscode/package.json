@@ -32,6 +32,12 @@
           "name": "Sessions",
           "type": "tree",
           "icon": "resources/coven.svg"
+        },
+        {
+          "id": "coven.workflows",
+          "name": "Workflows",
+          "type": "tree",
+          "icon": "resources/coven.svg"
         }
       ]
     },
@@ -133,6 +139,36 @@
         "command": "coven.daemon.forceStopSession",
         "title": "Coven: Force Stop Daemon Session",
         "icon": "$(stop-circle)"
+      },
+      {
+        "command": "coven.daemon.showAnswerDialog",
+        "title": "Answer Question",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "coven.daemon.approveWorkflow",
+        "title": "Approve Workflow",
+        "icon": "$(check)"
+      },
+      {
+        "command": "coven.daemon.rejectWorkflow",
+        "title": "Reject Workflow",
+        "icon": "$(close)"
+      },
+      {
+        "command": "coven.daemon.retryTask",
+        "title": "Retry Task",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "coven.showWorkflowDetail",
+        "title": "View Workflow Details",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "coven.answerQuestion",
+        "title": "Answer Question",
+        "icon": "$(comment)"
       }
     ],
     "menus": {
@@ -173,6 +209,41 @@
           "command": "coven.reviewTask",
           "when": "view == coven.sessions && viewItem == task.review",
           "group": "inline"
+        },
+        {
+          "command": "coven.daemon.startTask",
+          "when": "view == coven.workflows && viewItem =~ /^task\\.(ready|pending)$/",
+          "group": "inline"
+        },
+        {
+          "command": "coven.daemon.killTask",
+          "when": "view == coven.workflows && viewItem == task.running",
+          "group": "inline"
+        },
+        {
+          "command": "coven.daemon.showAnswerDialog",
+          "when": "view == coven.workflows && viewItem == question",
+          "group": "inline"
+        },
+        {
+          "command": "coven.daemon.approveWorkflow",
+          "when": "view == coven.workflows && viewItem == task.complete",
+          "group": "inline"
+        },
+        {
+          "command": "coven.daemon.rejectWorkflow",
+          "when": "view == coven.workflows && viewItem == task.complete",
+          "group": "inline@2"
+        },
+        {
+          "command": "coven.daemon.retryTask",
+          "when": "view == coven.workflows && viewItem =~ /^task\\.(failed|blocked)$/",
+          "group": "inline"
+        },
+        {
+          "command": "coven.showWorkflowDetail",
+          "when": "view == coven.workflows && viewItem =~ /^task\\./",
+          "group": "inline@3"
         }
       ]
     }

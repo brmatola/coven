@@ -269,6 +269,190 @@ export async function forceStopSession(
 }
 
 /**
+ * Extract workflow ID from command argument.
+ * Handles both string IDs and tree items.
+ */
+function extractWorkflowId(arg: unknown): string | null {
+  if (typeof arg === 'string') {
+    return arg;
+  }
+  if (arg && typeof arg === 'object') {
+    const item = arg as { workflow?: { id?: string }; workflowId?: string; task?: { id?: string } };
+    if (item.workflow?.id) {
+      return item.workflow.id;
+    }
+    if (item.workflowId) {
+      return item.workflowId;
+    }
+    // For task items in completed section, task.id is the workflow ID
+    if (item.task?.id) {
+      return item.task.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Approve a completed workflow and merge changes
+ */
+export async function approveWorkflow(
+  client: DaemonClient,
+  arg: unknown,
+  options: CommandOptions = {}
+): Promise<boolean> {
+  const workflowId = extractWorkflowId(arg);
+  if (!workflowId) {
+    void vscode.window.showErrorMessage('Invalid workflow reference');
+    return false;
+  }
+
+  // Confirm before approving
+  if (!options.skipConfirmation) {
+    const confirm = await vscode.window.showInformationMessage(
+      'Approve this workflow and merge changes?',
+      { modal: true },
+      'Approve'
+    );
+    if (confirm !== 'Approve') {
+      return false;
+    }
+  }
+
+  try {
+    await withProgress('Approving workflow...', options.showProgress ?? true, async () => {
+      await client.approveWorkflow(workflowId);
+    });
+    void vscode.window.showInformationMessage('Workflow approved and changes merged');
+    return true;
+  } catch (error) {
+    showDaemonError(error, 'Failed to approve workflow');
+    return false;
+  }
+}
+
+/**
+ * Reject a workflow and discard changes
+ */
+export async function rejectWorkflow(
+  client: DaemonClient,
+  arg: unknown,
+  options: CommandOptions = {}
+): Promise<boolean> {
+  const workflowId = extractWorkflowId(arg);
+  if (!workflowId) {
+    void vscode.window.showErrorMessage('Invalid workflow reference');
+    return false;
+  }
+
+  // Confirm before rejecting
+  if (!options.skipConfirmation) {
+    const confirm = await vscode.window.showWarningMessage(
+      'Reject this workflow? All changes will be discarded.',
+      { modal: true },
+      'Reject'
+    );
+    if (confirm !== 'Reject') {
+      return false;
+    }
+  }
+
+  try {
+    await withProgress('Rejecting workflow...', options.showProgress ?? true, async () => {
+      await client.rejectWorkflow(workflowId);
+    });
+    void vscode.window.showInformationMessage('Workflow rejected and changes discarded');
+    return true;
+  } catch (error) {
+    showDaemonError(error, 'Failed to reject workflow');
+    return false;
+  }
+}
+
+/**
+ * Retry a failed or blocked task by restarting it
+ */
+export async function retryTask(
+  client: DaemonClient,
+  arg: unknown,
+  options: CommandOptions = {}
+): Promise<boolean> {
+  const taskId = extractId(arg);
+  if (!taskId) {
+    void vscode.window.showErrorMessage('Invalid task reference');
+    return false;
+  }
+
+  try {
+    await withProgress('Retrying task...', options.showProgress ?? true, async () => {
+      await client.startTask(taskId);
+    });
+    void vscode.window.showInformationMessage('Task restarted');
+    return true;
+  } catch (error) {
+    showDaemonError(error, 'Failed to retry task');
+    return false;
+  }
+}
+
+/**
+ * Show answer dialog for a question
+ */
+export async function showAnswerDialog(
+  client: DaemonClient,
+  arg: unknown
+): Promise<boolean> {
+  // Extract question from argument
+  let questionId: string | null = null;
+  let questionText = 'Enter your answer:';
+  let questionOptions: string[] | undefined;
+
+  if (typeof arg === 'string') {
+    questionId = arg;
+  } else if (arg && typeof arg === 'object') {
+    const item = arg as {
+      question?: { id?: string; text?: string; options?: string[] };
+      id?: string;
+    };
+    if (item.question) {
+      questionId = item.question.id ?? null;
+      questionText = item.question.text ?? questionText;
+      questionOptions = item.question.options;
+    } else if (item.id) {
+      questionId = item.id;
+    }
+  }
+
+  if (!questionId) {
+    void vscode.window.showErrorMessage('Invalid question reference');
+    return false;
+  }
+
+  let answer: string | undefined;
+
+  // If question has options, show quick pick
+  if (questionOptions && questionOptions.length > 0) {
+    answer = await vscode.window.showQuickPick(questionOptions, {
+      placeHolder: questionText,
+      title: 'Answer Question',
+    });
+  } else {
+    // Free-form input
+    answer = await vscode.window.showInputBox({
+      prompt: questionText,
+      placeHolder: 'Enter your answer...',
+      title: 'Answer Question',
+    });
+  }
+
+  if (answer === undefined) {
+    // User cancelled
+    return false;
+  }
+
+  return answerQuestion(client, questionId, answer);
+}
+
+/**
  * Register all workflow commands
  */
 export function registerWorkflowCommands(
@@ -285,6 +469,18 @@ export function registerWorkflowCommands(
     vscode.commands.registerCommand(
       'coven.daemon.answerQuestion',
       (questionId: string, answer: string) => answerQuestion(client, questionId, answer)
+    ),
+    vscode.commands.registerCommand('coven.daemon.showAnswerDialog', (arg: unknown) =>
+      showAnswerDialog(client, arg)
+    ),
+    vscode.commands.registerCommand('coven.daemon.approveWorkflow', (arg: unknown) =>
+      approveWorkflow(client, arg)
+    ),
+    vscode.commands.registerCommand('coven.daemon.rejectWorkflow', (arg: unknown) =>
+      rejectWorkflow(client, arg)
+    ),
+    vscode.commands.registerCommand('coven.daemon.retryTask', (arg: unknown) =>
+      retryTask(client, arg)
     ),
     vscode.commands.registerCommand('coven.daemon.startSession', (featureBranch?: string) =>
       startSession(client, featureBranch)
