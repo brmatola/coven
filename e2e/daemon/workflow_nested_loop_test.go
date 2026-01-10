@@ -135,18 +135,18 @@ description: Nested loops with agent step
 timeout: 10m
 
 steps:
-  - name: feature-loop
+  - name: outer
     type: loop
     max_iterations: 2
     steps:
-      - name: implement-test-loop
+      - name: inner
         type: loop
         max_iterations: 2
         steps:
           - name: implement
             type: agent
             spell: |
-              Implement feature {{.loop.iteration}}.
+              Implement feature outer={{.outer.iteration}} inner={{.inner.iteration}}
               Return: {"success": true}
             timeout: 1m
 

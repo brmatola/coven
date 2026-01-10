@@ -59,8 +59,10 @@ func (e *LoopExecutor) Execute(ctx context.Context, step *grimoire.Step, stepCtx
 
 	// Determine max iterations (0 means unlimited)
 	maxIterations := step.MaxIterations
+	usedDefaultLimit := false
 	if maxIterations <= 0 {
 		maxIterations = 100 // Default safety limit
+		usedDefaultLimit = true
 	}
 
 	start := time.Now()
@@ -103,7 +105,7 @@ func (e *LoopExecutor) Execute(ctx context.Context, step *grimoire.Step, stepCtx
 
 	// Check if we hit max iterations
 	if iteration >= maxIterations {
-		return e.handleMaxIterations(step, lastResult, duration, iteration)
+		return e.handleMaxIterations(step, lastResult, duration, iteration, usedDefaultLimit)
 	}
 
 	// Loop completed normally (via exit_loop, block, or success)
@@ -238,7 +240,7 @@ func (e *LoopExecutor) logLoopIteration(stepName string, iteration, maxIter int,
 }
 
 // handleMaxIterations handles the case when max iterations is reached.
-func (e *LoopExecutor) handleMaxIterations(step *grimoire.Step, lastResult *StepResult, duration time.Duration, iterations int) (*StepResult, error) {
+func (e *LoopExecutor) handleMaxIterations(step *grimoire.Step, lastResult *StepResult, duration time.Duration, iterations int, usedDefaultLimit bool) (*StepResult, error) {
 	var output string
 	if lastResult != nil {
 		output = lastResult.Output
@@ -263,8 +265,8 @@ func (e *LoopExecutor) handleMaxIterations(step *grimoire.Step, lastResult *Step
 			Action:   ActionContinue,
 		}, nil
 
-	case string(grimoire.OnMaxIterationsExit), "":
-		// Default behavior: fail the workflow
+	case string(grimoire.OnMaxIterationsExit):
+		// Explicit exit: fail the workflow
 		return &StepResult{
 			Success:  false,
 			Output:   output,
@@ -272,6 +274,27 @@ func (e *LoopExecutor) handleMaxIterations(step *grimoire.Step, lastResult *Step
 			Error:    fmt.Sprintf("loop reached max iterations (%d)", iterations),
 			Duration: duration,
 			Action:   ActionFail,
+		}, nil
+
+	case "":
+		// Default behavior depends on whether user set max_iterations explicitly
+		if usedDefaultLimit {
+			// Hit default safety limit (100) without explicit max_iterations - treat as failure
+			return &StepResult{
+				Success:  false,
+				Output:   output,
+				ExitCode: -1,
+				Error:    fmt.Sprintf("loop reached default safety limit (%d iterations)", iterations),
+				Duration: duration,
+				Action:   ActionFail,
+			}, nil
+		}
+		// User explicitly set max_iterations - completing all is success
+		return &StepResult{
+			Success:  true,
+			Output:   output,
+			Duration: duration,
+			Action:   ActionContinue,
 		}, nil
 
 	default:
