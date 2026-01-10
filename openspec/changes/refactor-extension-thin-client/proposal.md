@@ -19,9 +19,11 @@ The current extension still spawns agents directly and manages state internally.
 - **MODIFIED**: `agent-execution` spec - Extension delegates to daemon
 - **NEW**: `daemon-connection` spec - Connection lifecycle and auto-start
 - **NEW**: `workflow-ui` spec - Workflow-first UI design
+- **NEW**: `initialization` spec - Workspace setup flow (git, beads, coven, openspec)
 - **NEW**: DaemonClient module (`packages/vscode/src/daemon/`)
 - **REMOVED**: CovenSession, FamiliarManager, ClaudeAgent, OrphanRecovery
 - **REMOVED**: Direct beads watching from extension
+- **REMOVED**: Session API from daemon (vestigial, daemon accepts work immediately on start)
 
 ## Architecture After Refactor
 
@@ -72,6 +74,7 @@ The current extension still spawns agents directly and manages state internally.
 | `/health` | GET | Daemon health and version |
 | `/state` | GET | Full state snapshot |
 | `/events` | GET | SSE event stream |
+| `/shutdown` | POST | Graceful daemon shutdown |
 
 ### Tasks
 | Endpoint | Method | Description |
@@ -229,7 +232,7 @@ class DaemonClient extends EventEmitter {
   }
 
   // Connection lifecycle
-  async connect(): Promise<void>
+  async connect(): Promise<void>        // Connect → fetch state → subscribe SSE
   async ensureDaemonRunning(): Promise<void>
   disconnect(): void
   subscribe(): void
@@ -249,6 +252,7 @@ class DaemonClient extends EventEmitter {
   async approveMerge(id: string): Promise<MergeResult>
   async rejectMerge(id: string, reason?: string): Promise<void>
   async answerQuestion(id: string, answer: string): Promise<void>
+  async shutdown(): Promise<void>
 
   // Events (from SSE)
   on('connected', () => void): this
@@ -340,3 +344,141 @@ The following will be **deleted** from the extension:
 - Delete direct agent/beads code
 - Clean up unused dependencies
 - Update tests
+
+## Testing Strategy
+
+Testing is critical for this refactor. The extension becomes a thin client, so we must verify:
+1. Daemon communication works correctly
+2. UI updates in response to events
+3. Error handling is robust
+4. User workflows function end-to-end
+
+### Unit Test Coverage (80% minimum)
+
+#### DaemonClient Tests
+| Test Area | Scenarios |
+|-----------|-----------|
+| Connection | Connect success, connect timeout, connect refused |
+| Reconnection | Auto-reconnect on drop, max retries exceeded, backoff timing |
+| Session | Auto-start session on connect, session already active, session start failure |
+| SSE Parsing | Valid events, malformed events, heartbeat handling |
+| State Cache | Initial population, incremental updates, cache invalidation |
+| API Calls | Success responses, error responses, timeout handling |
+| Event Emission | Correct event types, event data integrity |
+
+#### WorkflowTreeProvider Tests
+| Test Area | Scenarios |
+|-----------|-----------|
+| Sections | Active workflows render, questions with badge, ready tasks, blocked, completed collapsed |
+| Grouping | Workflows grouped by status, correct ordering |
+| Updates | Real-time updates on state change, optimistic updates |
+| Actions | Start task, cancel workflow, approve/reject merge, retry blocked |
+| Edge Cases | Empty sections, many items, rapid updates |
+
+#### WorkflowDetailPanel Tests
+| Test Area | Scenarios |
+|-----------|-----------|
+| Metadata | Grimoire name, started time, workflow ID |
+| Step List | All steps rendered, status icons correct, nested loops indented |
+| Progress | Current step highlighted, iteration counts for loops |
+| Output | Initial fetch, streaming append, auto-scroll |
+| Actions | Button visibility per status, action API calls |
+
+#### MergeReviewPanel Tests
+| Test Area | Scenarios |
+|-----------|-----------|
+| Diff Display | Files changed list, additions/deletions counts |
+| Step Outputs | Summary from each step |
+| Approve | Success merge, conflict detection, open worktree on conflict |
+| Reject | Reject with reason, reject without reason |
+
+#### QuestionHandler Tests
+| Test Area | Scenarios |
+|-----------|-----------|
+| Notification | Question notification shows, preview text correct |
+| Dialog | Answer dialog opens, answer submitted |
+| Sidebar | Badge count updates, question removal on answer |
+| Edge Cases | Multiple questions, rapid questions |
+
+#### StatusBar Tests
+| Test Area | Scenarios |
+|-----------|-----------|
+| Display | Connected state, disconnected state, not initialized |
+| Counts | Active workflow count, pending merge count |
+| Click | Reveal sidebar on click |
+
+### E2E Test Coverage
+
+#### Critical Path Tests (Must Pass)
+
+| Test | Steps | Validation |
+|------|-------|------------|
+| **Daemon auto-start** | 1. Open coven workspace 2. Wait for activation | Daemon process running, socket exists, SSE connected |
+| **Start task workflow** | 1. Click [Start] on ready task 2. Wait for workflow | Task moves to active, workflow.started event received |
+| **Workflow completion** | 1. Start task 2. Wait for completion | All steps complete, workflow.completed event, task in completed section |
+| **Merge approval** | 1. Workflow reaches pending_merge 2. Click Approve | Merge executes, task closed, worktree cleaned |
+| **Question handling** | 1. Agent emits question 2. Answer via dialog | Question appears, answer delivered, agent continues |
+| **Cancel workflow** | 1. Start workflow 2. Click Cancel | Agent terminated, workflow cancelled |
+
+#### Error Recovery Tests
+
+| Test | Steps | Validation |
+|------|-------|------------|
+| **Daemon crash recovery** | 1. Start workflow 2. Kill daemon process 3. Wait | Extension shows disconnected, offers restart, workflow state recovered |
+| **Connection drop** | 1. Connect 2. Simulate network drop 3. Wait | Reconnection attempts, success after network restored |
+| **Session timeout** | 1. Start session 2. Let daemon idle 3. Attempt action | Session auto-restarts if needed |
+| **API error handling** | 1. Trigger API error (e.g., start non-existent task) | User-friendly error shown, UI remains stable |
+
+#### Workflow Lifecycle Tests
+
+| Test | Steps | Validation |
+|------|-------|------------|
+| **Multi-step workflow** | 1. Start workflow with 3+ steps | Each step transitions correctly, outputs captured |
+| **Loop step execution** | 1. Start workflow with loop 2. Observe iterations | Iteration count displays, loop completes or hits max |
+| **Blocked workflow retry** | 1. Start workflow that will fail 2. Fix issue 3. Retry | Workflow resumes, completes successfully |
+| **Reject merge** | 1. Workflow pending merge 2. Reject with reason | Workflow blocked, reason recorded |
+| **Merge conflict** | 1. Create conflicting changes 2. Approve merge | Conflict detected, files listed, worktree openable |
+
+#### Concurrent Operations Tests
+
+| Test | Steps | Validation |
+|------|-------|------------|
+| **Multiple active workflows** | 1. Start 2+ workflows simultaneously | All tracked independently, UI shows all |
+| **Multiple pending questions** | 1. Trigger multiple questions | All display in sidebar, answerable in any order |
+| **Rapid task starts** | 1. Click Start on 3 tasks quickly | All start without race conditions |
+
+#### UI State Tests
+
+| Test | Steps | Validation |
+|------|-------|------------|
+| **Sidebar sections** | 1. Create tasks in various states | All sections render correctly |
+| **Detail panel updates** | 1. Open detail 2. Workflow progresses | Panel updates in real-time |
+| **Output streaming** | 1. Open detail during agent run | Output streams, auto-scrolls |
+| **Optimistic updates** | 1. Click action 2. Check UI before confirmation | UI updates immediately, confirms or reverts |
+
+### Test Infrastructure Requirements
+
+#### Unit Test Infrastructure
+- **Mock DaemonClient**: Simulates socket responses and SSE events
+- **Mock SSE Stream**: Emits configurable event sequences
+- **State Fixtures**: Pre-built state snapshots for various scenarios
+- **Timer Mocks**: Control reconnection timing in tests
+
+#### E2E Test Infrastructure
+- **Test Workspace**: Fixture workspace with .coven/ and beads
+- **Mock Agent**: Binary that simulates claude behavior (outputs, questions, completion)
+- **Daemon Control**: Start/stop daemon between tests
+- **Event Assertions**: Wait for specific SSE events with timeout
+
+### Coverage Exclusions (Allowed)
+
+Only these patterns may be excluded from 80% coverage:
+- `*.test.ts` - Test files themselves
+- `test/**/*` - Test infrastructure
+- `e2e/**/*` - E2E test code
+- Type definitions only (`*.d.ts`)
+
+NOT allowed to exclude:
+- Any source code in `src/`
+- "Covered by E2E" comments
+- Error handlers or edge case code

@@ -93,7 +93,8 @@ The extension SHALL provide commands for daemon control.
 #### Scenario: Stop daemon
 - **WHEN** user executes "Coven: Stop Daemon" command
 - **THEN** extension calls POST /shutdown on daemon
-- **THEN** daemon gracefully terminates all agents
+- **THEN** daemon gracefully terminates all running agents
+- **THEN** daemon saves workflow state for resumption
 - **THEN** daemon exits
 - **THEN** extension shows disconnected state
 

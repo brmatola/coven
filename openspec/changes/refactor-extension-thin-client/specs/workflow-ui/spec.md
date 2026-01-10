@@ -117,7 +117,13 @@ The extension SHALL provide merge review UI.
 - **WHEN** panel renders
 - **THEN** shows list of changed files with +/- counts
 - **THEN** shows total additions/deletions
-- **THEN** "View Diff" opens VS Code diff view
+- **THEN** clicking file opens VS Code diff (main branch vs worktree)
+
+#### Scenario: View file diff
+- **WHEN** user clicks a file in the changed files list
+- **THEN** extension calls `vscode.diff(mainBranchUri, worktreeUri, title)`
+- **THEN** diff editor opens showing side-by-side comparison
+- **THEN** user can review changes before approving
 
 #### Scenario: Step outputs
 - **GIVEN** merge review panel is open
@@ -129,8 +135,24 @@ The extension SHALL provide merge review UI.
 - **WHEN** user clicks "Approve & Merge"
 - **THEN** extension calls POST /workflows/:id/approve-merge
 - **THEN** if success, panel shows success and closes
-- **THEN** if conflicts, panel shows conflict files
+- **THEN** if conflicts, panel shows conflict files list
 - **THEN** if conflicts, offers "Open Worktree" to resolve
+
+#### Scenario: Resolve merge conflicts
+- **GIVEN** merge has conflicts
+- **WHEN** user clicks "Open Worktree"
+- **THEN** extension opens worktree folder in new VS Code window
+- **THEN** conflicting files show conflict markers
+- **THEN** user resolves conflicts manually in worktree
+- **THEN** user commits resolution in worktree
+- **THEN** user clicks "Retry Merge" in original window
+
+#### Scenario: Retry merge after conflict resolution
+- **WHEN** user clicks "Retry Merge"
+- **THEN** extension calls POST /workflows/:id/approve-merge again
+- **THEN** daemon attempts merge with resolved worktree
+- **THEN** if success, workflow completes
+- **THEN** if still conflicts, user repeats resolution
 
 #### Scenario: Reject merge
 - **WHEN** user clicks "Reject"
