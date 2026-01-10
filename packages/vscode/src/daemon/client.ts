@@ -9,6 +9,10 @@ import {
   StartSessionRequest,
   StopSessionRequest,
   AnswerQuestionRequest,
+  ApproveWorkflowRequest,
+  RejectWorkflowRequest,
+  WorkflowChangesResponse,
+  WorkflowReviewResponse,
   DaemonClientError,
   DaemonErrorCode,
 } from './types';
@@ -187,6 +191,61 @@ export class DaemonClient {
   }
 
   // ============================================================================
+  // Workflow Review API
+  // ============================================================================
+
+  /**
+   * Get workflow changes for review.
+   */
+  async getWorkflowChanges(workflowId: string): Promise<WorkflowChangesResponse> {
+    return this.get<WorkflowChangesResponse>(
+      `/workflows/${encodeURIComponent(workflowId)}/changes`
+    );
+  }
+
+  /**
+   * Get full workflow review data including changes and step outputs.
+   */
+  async getWorkflowReview(workflowId: string): Promise<WorkflowReviewResponse> {
+    return this.get<WorkflowReviewResponse>(
+      `/workflows/${encodeURIComponent(workflowId)}/review`
+    );
+  }
+
+  /**
+   * Approve a workflow and merge changes.
+   */
+  async approveWorkflow(workflowId: string, feedback?: string): Promise<void> {
+    const request: ApproveWorkflowRequest = feedback ? { feedback } : {};
+    await this.post<void>(
+      `/workflows/${encodeURIComponent(workflowId)}/approve`,
+      request
+    );
+  }
+
+  /**
+   * Reject a workflow and discard changes.
+   */
+  async rejectWorkflow(workflowId: string, reason?: string): Promise<void> {
+    const request: RejectWorkflowRequest = reason ? { reason } : {};
+    await this.post<void>(
+      `/workflows/${encodeURIComponent(workflowId)}/reject`,
+      request
+    );
+  }
+
+  /**
+   * Get file diff between workflow branches.
+   * Returns the diff content as a string.
+   */
+  async getWorkflowFileDiff(workflowId: string, filePath: string): Promise<string> {
+    const response = await this.get<{ diff: string }>(
+      `/workflows/${encodeURIComponent(workflowId)}/diff/${encodeURIComponent(filePath)}`
+    );
+    return response.diff;
+  }
+
+  // ============================================================================
   // Private Methods
   // ============================================================================
 
@@ -253,6 +312,9 @@ export class DaemonClient {
               } else if (options.path.startsWith('/questions/')) {
                 errorCode = 'question_not_found';
                 errorMessage = 'Question not found';
+              } else if (options.path.startsWith('/workflows/')) {
+                errorCode = 'workflow_not_found';
+                errorMessage = 'Workflow not found';
               }
             }
 

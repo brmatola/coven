@@ -1,381 +1,742 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ReviewPanel } from './ReviewPanel';
-import { ReviewManager, ReviewInfo } from './ReviewManager';
-import { WorktreeManager } from '../git/WorktreeManager';
-import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
-import { FamiliarManager } from '../agents/FamiliarManager';
-import { Task, TaskStatus } from '../shared/types';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient } from '../daemon/sse';
 
-// Store message handler for testing
-let messageHandler: ((msg: unknown) => void) | null = null;
-let disposeHandler: (() => void) | null = null;
-
-// Mock webview
-const mockWebview = {
-  html: '',
-  postMessage: vi.fn().mockResolvedValue(true),
-  onDidReceiveMessage: vi.fn((handler) => {
-    messageHandler = handler;
-    return { dispose: vi.fn() };
-  }),
-  asWebviewUri: vi.fn((uri) => uri),
-  cspSource: 'https://test',
-};
-
-// Mock panel
-const mockPanel = {
-  webview: mockWebview,
-  title: '',
-  onDidDispose: vi.fn((handler) => {
-    disposeHandler = handler;
-    return { dispose: vi.fn() };
-  }),
-  reveal: vi.fn(),
-  dispose: vi.fn(),
-};
-
-// Mock vscode module
-vi.mock('vscode', () => {
-  return {
-    window: {
-      createWebviewPanel: vi.fn(() => mockPanel),
-      showErrorMessage: vi.fn(),
-      showWarningMessage: vi.fn().mockResolvedValue(undefined),
-      showInformationMessage: vi.fn(),
-      activeTextEditor: { viewColumn: 1 },
-    },
-    Uri: {
-      joinPath: vi.fn((uri, ...segments) => ({
-        fsPath: `${uri?.fsPath ?? '/ext'}/${segments.join('/')}`,
-        toString: () => `${uri?.fsPath ?? '/ext'}/${segments.join('/')}`,
-      })),
-    },
-    ViewColumn: {
-      One: 1,
-      Two: 2,
-      Active: -1,
-    },
-  };
-});
+// Mock daemon client
+vi.mock('../daemon/client', () => ({
+  DaemonClient: vi.fn().mockImplementation(() => ({
+    getWorkflowReview: vi.fn(),
+    approveWorkflow: vi.fn(),
+    rejectWorkflow: vi.fn(),
+  })),
+}));
 
 // Mock logger
 vi.mock('../shared/logger', () => ({
-  getLogger: () => ({
+  getLogger: vi.fn(() => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-    debug: vi.fn(),
-  }),
+  })),
 }));
 
-function createMockTask(overrides: Partial<Task> = {}): Task {
-  return {
-    id: 'task-1',
-    title: 'Test Task',
-    description: 'Test description',
-    status: 'review' as TaskStatus,
-    priority: 'medium',
-    dependencies: [],
-    sourceId: 'test',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    ...overrides,
-  };
-}
-
-function createMockReview(taskId: string): ReviewInfo {
-  return {
-    taskId,
-    status: 'pending',
-    changedFiles: [
-      { path: 'file1.ts', linesAdded: 10, linesDeleted: 5, changeType: 'modified' },
-      { path: 'file2.ts', linesAdded: 20, linesDeleted: 0, changeType: 'added' },
-    ],
-    checkResults: [],
-    startedAt: Date.now(),
-  };
-}
-
 describe('ReviewPanel', () => {
-  let mockExtensionUri: vscode.Uri;
-  let mockReviewManager: ReviewManager;
-  let mockWorktreeManager: WorktreeManager;
-  let mockBeadsTaskSource: BeadsTaskSource;
-  let mockFamiliarManager: FamiliarManager;
+  let mockDaemonClient: {
+    getWorkflowReview: ReturnType<typeof vi.fn>;
+    approveWorkflow: ReturnType<typeof vi.fn>;
+    rejectWorkflow: ReturnType<typeof vi.fn>;
+  };
+  let mockSSEClient: {
+    on: ReturnType<typeof vi.fn>;
+    off: ReturnType<typeof vi.fn>;
+    connectionState: string;
+    eventListeners: Map<string, Set<(...args: unknown[]) => void>>;
+  };
+  let mockPanel: ReturnType<typeof createMockPanel>;
+  let messageHandlers = new Map<string, (message: unknown) => void>();
+  let disposeHandlers = new Map<string, () => void>();
+  let createdPanels: ReviewPanel[] = [];
+  let currentWorkflowId = 'workflow-1';
+
+  function createMockPanel(workflowId: string) {
+    return {
+      webview: {
+        html: '',
+        onDidReceiveMessage: vi.fn(
+          (callback: (message: unknown) => void, _thisArg?: unknown, _disposables?: unknown[]) => {
+            messageHandlers.set(workflowId, callback);
+            return { dispose: vi.fn() };
+          }
+        ),
+        postMessage: vi.fn().mockResolvedValue(true),
+        asWebviewUri: vi.fn((uri: unknown) => uri),
+        cspSource: 'mock-csp',
+      },
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+      onDidDispose: vi.fn(
+        (callback: () => void, _thisArg?: unknown, _disposables?: unknown[]) => {
+          disposeHandlers.set(workflowId, callback);
+          return { dispose: vi.fn() };
+        }
+      ),
+      title: '',
+    };
+  }
+
+  function createMockSSEClient() {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+
+    return {
+      eventListeners: listeners,
+      connectionState: 'connected',
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        if (!listeners.has(event)) {
+          listeners.set(event, new Set());
+        }
+        listeners.get(event)!.add(handler);
+      }),
+      off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        listeners.get(event)?.delete(handler);
+      }),
+      emit(event: string, ...args: unknown[]) {
+        listeners.get(event)?.forEach((handler) => handler(...args));
+      },
+      listenerCount(event: string) {
+        return listeners.get(event)?.size ?? 0;
+      },
+    };
+  }
+
+  function getMessageHandler(workflowId = 'workflow-1'): ((message: unknown) => void) | undefined {
+    return messageHandlers.get(workflowId);
+  }
+
+  function getDisposeHandler(workflowId = 'workflow-1'): (() => void) | undefined {
+    return disposeHandlers.get(workflowId);
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
-    messageHandler = null;
-    disposeHandler = null;
+    messageHandlers.clear();
+    disposeHandlers.clear();
+    createdPanels = [];
+    currentWorkflowId = 'workflow-1';
 
-    // Close any existing panels
-    ReviewPanel.closeAll();
-
-    mockExtensionUri = { fsPath: '/ext' } as unknown as vscode.Uri;
-
-    mockReviewManager = {
-      startReview: vi.fn().mockResolvedValue(createMockReview('task-1')),
-      getReview: vi.fn().mockReturnValue(createMockReview('task-1')),
-      getPreMergeChecksConfig: vi.fn().mockReturnValue({ enabled: false, commands: [] }),
-      runPreMergeChecks: vi.fn().mockResolvedValue([]),
-      approve: vi.fn().mockResolvedValue(undefined),
-      revert: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(),
-      off: vi.fn(),
-    } as unknown as ReviewManager;
-
-    mockWorktreeManager = {
-      getWorktree: vi.fn().mockReturnValue({
-        path: '/worktrees/task-1',
-        branch: 'task/task-1',
-        head: 'abc123',
-        isMain: false,
+    mockDaemonClient = {
+      getWorkflowReview: vi.fn().mockResolvedValue({
+        workflowId: 'workflow-1',
+        taskId: 'task-1',
+        taskTitle: 'Implement feature X',
+        taskDescription: 'Add new functionality',
+        acceptanceCriteria: 'Feature works correctly',
+        changes: {
+          workflowId: 'workflow-1',
+          taskId: 'task-1',
+          baseBranch: 'main',
+          headBranch: 'feature/x',
+          worktreePath: '/tmp/worktree-1',
+          files: [
+            { path: 'src/feature.ts', linesAdded: 50, linesDeleted: 10, changeType: 'modified' },
+            { path: 'src/new.ts', linesAdded: 100, linesDeleted: 0, changeType: 'added' },
+          ],
+          totalLinesAdded: 150,
+          totalLinesDeleted: 10,
+          commitCount: 3,
+        },
+        stepOutputs: [
+          { stepId: 'step-1', stepName: 'Implement', summary: 'Added feature', exitCode: 0 },
+          { stepId: 'step-2', stepName: 'Test', summary: 'All tests pass', exitCode: 0 },
+        ],
+        startedAt: Date.now() - 60000,
+        completedAt: Date.now(),
+        durationMs: 60000,
       }),
-    } as unknown as WorktreeManager;
+      approveWorkflow: vi.fn().mockResolvedValue(undefined),
+      rejectWorkflow: vi.fn().mockResolvedValue(undefined),
+    };
 
-    mockBeadsTaskSource = {
-      getTask: vi.fn().mockReturnValue(createMockTask()),
-    } as unknown as BeadsTaskSource;
+    mockSSEClient = createMockSSEClient();
+    mockPanel = createMockPanel('workflow-1');
 
-    mockFamiliarManager = {
-      getFamiliar: vi.fn().mockReturnValue(null),
-    } as unknown as FamiliarManager;
+    vi.mocked(vscode.window.createWebviewPanel).mockImplementation(
+      (_viewType, _title, _showOptions, _options) => {
+        mockPanel = createMockPanel(currentWorkflowId);
+        return mockPanel as unknown as vscode.WebviewPanel;
+      }
+    );
   });
 
   afterEach(() => {
-    ReviewPanel.closeAll();
+    disposeHandlers.forEach((handler) => {
+      handler();
+    });
   });
 
+  async function createPanel(workflowId = 'workflow-1'): Promise<ReviewPanel | null> {
+    currentWorkflowId = workflowId;
+    const panel = await ReviewPanel.createOrShow(
+      new vscode.Uri('/test'),
+      mockDaemonClient as unknown as DaemonClient,
+      mockSSEClient as unknown as SSEClient,
+      workflowId
+    );
+    if (panel) {
+      createdPanels.push(panel);
+    }
+    return panel;
+  }
+
   describe('createOrShow', () => {
-    it('creates a new panel for a task in review status', async () => {
-      const panel = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
+    it('should create a new panel', async () => {
+      const panel = await createPanel();
 
       expect(panel).toBeDefined();
       expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith(
         'covenReview',
         expect.stringContaining('Review:'),
-        1,
-        expect.any(Object)
-      );
-      expect(mockReviewManager.startReview).toHaveBeenCalledWith('task-1');
-    });
-
-    it('returns null if task not found', async () => {
-      vi.mocked(mockBeadsTaskSource.getTask).mockReturnValue(undefined);
-
-      const panel = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'non-existent'
-      );
-
-      expect(panel).toBeNull();
-      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
-        'Task not found: non-existent'
+        expect.any(Number),
+        expect.objectContaining({
+          enableScripts: true,
+          retainContextWhenHidden: true,
+        })
       );
     });
 
-    it('returns null if task is not in review status', async () => {
-      vi.mocked(mockBeadsTaskSource.getTask).mockReturnValue(
-        createMockTask({ status: 'working' })
-      );
-
-      const panel = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
-
-      expect(panel).toBeNull();
-      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringContaining('not ready for review')
-      );
-    });
-
-    it('reveals existing panel for same task', async () => {
-      const panel1 = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
-
-      // Reset mocks
-      vi.mocked(vscode.window.createWebviewPanel).mockClear();
-
-      const panel2 = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
+    it('should return existing panel if already open', async () => {
+      const panel1 = await createPanel();
+      const panel2 = await createPanel();
 
       expect(panel1).toBe(panel2);
       expect(mockPanel.reveal).toHaveBeenCalled();
-      expect(vscode.window.createWebviewPanel).not.toHaveBeenCalled();
+    });
+
+    it('should create different panels for different workflows', async () => {
+      const panel1 = await createPanel('workflow-1');
+
+      const secondMockPanel = createMockPanel('workflow-2');
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(
+        secondMockPanel as unknown as vscode.WebviewPanel
+      );
+
+      const panel2 = await createPanel('workflow-2');
+
+      expect(panel1).not.toBe(panel2);
+      expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('get', () => {
-    it('returns undefined for non-existent panel', () => {
-      expect(ReviewPanel.get('non-existent')).toBeUndefined();
+    it('should return existing panel', async () => {
+      await createPanel();
+
+      const panel = ReviewPanel.get('workflow-1');
+      expect(panel).toBeDefined();
     });
 
-    it('returns existing panel', async () => {
-      const panel = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
-
-      expect(ReviewPanel.get('task-1')).toBe(panel);
+    it('should return undefined for non-existent panel', () => {
+      const panel = ReviewPanel.get('non-existent');
+      expect(panel).toBeUndefined();
     });
   });
 
-  describe('closeAll', () => {
-    it('closes all open panels', async () => {
-      await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
+  describe('ready message', () => {
+    it('should fetch workflow review on ready', async () => {
+      await createPanel();
 
-      vi.mocked(mockBeadsTaskSource.getTask).mockReturnValue(
-        createMockTask({ id: 'task-2' })
-      );
+      getMessageHandler()?.({ type: 'ready' });
 
-      await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-2'
-      );
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalledWith('workflow-1');
+      });
+    });
 
-      ReviewPanel.closeAll();
+    it('should send state after fetch', async () => {
+      await createPanel();
 
-      expect(ReviewPanel.get('task-1')).toBeUndefined();
-      expect(ReviewPanel.get('task-2')).toBeUndefined();
+      getMessageHandler()?.({ type: 'ready' });
+
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              workflowId: 'workflow-1',
+              taskId: 'task-1',
+              title: 'Implement feature X',
+              totalLinesAdded: 150,
+              totalLinesDeleted: 10,
+              isLoading: false,
+            }),
+          })
+        );
+      });
+    });
+
+    it('should update panel title after fetch', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+
+      // Wait for state to be sent (which happens after title is set)
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              title: 'Implement feature X',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      expect(mockPanel.title).toBe('Review: Implement feature X');
+    });
+
+    it('should handle fetch error', async () => {
+      mockDaemonClient.getWorkflowReview.mockRejectedValue(new Error('Connection failed'));
+
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              error: expect.stringContaining('Failed to load review'),
+              isLoading: false,
+            }),
+          })
+        );
+      });
+    });
+
+    it('should include step outputs in state', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              stepOutputs: expect.arrayContaining([
+                expect.objectContaining({ stepName: 'Implement' }),
+                expect.objectContaining({ stepName: 'Test' }),
+              ]),
+            }),
+          })
+        );
+      });
+    });
+
+    it('should build agent summary from step outputs', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              agentSummary: expect.stringContaining('Implement'),
+            }),
+          })
+        );
+      });
     });
   });
 
-  describe('message handling', () => {
-    it('handles refresh message', async () => {
-      await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
+  describe('approve action', () => {
+    it('should approve workflow', async () => {
+      await createPanel();
 
-      expect(messageHandler).toBeDefined();
-      messageHandler!({ type: 'refresh' });
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
 
-      // Should update state via postMessage
-      expect(mockWebview.postMessage).toHaveBeenCalled();
+      getMessageHandler()?.({ type: 'approve', payload: { feedback: 'Looks good!' } });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.approveWorkflow).toHaveBeenCalledWith('workflow-1', 'Looks good!');
+      });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          'Workflow approved and merged successfully'
+        );
+      });
     });
 
-    it('handles viewDiff message', async () => {
-      await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
-      );
+    it('should approve workflow without feedback', async () => {
+      await createPanel();
 
-      expect(messageHandler).toBeDefined();
-      messageHandler!({ type: 'viewDiff', payload: { filePath: 'file1.ts' } });
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
 
-      // viewDiff triggers vscode.commands.executeCommand which is mocked
+      getMessageHandler()?.({ type: 'approve' });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.approveWorkflow).toHaveBeenCalledWith('workflow-1', undefined);
+      });
     });
 
-    it('handles approve message', async () => {
-      await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
+    it('should show error on approve failure', async () => {
+      mockDaemonClient.approveWorkflow.mockRejectedValue(new Error('Merge conflict'));
+
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      getMessageHandler()?.({ type: 'approve' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to approve')
+        );
+      });
+    });
+  });
+
+  describe('reject action', () => {
+    it('should reject workflow after confirmation', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+        'Reject' as unknown as vscode.MessageItem
       );
 
-      expect(messageHandler).toBeDefined();
-      messageHandler!({ type: 'approve', payload: { feedback: 'LGTM' } });
+      await createPanel();
 
-      // approve is async, give it time to execute
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
 
-      expect(mockReviewManager.approve).toHaveBeenCalledWith('task-1', 'LGTM');
+      getMessageHandler()?.({ type: 'reject', payload: { reason: 'Not ready' } });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Are you sure'),
+          { modal: true },
+          'Reject'
+        );
+      });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.rejectWorkflow).toHaveBeenCalledWith('workflow-1', 'Not ready');
+      });
     });
 
-    it('handles revert message', async () => {
-      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Revert' as unknown as undefined);
+    it('should not reject if user cancels', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
 
-      await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      getMessageHandler()?.({ type: 'reject' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+      });
+
+      expect(mockDaemonClient.rejectWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('should show error on reject failure', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+        'Reject' as unknown as vscode.MessageItem
+      );
+      mockDaemonClient.rejectWorkflow.mockRejectedValue(new Error('Cleanup failed'));
+
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      getMessageHandler()?.({ type: 'reject' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to reject')
+        );
+      });
+    });
+  });
+
+  describe('viewDiff action', () => {
+    it('should open diff view', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      // Wait for state to be fully loaded
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              worktreePath: '/tmp/worktree-1',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      getMessageHandler()?.({ type: 'viewDiff', payload: { filePath: 'src/feature.ts' } });
+
+      await vi.waitFor(() => {
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          'vscode.diff',
+          expect.any(Object),
+          expect.any(Object),
+          expect.stringContaining('src/feature.ts')
+        );
+      });
+    });
+
+    it('should show error if worktree path not available', async () => {
+      mockDaemonClient.getWorkflowReview.mockResolvedValue({
+        workflowId: 'workflow-1',
+        taskId: 'task-1',
+        taskTitle: 'Test',
+        taskDescription: '',
+        changes: {
+          workflowId: 'workflow-1',
+          taskId: 'task-1',
+          baseBranch: 'main',
+          headBranch: 'feature/x',
+          worktreePath: '', // Empty worktree path
+          files: [],
+          totalLinesAdded: 0,
+          totalLinesDeleted: 0,
+          commitCount: 0,
+        },
+        stepOutputs: [],
+      });
+
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      getMessageHandler()?.({ type: 'viewDiff', payload: { filePath: 'file.ts' } });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          'Worktree path not available'
+        );
+      });
+    });
+  });
+
+  describe('viewAllChanges action', () => {
+    it('should open source control view', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      // Wait for state to be fully loaded
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              worktreePath: '/tmp/worktree-1',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      getMessageHandler()?.({ type: 'viewAllChanges' });
+
+      await vi.waitFor(() => {
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          'git.openRepository',
+          '/tmp/worktree-1'
+        );
+      });
+    });
+  });
+
+  describe('runChecks action', () => {
+    it('should show checking state', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      mockPanel.webview.postMessage.mockClear();
+
+      getMessageHandler()?.({ type: 'runChecks' });
+
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              status: 'checking',
+            }),
+          })
+        );
+      });
+    });
+  });
+
+  describe('overrideChecks action', () => {
+    it('should approve with override after confirmation', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+        'Override and Approve' as unknown as vscode.MessageItem
       );
 
-      expect(messageHandler).toBeDefined();
-      messageHandler!({ type: 'revert', payload: { reason: 'Needs work' } });
+      await createPanel();
 
-      // revert is async, give it time to execute
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
 
-      expect(mockReviewManager.revert).toHaveBeenCalledWith('task-1', 'Needs work');
+      getMessageHandler()?.({ type: 'overrideChecks', payload: { reason: 'Tests flaky' } });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.approveWorkflow).toHaveBeenCalledWith(
+          'workflow-1',
+          '[Override: Tests flaky]'
+        );
+      });
+    });
+
+    it('should not override if user cancels', async () => {
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(undefined);
+
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      getMessageHandler()?.({ type: 'overrideChecks', payload: { reason: 'Tests flaky' } });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showWarningMessage).toHaveBeenCalled();
+      });
+
+      expect(mockDaemonClient.approveWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SSE events', () => {
+    it('should subscribe to SSE events on creation', async () => {
+      await createPanel();
+
+      expect(mockSSEClient.on).toHaveBeenCalledWith('event', expect.any(Function));
+      expect(mockSSEClient.listenerCount('event')).toBe(1);
+    });
+
+    it('should refresh on workflow.completed event', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      mockDaemonClient.getWorkflowReview.mockClear();
+
+      mockSSEClient.emit('event', {
+        type: 'workflow.completed',
+        data: { workflowId: 'workflow-1' },
+        timestamp: Date.now(),
+      });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+    });
+
+    it('should refresh on workflow.failed event', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      mockDaemonClient.getWorkflowReview.mockClear();
+
+      mockSSEClient.emit('event', {
+        type: 'workflow.failed',
+        data: { workflowId: 'workflow-1' },
+        timestamp: Date.now(),
+      });
+
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+    });
+
+    it('should ignore events for other workflows', async () => {
+      await createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      mockDaemonClient.getWorkflowReview.mockClear();
+
+      mockSSEClient.emit('event', {
+        type: 'workflow.completed',
+        data: { workflowId: 'other-workflow' },
+        timestamp: Date.now(),
+      });
+
+      // Should not refetch
+      expect(mockDaemonClient.getWorkflowReview).not.toHaveBeenCalled();
+    });
+
+    it('should unsubscribe from SSE events on dispose', async () => {
+      await createPanel();
+
+      expect(mockSSEClient.listenerCount('event')).toBe(1);
+
+      getDisposeHandler()?.();
+
+      expect(mockSSEClient.off).toHaveBeenCalledWith('event', expect.any(Function));
+      expect(mockSSEClient.listenerCount('event')).toBe(0);
     });
   });
 
   describe('dispose', () => {
-    it('removes panel from static map on dispose', async () => {
-      const panel = await ReviewPanel.createOrShow(
-        mockExtensionUri,
-        mockReviewManager,
-        mockWorktreeManager,
-        mockBeadsTaskSource,
-        mockFamiliarManager,
-        'task-1'
+    it('should remove panel from static map on dispose', async () => {
+      await createPanel();
+
+      expect(ReviewPanel.get('workflow-1')).toBeDefined();
+
+      getDisposeHandler()?.();
+
+      expect(ReviewPanel.get('workflow-1')).toBeUndefined();
+    });
+  });
+
+  describe('closeAll', () => {
+    it('should close all panels', async () => {
+      await createPanel('workflow-1');
+
+      const secondMockPanel = createMockPanel('workflow-2');
+      vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(
+        secondMockPanel as unknown as vscode.WebviewPanel
       );
+      await createPanel('workflow-2');
 
-      expect(ReviewPanel.get('task-1')).toBe(panel);
+      expect(ReviewPanel.get('workflow-1')).toBeDefined();
+      expect(ReviewPanel.get('workflow-2')).toBeDefined();
 
-      // Trigger dispose
-      disposeHandler!();
+      ReviewPanel.closeAll();
 
-      expect(ReviewPanel.get('task-1')).toBeUndefined();
+      expect(ReviewPanel.get('workflow-1')).toBeUndefined();
+      expect(ReviewPanel.get('workflow-2')).toBeUndefined();
     });
   });
 });

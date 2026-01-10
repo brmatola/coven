@@ -179,6 +179,76 @@ export interface AgentOutputResponse {
 }
 
 // ============================================================================
+// Workflow Review API
+// ============================================================================
+
+/**
+ * A file changed in the workflow
+ */
+export interface WorkflowChangedFile {
+  path: string;
+  linesAdded: number;
+  linesDeleted: number;
+  changeType: 'added' | 'modified' | 'deleted' | 'renamed';
+  oldPath?: string;
+}
+
+/**
+ * Response from GET /workflows/:id/changes
+ */
+export interface WorkflowChangesResponse {
+  workflowId: string;
+  taskId: string;
+  baseBranch: string;
+  headBranch: string;
+  worktreePath: string;
+  files: WorkflowChangedFile[];
+  totalLinesAdded: number;
+  totalLinesDeleted: number;
+  commitCount: number;
+}
+
+/**
+ * Request for POST /workflows/:id/approve
+ */
+export interface ApproveWorkflowRequest {
+  feedback?: string;
+}
+
+/**
+ * Request for POST /workflows/:id/reject
+ */
+export interface RejectWorkflowRequest {
+  reason?: string;
+}
+
+/**
+ * Step output summary for review
+ */
+export interface StepOutputSummary {
+  stepId: string;
+  stepName: string;
+  summary: string;
+  exitCode?: number;
+}
+
+/**
+ * Response from GET /workflows/:id/review
+ */
+export interface WorkflowReviewResponse {
+  workflowId: string;
+  taskId: string;
+  taskTitle: string;
+  taskDescription: string;
+  acceptanceCriteria?: string;
+  changes: WorkflowChangesResponse;
+  stepOutputs: StepOutputSummary[];
+  startedAt?: number;
+  completedAt?: number;
+  durationMs?: number;
+}
+
+// ============================================================================
 // Error Types
 // ============================================================================
 
@@ -203,6 +273,7 @@ export type DaemonErrorCode =
   | 'task_not_found'
   | 'agent_not_found'
   | 'question_not_found'
+  | 'workflow_not_found'
   | 'session_not_active'
   | 'session_already_active'
   | 'invalid_request'

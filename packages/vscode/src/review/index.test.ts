@@ -42,9 +42,10 @@ describe('Review Module Index', () => {
 
   it('isReviewMessage returns true for valid messages', async () => {
     const { isReviewMessage } = await import('./types');
+    expect(isReviewMessage({ type: 'ready' })).toBe(true);
     expect(isReviewMessage({ type: 'viewDiff' })).toBe(true);
     expect(isReviewMessage({ type: 'approve' })).toBe(true);
-    expect(isReviewMessage({ type: 'revert' })).toBe(true);
+    expect(isReviewMessage({ type: 'reject' })).toBe(true);
     expect(isReviewMessage({ type: 'runChecks' })).toBe(true);
     expect(isReviewMessage({ type: 'refresh' })).toBe(true);
     expect(isReviewMessage({ type: 'viewAllChanges' })).toBe(true);
