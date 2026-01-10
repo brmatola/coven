@@ -1,17 +1,14 @@
 import { describe, it, expect } from 'vitest';
 
 describe('sidebar module exports', () => {
-  it('should export GrimoireTreeProvider and related items', async () => {
+  it('should export WorkflowTreeProvider and related items', async () => {
     const sidebarModule = await import('./index');
 
-    expect(sidebarModule.GrimoireTreeProvider).toBeDefined();
-    expect(sidebarModule.GrimoireTreeItem).toBeDefined();
-    expect(sidebarModule.SessionHeaderItem).toBeDefined();
-    expect(sidebarModule.TaskGroupItem).toBeDefined();
-    expect(sidebarModule.TaskItem).toBeDefined();
-    expect(sidebarModule.FamiliarItem).toBeDefined();
-    expect(sidebarModule.EmptyStateItem).toBeDefined();
-    expect(sidebarModule.NoSessionItem).toBeDefined();
+    expect(sidebarModule.WorkflowTreeProvider).toBeDefined();
+    expect(sidebarModule.SectionHeaderItem).toBeDefined();
+    expect(sidebarModule.WorkflowItem).toBeDefined();
+    expect(sidebarModule.TaskTreeItem).toBeDefined();
+    expect(sidebarModule.QuestionTreeItem).toBeDefined();
   });
 
   it('should export CovenStatusBar', async () => {

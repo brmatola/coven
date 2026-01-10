@@ -4,10 +4,9 @@ describe('agents module exports', () => {
   it('should export all agent types and classes', async () => {
     const agentsModule = await import('./index');
 
-    // Core classes
-    expect(agentsModule.ClaudeAgent).toBeDefined();
-    expect(agentsModule.AgentOrchestrator).toBeDefined();
-    expect(agentsModule.FamiliarManager).toBeDefined();
+    // Output channel and question handler
+    expect(agentsModule.FamiliarOutputChannel).toBeDefined();
+    expect(agentsModule.QuestionHandler).toBeDefined();
 
     // Prompt functions
     expect(agentsModule.generateTaskPrompt).toBeDefined();
@@ -16,12 +15,11 @@ describe('agents module exports', () => {
     expect(agentsModule.generateAutoAcceptPrompt).toBeDefined();
   });
 
-  it('should export types that work correctly', async () => {
-    const { ClaudeAgent, AgentOrchestrator, FamiliarManager } = await import('./index');
+  it('should export classes that are constructable', async () => {
+    const { FamiliarOutputChannel, QuestionHandler } = await import('./index');
 
     // Verify classes are constructable (types)
-    expect(typeof ClaudeAgent).toBe('function');
-    expect(typeof AgentOrchestrator).toBe('function');
-    expect(typeof FamiliarManager).toBe('function');
+    expect(typeof FamiliarOutputChannel).toBe('function');
+    expect(typeof QuestionHandler).toBe('function');
   });
 });
