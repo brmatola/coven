@@ -157,3 +157,5 @@ While MVP assumes OpenSpec + Beads + Claude Code, the architecture uses interfac
 - **Cost Controls**: Budget limits per workflow/bead, token limits per agent step, cost alerting, automatic pause on threshold
 - **Parallel Steps**: Support parallel step execution within a workflow (e.g., run lint + typecheck simultaneously)
 - **Dry Run Mode**: Preview what a grimoire would do without executing (`coven grimoire preview implement-bead --bead=xyz`)
+- **Enhanced Template Functions**: Arithmetic operations, string manipulation, and advanced conditionals in spell/grimoire templates
+- **API Pagination**: Add pagination and status filtering to workflow list API for large-scale deployments

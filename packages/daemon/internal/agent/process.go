@@ -186,6 +186,9 @@ func (m *ProcessManager) Spawn(ctx context.Context, cfg SpawnConfig) (*ProcessIn
 	// Start process monitor goroutine
 	go m.monitorProcess(cfg.TaskID, proc, procCtx)
 
+	// Start timeout watcher for graceful shutdown
+	go m.watchTimeout(cfg.TaskID, proc, procCtx)
+
 	m.logger.Info("spawned agent process",
 		"task_id", cfg.TaskID,
 		"pid", info.PID,
@@ -264,6 +267,31 @@ func (m *ProcessManager) monitorProcess(taskID string, proc *runningProcess, ctx
 
 	if m.onComplete != nil {
 		m.onComplete(result)
+	}
+}
+
+// watchTimeout monitors the context for cancellation/timeout and triggers graceful shutdown.
+// This ensures processes are stopped with SIGTERM first, then SIGKILL if needed,
+// rather than relying on CommandContext's immediate SIGKILL behavior.
+func (m *ProcessManager) watchTimeout(taskID string, proc *runningProcess, ctx context.Context) {
+	select {
+	case <-proc.doneCh:
+		// Process finished normally before timeout
+		return
+	case <-ctx.Done():
+		// Context cancelled (timeout or explicit cancel)
+		if ctx.Err() == context.DeadlineExceeded {
+			m.logger.Warn("agent execution timed out, initiating graceful shutdown",
+				"task_id", taskID,
+			)
+		}
+		// Use Stop() for graceful shutdown (SIGTERM → wait → SIGKILL)
+		if err := m.Stop(taskID); err != nil {
+			m.logger.Warn("failed to stop timed-out process",
+				"task_id", taskID,
+				"error", err,
+			)
+		}
 	}
 }
 

@@ -16,7 +16,22 @@ steps:
     steps:
       - name: run-tests
         type: script
-        command: "npm test"
+        # Detect and run tests based on project type
+        command: |
+          if [ -f "go.mod" ]; then
+            go test ./...
+          elif [ -f "package.json" ]; then
+            npm test
+          elif [ -f "Cargo.toml" ]; then
+            cargo test
+          elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+            python -m pytest
+          elif [ -f "Makefile" ] && grep -q "^test:" Makefile; then
+            make test
+          else
+            echo "No test runner detected, skipping tests"
+            exit 0
+          fi
         timeout: 10m
         on_fail: continue
 
@@ -54,7 +69,22 @@ steps:
 
       - name: final-test
         type: script
-        command: "npm test"
+        # Detect and run tests based on project type
+        command: |
+          if [ -f "go.mod" ]; then
+            go test ./...
+          elif [ -f "package.json" ]; then
+            npm test
+          elif [ -f "Cargo.toml" ]; then
+            cargo test
+          elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+            python -m pytest
+          elif [ -f "Makefile" ] && grep -q "^test:" Makefile; then
+            make test
+          else
+            echo "No test runner detected"
+            exit 0
+          fi
         timeout: 10m
         on_success: exit_loop
 

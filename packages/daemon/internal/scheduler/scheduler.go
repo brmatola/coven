@@ -258,17 +258,23 @@ func (s *Scheduler) reconcileLoop() {
 		s.logger.Error("initial reconcile failed", "error", err)
 	}
 
-	ticker := time.NewTicker(s.reconcileInterval)
-	defer ticker.Stop()
+	reconcileTicker := time.NewTicker(s.reconcileInterval)
+	defer reconcileTicker.Stop()
+
+	// Cleanup runs less frequently - once per hour
+	cleanupTicker := time.NewTicker(1 * time.Hour)
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
 		case <-s.stopCh:
 			return
-		case <-ticker.C:
+		case <-reconcileTicker.C:
 			if err := s.Reconcile(ctx); err != nil {
 				s.logger.Error("reconcile failed", "error", err)
 			}
+		case <-cleanupTicker.C:
+			s.cleanupOldFiles()
 		}
 	}
 }
