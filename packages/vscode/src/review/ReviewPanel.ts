@@ -13,7 +13,9 @@ import {
   ReviewState,
   ReviewMessageToExtension,
   toChangedFile,
+  MergeConflictInfo,
 } from './types';
+import { DaemonClientError } from '../daemon/types';
 
 /**
  * SSE event data for workflow review updates
@@ -115,7 +117,10 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
       .on('approve', (msg) => this.handleApprove(msg.payload?.feedback))
       .on('reject', (msg) => this.handleReject(msg.payload?.reason))
       .on('refresh', () => this.fetchWorkflowReview())
-      .on('overrideChecks', (msg) => this.handleOverrideChecks(msg.payload.reason));
+      .on('overrideChecks', (msg) => this.handleOverrideChecks(msg.payload.reason))
+      .on('openWorktree', () => this.handleOpenWorktree())
+      .on('retryMerge', () => this.handleRetryMerge())
+      .on('openConflictFile', (msg) => this.handleOpenConflictFile(msg.payload.filePath));
 
     // Subscribe to SSE events
     this.subscribeToEvents();
@@ -367,6 +372,13 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
       await vscode.window.showInformationMessage('Workflow approved and merged successfully');
       this.dispose();
     } catch (err) {
+      // Check if this is a merge conflict error
+      const conflictInfo = this.parseMergeConflictError(err);
+      if (conflictInfo) {
+        this.handleMergeConflict(conflictInfo);
+        return;
+      }
+
       this.logger.error('Failed to approve workflow', {
         workflowId: this.workflowId,
         error: err instanceof Error ? err.message : String(err),
@@ -374,6 +386,86 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
       await vscode.window.showErrorMessage(
         `Failed to approve: ${err instanceof Error ? err.message : String(err)}`
       );
+    }
+  }
+
+  /**
+   * Parse an error to extract merge conflict information if present.
+   */
+  private parseMergeConflictError(err: unknown): MergeConflictInfo | null {
+    // Check for DaemonClientError with merge_conflict code
+    if (err instanceof DaemonClientError && err.code === 'merge_conflict') {
+      const details = err.details as {
+        conflictFiles?: string[];
+        worktreePath?: string;
+        sourceBranch?: string;
+        targetBranch?: string;
+      } | undefined;
+
+      if (details?.conflictFiles && details?.worktreePath) {
+        return {
+          conflictFiles: details.conflictFiles,
+          worktreePath: details.worktreePath,
+          sourceBranch: details.sourceBranch ?? this.currentState.headBranch ?? 'workflow',
+          targetBranch: details.targetBranch ?? this.currentState.baseBranch ?? 'main',
+          message: err.message,
+        };
+      }
+    }
+
+    // Check for generic error message patterns
+    if (err instanceof Error) {
+      const conflictMatch = err.message.match(/merge conflict/i);
+      if (conflictMatch && this.currentState.worktreePath) {
+        return {
+          conflictFiles: [],
+          worktreePath: this.currentState.worktreePath,
+          sourceBranch: this.currentState.headBranch ?? 'workflow',
+          targetBranch: this.currentState.baseBranch ?? 'main',
+          message: err.message,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Handle a merge conflict by updating the UI to show conflict state.
+   */
+  private handleMergeConflict(conflictInfo: MergeConflictInfo): void {
+    this.logger.warn('Merge conflict detected', {
+      workflowId: this.workflowId,
+      conflictFiles: conflictInfo.conflictFiles,
+    });
+
+    // Update internal state with conflict info
+    this.currentState = {
+      ...this.currentState,
+      mergeConflict: conflictInfo,
+    };
+
+    // Update state to show conflict
+    this.sendState({
+      ...this.currentState,
+      status: 'conflict',
+      checkResults: [],
+      checksEnabled: false,
+      isLoading: false,
+      mergeConflict: conflictInfo,
+    } as ReviewState);
+
+    // Show notification with action
+    void this.showConflictNotification(conflictInfo);
+  }
+
+  private async showConflictNotification(conflictInfo: MergeConflictInfo): Promise<void> {
+    const action = await vscode.window.showWarningMessage(
+      `Merge conflicts detected in ${conflictInfo.conflictFiles.length || 'some'} file(s). Please resolve them and retry.`,
+      'Open Worktree'
+    );
+    if (action === 'Open Worktree') {
+      await this.handleOpenWorktree();
     }
   }
 
@@ -423,6 +515,147 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
     } catch (err) {
       await vscode.window.showErrorMessage(
         `Failed to approve: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /**
+   * Open the worktree folder in a new VS Code window.
+   */
+  private async handleOpenWorktree(): Promise<void> {
+    const worktreePath = this.currentState.mergeConflict?.worktreePath ?? this.currentState.worktreePath;
+
+    if (!worktreePath) {
+      await vscode.window.showErrorMessage('Worktree path not available');
+      return;
+    }
+
+    try {
+      // Open the worktree in a new VS Code window
+      const worktreeUri = vscode.Uri.file(worktreePath);
+      await vscode.commands.executeCommand('vscode.openFolder', worktreeUri, { forceNewWindow: true });
+      this.logger.info('Opened worktree in new window', { worktreePath });
+    } catch (err) {
+      this.logger.error('Failed to open worktree', {
+        workflowId: this.workflowId,
+        worktreePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await vscode.window.showErrorMessage(
+        `Failed to open worktree: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /**
+   * Retry the merge after conflicts have been resolved.
+   */
+  private async handleRetryMerge(): Promise<void> {
+    if (!this.currentState.mergeConflict) {
+      await vscode.window.showErrorMessage('No merge conflict to retry');
+      return;
+    }
+
+    // Update state to show retrying
+    this.sendState({
+      ...this.currentState,
+      status: 'conflict',
+      isRetrying: true,
+      isLoading: false,
+    } as ReviewState);
+
+    try {
+      await this.client.approveWorkflow(this.workflowId);
+      await vscode.window.showInformationMessage('Merge completed successfully');
+      this.dispose();
+    } catch (err) {
+      // Check if still a conflict
+      const conflictInfo = this.parseMergeConflictError(err);
+      if (conflictInfo) {
+        // Update with new conflict info
+        this.sendState({
+          ...this.currentState,
+          status: 'conflict',
+          mergeConflict: conflictInfo,
+          isRetrying: false,
+          isLoading: false,
+        } as ReviewState);
+        await vscode.window.showWarningMessage(
+          'Merge conflicts still exist. Please resolve all conflicts and try again.'
+        );
+        return;
+      }
+
+      // Check for edge cases: worktree deleted or branch diverged
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (errorMessage.includes('worktree') && (errorMessage.includes('not found') || errorMessage.includes('deleted'))) {
+        this.sendState({
+          ...this.currentState,
+          status: 'pending',
+          mergeConflict: undefined,
+          isRetrying: false,
+          error: 'Worktree was deleted. Please refresh and try again.',
+          isLoading: false,
+        } as ReviewState);
+        await vscode.window.showErrorMessage(
+          'Worktree was deleted. Please refresh the review and try again.'
+        );
+        return;
+      }
+
+      if (errorMessage.includes('diverged') || errorMessage.includes('cannot fast-forward')) {
+        this.sendState({
+          ...this.currentState,
+          status: 'pending',
+          mergeConflict: undefined,
+          isRetrying: false,
+          error: 'Branches have diverged. Please refresh and resolve manually.',
+          isLoading: false,
+        } as ReviewState);
+        await vscode.window.showErrorMessage(
+          'Branches have diverged. Please refresh the review and resolve manually.'
+        );
+        return;
+      }
+
+      // Generic error
+      this.logger.error('Failed to retry merge', {
+        workflowId: this.workflowId,
+        error: errorMessage,
+      });
+      this.sendState({
+        ...this.currentState,
+        status: 'conflict',
+        isRetrying: false,
+        error: `Merge failed: ${errorMessage}`,
+        isLoading: false,
+      } as ReviewState);
+      await vscode.window.showErrorMessage(`Merge failed: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Open a specific conflict file in the editor.
+   */
+  private async handleOpenConflictFile(filePath: string): Promise<void> {
+    const worktreePath = this.currentState.mergeConflict?.worktreePath ?? this.currentState.worktreePath;
+
+    if (!worktreePath) {
+      await vscode.window.showErrorMessage('Worktree path not available');
+      return;
+    }
+
+    try {
+      const fileUri = vscode.Uri.file(`${worktreePath}/${filePath}`);
+      await vscode.commands.executeCommand('vscode.open', fileUri);
+    } catch (err) {
+      this.logger.error('Failed to open conflict file', {
+        workflowId: this.workflowId,
+        filePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await vscode.window.showErrorMessage(
+        `Failed to open file: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }

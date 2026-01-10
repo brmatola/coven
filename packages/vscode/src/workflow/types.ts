@@ -46,6 +46,22 @@ export interface WorkflowDetail {
 }
 
 /**
+ * Output state for a step/agent
+ */
+export interface OutputState {
+  /** ID of the step/agent showing output */
+  stepId: string | null;
+  /** Output lines accumulated so far */
+  lines: string[];
+  /** Whether output is loading */
+  isLoading: boolean;
+  /** Whether this is live streaming output */
+  isStreaming: boolean;
+  /** Whether auto-scroll is enabled */
+  autoScroll: boolean;
+}
+
+/**
  * State for the WorkflowDetailPanel webview
  */
 export interface WorkflowDetailState {
@@ -54,6 +70,8 @@ export interface WorkflowDetailState {
   error: string | null;
   /** Actions available for current workflow state */
   availableActions: WorkflowAction[];
+  /** Output state for the currently selected step */
+  output: OutputState;
 }
 
 /**
@@ -65,8 +83,18 @@ export type WorkflowAction = 'pause' | 'resume' | 'cancel' | 'retry';
  * Messages from the webview to the extension
  */
 export interface WorkflowDetailMessageToExtension extends WebviewMessage {
-  type: 'ready' | 'pause' | 'resume' | 'cancel' | 'retry' | 'viewOutput';
+  type:
+    | 'ready'
+    | 'pause'
+    | 'resume'
+    | 'cancel'
+    | 'retry'
+    | 'viewOutput'
+    | 'selectStep'
+    | 'toggleAutoScroll'
+    | 'clearOutput';
   payload?: {
     stepId?: string;
+    autoScroll?: boolean;
   };
 }

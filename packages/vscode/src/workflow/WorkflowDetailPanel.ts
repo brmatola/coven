@@ -11,6 +11,7 @@ import {
   WorkflowStep,
   WorkflowAction,
   StepStatus,
+  OutputState,
 } from './types';
 
 /**
@@ -33,6 +34,33 @@ interface WorkflowStatusEventData {
 }
 
 /**
+ * SSE event data for agent output
+ */
+interface AgentOutputEventData {
+  agentId: string;
+  taskId: string;
+  chunk: string;
+}
+
+/**
+ * SSE event data for agent spawned
+ */
+interface AgentSpawnedEventData {
+  agentId: string;
+  taskId: string;
+}
+
+/**
+ * SSE event data for agent completed/failed
+ */
+interface AgentCompletedEventData {
+  agentId: string;
+  taskId: string;
+  exitCode?: number;
+  error?: string;
+}
+
+/**
  * Panel for viewing workflow execution details.
  * Shows step progress, status, and action buttons.
  */
@@ -48,6 +76,15 @@ export class WorkflowDetailPanel extends WebviewPanel<
   private readonly workflowId: string;
   private eventHandler: ((event: SSEEvent) => void) | null = null;
   private currentWorkflow: WorkflowDetail | null = null;
+  private outputState: OutputState = {
+    stepId: null,
+    lines: [],
+    isLoading: false,
+    isStreaming: false,
+    autoScroll: true,
+  };
+  /** Map from taskId to agentId for tracking active agents */
+  private taskAgentMap: Map<string, string> = new Map();
 
   /**
    * Create or reveal a workflow detail panel for the given workflow.
@@ -114,7 +151,12 @@ export class WorkflowDetailPanel extends WebviewPanel<
       .on('resume', () => this.handleResume())
       .on('cancel', () => this.handleCancel())
       .on('retry', () => this.handleRetry())
-      .on('viewOutput', (msg: { payload?: { stepId?: string } }) => this.handleViewOutput(msg.payload?.stepId));
+      .on('viewOutput', (msg: { payload?: { stepId?: string } }) => this.handleViewOutput(msg.payload?.stepId))
+      .on('selectStep', (msg: { payload?: { stepId?: string } }) => this.handleSelectStep(msg.payload?.stepId))
+      .on('toggleAutoScroll', (msg: { payload?: { autoScroll?: boolean } }) =>
+        this.handleToggleAutoScroll(msg.payload?.autoScroll)
+      )
+      .on('clearOutput', () => this.handleClearOutput());
 
     // Subscribe to SSE events
     this.subscribeToEvents();
@@ -155,6 +197,16 @@ export class WorkflowDetailPanel extends WebviewPanel<
         case 'task.completed':
         case 'task.failed':
           this.handleStepStatusEvent(event.data as WorkflowStepEventData);
+          break;
+        case 'agent.spawned':
+          this.handleAgentSpawned(event.data as AgentSpawnedEventData);
+          break;
+        case 'agent.output':
+          this.handleAgentOutput(event.data as AgentOutputEventData);
+          break;
+        case 'agent.completed':
+        case 'agent.failed':
+          this.handleAgentCompleted(event.data as AgentCompletedEventData);
           break;
       }
     };
@@ -209,6 +261,59 @@ export class WorkflowDetailPanel extends WebviewPanel<
     }
   }
 
+  private handleAgentSpawned(data: AgentSpawnedEventData): void {
+    // Track the agent-task mapping
+    this.taskAgentMap.set(data.taskId, data.agentId);
+
+    // If this is the selected step, start streaming
+    if (this.outputState.stepId === data.taskId) {
+      this.outputState = {
+        ...this.outputState,
+        lines: [],
+        isStreaming: true,
+        isLoading: false,
+      };
+      this.sendState();
+    }
+  }
+
+  private handleAgentOutput(data: AgentOutputEventData): void {
+    // Only process if this is for the selected step
+    if (this.outputState.stepId !== data.taskId) {
+      return;
+    }
+
+    // Append chunk to output lines
+    // Split by newlines to maintain line structure
+    const existingText = this.outputState.lines.join('\n');
+    const newText = existingText + data.chunk;
+    const newLines = newText.split('\n');
+
+    this.outputState = {
+      ...this.outputState,
+      lines: newLines,
+      isStreaming: true,
+    };
+
+    this.sendState();
+  }
+
+  private handleAgentCompleted(data: AgentCompletedEventData): void {
+    // Clean up agent mapping
+    if (this.taskAgentMap.get(data.taskId) === data.agentId) {
+      this.taskAgentMap.delete(data.taskId);
+    }
+
+    // If this is the selected step, stop streaming
+    if (this.outputState.stepId === data.taskId) {
+      this.outputState = {
+        ...this.outputState,
+        isStreaming: false,
+      };
+      this.sendState();
+    }
+  }
+
   // ============================================================================
   // Message Handlers
   // ============================================================================
@@ -223,6 +328,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
       isLoading: true,
       error: null,
       availableActions: [],
+      output: this.outputState,
     });
 
     try {
@@ -249,6 +355,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
         isLoading: false,
         error: `Failed to load workflow: ${message}`,
         availableActions: [],
+        output: this.outputState,
       });
     }
   }
@@ -285,6 +392,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
       isLoading: false,
       error: null,
       availableActions: this.getAvailableActions(),
+      output: this.outputState,
     };
 
     this.updateState(state);
@@ -407,5 +515,104 @@ export class WorkflowDetailPanel extends WebviewPanel<
 
     // Execute the view output command for the step's task
     await vscode.commands.executeCommand('coven.viewFamiliarOutput', stepId);
+  }
+
+  /**
+   * Handle step selection for output display.
+   * Fetches historical output for completed agents or starts streaming for active ones.
+   */
+  private async handleSelectStep(stepId?: string): Promise<void> {
+    if (!stepId) {
+      // Clear selection
+      this.outputState = {
+        stepId: null,
+        lines: [],
+        isLoading: false,
+        isStreaming: false,
+        autoScroll: this.outputState.autoScroll,
+      };
+      this.sendState();
+      return;
+    }
+
+    // Check if step exists in workflow
+    const step = this.currentWorkflow?.steps.find((s) => s.id === stepId);
+    if (!step) {
+      return;
+    }
+
+    // Update output state to show loading
+    this.outputState = {
+      stepId,
+      lines: [],
+      isLoading: true,
+      isStreaming: false,
+      autoScroll: this.outputState.autoScroll,
+    };
+    this.sendState();
+
+    // Check if there's an active agent for this step
+    const isActiveAgent = this.taskAgentMap.has(stepId);
+
+    if (isActiveAgent) {
+      // Agent is running - will receive output via SSE
+      this.outputState = {
+        ...this.outputState,
+        isLoading: false,
+        isStreaming: true,
+      };
+      this.sendState();
+    } else {
+      // Fetch historical output
+      await this.fetchStepOutput(stepId);
+    }
+  }
+
+  /**
+   * Fetch historical output for a step from the daemon.
+   */
+  private async fetchStepOutput(stepId: string): Promise<void> {
+    try {
+      const response = await this.client.getAgentOutput(stepId);
+      this.outputState = {
+        ...this.outputState,
+        lines: response.output,
+        isLoading: false,
+        isStreaming: false,
+      };
+      this.sendState();
+    } catch (error) {
+      // No output available or agent doesn't exist
+      getLogger().debug('No output available for step', { stepId, error });
+      this.outputState = {
+        ...this.outputState,
+        lines: [],
+        isLoading: false,
+        isStreaming: false,
+      };
+      this.sendState();
+    }
+  }
+
+  /**
+   * Handle auto-scroll toggle from webview.
+   */
+  private handleToggleAutoScroll(autoScroll?: boolean): void {
+    this.outputState = {
+      ...this.outputState,
+      autoScroll: autoScroll ?? !this.outputState.autoScroll,
+    };
+    this.sendState();
+  }
+
+  /**
+   * Handle clear output request from webview.
+   */
+  private handleClearOutput(): void {
+    this.outputState = {
+      ...this.outputState,
+      lines: [],
+    };
+    this.sendState();
   }
 }

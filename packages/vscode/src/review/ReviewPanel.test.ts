@@ -372,7 +372,7 @@ describe('ReviewPanel', () => {
     });
 
     it('should show error on approve failure', async () => {
-      mockDaemonClient.approveWorkflow.mockRejectedValue(new Error('Merge conflict'));
+      mockDaemonClient.approveWorkflow.mockRejectedValue(new Error('Network error'));
 
       createPanel();
 
@@ -737,6 +737,257 @@ describe('ReviewPanel', () => {
 
       expect(ReviewPanel.get('workflow-1')).toBeUndefined();
       expect(ReviewPanel.get('workflow-2')).toBeUndefined();
+    });
+  });
+
+  describe('merge conflict handling', () => {
+    it('should detect merge conflict error and update state', async () => {
+      const conflictError = new Error('Merge conflict detected');
+
+      // Mock getWorkflowReview to return worktree path
+      mockDaemonClient.getWorkflowReview.mockResolvedValue({
+        workflowId: 'workflow-1',
+        taskId: 'task-1',
+        taskTitle: 'Test Task',
+        taskDescription: 'Description',
+        changes: {
+          workflowId: 'workflow-1',
+          taskId: 'task-1',
+          baseBranch: 'main',
+          headBranch: 'feature/x',
+          worktreePath: '/tmp/worktree-1',
+          files: [],
+          totalLinesAdded: 0,
+          totalLinesDeleted: 0,
+          commitCount: 1,
+        },
+        stepOutputs: [],
+      });
+
+      mockDaemonClient.approveWorkflow.mockRejectedValue(conflictError);
+
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      mockPanel.webview.postMessage.mockClear();
+
+      getMessageHandler()?.({ type: 'approve' });
+
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              status: 'conflict',
+              mergeConflict: expect.objectContaining({
+                worktreePath: '/tmp/worktree-1',
+              }),
+            }),
+          })
+        );
+      });
+    });
+
+    it('should open worktree in new window', async () => {
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      // Wait for state to be fully loaded with worktree path
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              worktreePath: '/tmp/worktree-1',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      getMessageHandler()?.({ type: 'openWorktree' });
+
+      await vi.waitFor(() => {
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          'vscode.openFolder',
+          expect.any(Object),
+          { forceNewWindow: true }
+        );
+      });
+    });
+
+    it('should show error if worktree path not available for openWorktree', async () => {
+      mockDaemonClient.getWorkflowReview.mockResolvedValue({
+        workflowId: 'workflow-1',
+        taskId: 'task-1',
+        taskTitle: 'Test',
+        taskDescription: '',
+        changes: {
+          workflowId: 'workflow-1',
+          taskId: 'task-1',
+          baseBranch: 'main',
+          headBranch: 'feature/x',
+          worktreePath: '',
+          files: [],
+          totalLinesAdded: 0,
+          totalLinesDeleted: 0,
+          commitCount: 0,
+        },
+        stepOutputs: [],
+      });
+
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      getMessageHandler()?.({ type: 'openWorktree' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Worktree path not available');
+      });
+    });
+
+    it('should retry merge successfully', async () => {
+      const conflictError = new Error('Merge conflict detected');
+      mockDaemonClient.approveWorkflow
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(undefined);
+
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      // Wait for state to be fully loaded
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              worktreePath: '/tmp/worktree-1',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      // First approve triggers conflict
+      getMessageHandler()?.({ type: 'approve' });
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              status: 'conflict',
+            }),
+          })
+        );
+      });
+
+      mockPanel.webview.postMessage.mockClear();
+
+      // Retry merge succeeds
+      getMessageHandler()?.({ type: 'retryMerge' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+          'Merge completed successfully'
+        );
+      });
+    });
+
+    it('should show error when retry merge fails with non-conflict error', async () => {
+      const conflictError = new Error('Merge conflict detected');
+      const retryError = new Error('Permission denied');
+      mockDaemonClient.approveWorkflow
+        .mockRejectedValueOnce(conflictError)
+        .mockRejectedValueOnce(retryError);
+
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      // Wait for state to be fully loaded
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              worktreePath: '/tmp/worktree-1',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      // First approve triggers conflict
+      getMessageHandler()?.({ type: 'approve' });
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              status: 'conflict',
+            }),
+          })
+        );
+      });
+
+      mockPanel.webview.postMessage.mockClear();
+
+      // Retry merge fails with different error
+      getMessageHandler()?.({ type: 'retryMerge' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+          expect.stringContaining('Permission denied')
+        );
+      });
+    });
+
+    it('should show error when retryMerge called without conflict state', async () => {
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockDaemonClient.getWorkflowReview).toHaveBeenCalled();
+      });
+
+      // Try to retry without conflict
+      getMessageHandler()?.({ type: 'retryMerge' });
+
+      await vi.waitFor(() => {
+        expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('No merge conflict to retry');
+      });
+    });
+
+    it('should open conflict file in editor', async () => {
+      createPanel();
+
+      getMessageHandler()?.({ type: 'ready' });
+      // Wait for state to be fully loaded
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              worktreePath: '/tmp/worktree-1',
+              isLoading: false,
+            }),
+          })
+        );
+      });
+
+      getMessageHandler()?.({ type: 'openConflictFile', payload: { filePath: 'src/index.ts' } });
+
+      await vi.waitFor(() => {
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          'vscode.open',
+          expect.any(Object)
+        );
+      });
     });
   });
 });

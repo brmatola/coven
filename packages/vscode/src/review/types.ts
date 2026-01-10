@@ -11,7 +11,23 @@ import {
 /**
  * Status of a review.
  */
-export type ReviewStatus = 'pending' | 'checking' | 'approved' | 'reverted';
+export type ReviewStatus = 'pending' | 'checking' | 'approved' | 'reverted' | 'conflict';
+
+/**
+ * Information about a merge conflict.
+ */
+export interface MergeConflictInfo {
+  /** List of files with conflicts */
+  conflictFiles: string[];
+  /** Path to the worktree where conflicts can be resolved */
+  worktreePath: string;
+  /** Source branch being merged */
+  sourceBranch: string;
+  /** Target branch being merged into */
+  targetBranch: string;
+  /** User-friendly message about the conflict */
+  message: string;
+}
 
 /**
  * A file changed by the agent.
@@ -114,6 +130,10 @@ export interface ReviewState {
   error?: string | undefined;
   /** Whether data is loading */
   isLoading?: boolean | undefined;
+  /** Merge conflict information if status is 'conflict' */
+  mergeConflict?: MergeConflictInfo | undefined;
+  /** Whether a merge retry is in progress */
+  isRetrying?: boolean | undefined;
 }
 
 /**
@@ -127,7 +147,10 @@ export type ReviewMessageToExtension =
   | { type: 'approve'; payload?: { feedback?: string } }
   | { type: 'reject'; payload?: { reason?: string } }
   | { type: 'refresh' }
-  | { type: 'overrideChecks'; payload: { reason: string } };
+  | { type: 'overrideChecks'; payload: { reason: string } }
+  | { type: 'openWorktree' }
+  | { type: 'retryMerge' }
+  | { type: 'openConflictFile'; payload: { filePath: string } };
 
 /**
  * Messages from the extension to the review webview.
@@ -141,5 +164,17 @@ export type ReviewMessageToWebview =
  * Guard to check if a message is a ReviewMessageToExtension.
  */
 export function isReviewMessage(msg: WebviewMessage): msg is ReviewMessageToExtension {
-  return ['ready', 'viewDiff', 'viewAllChanges', 'runChecks', 'approve', 'reject', 'refresh', 'overrideChecks'].includes(msg.type);
+  return [
+    'ready',
+    'viewDiff',
+    'viewAllChanges',
+    'runChecks',
+    'approve',
+    'reject',
+    'refresh',
+    'overrideChecks',
+    'openWorktree',
+    'retryMerge',
+    'openConflictFile',
+  ].includes(msg.type);
 }

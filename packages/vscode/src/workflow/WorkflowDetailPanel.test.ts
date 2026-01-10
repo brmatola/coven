@@ -8,6 +8,7 @@ import { SSEClient } from '../daemon/sse';
 vi.mock('../daemon/client', () => ({
   DaemonClient: vi.fn().mockImplementation(() => ({
     getState: vi.fn(),
+    getAgentOutput: vi.fn(),
   })),
 }));
 
@@ -17,12 +18,14 @@ vi.mock('../shared/logger', () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    debug: vi.fn(),
   })),
 }));
 
 describe('WorkflowDetailPanel', () => {
   let mockDaemonClient: {
     getState: ReturnType<typeof vi.fn>;
+    getAgentOutput: ReturnType<typeof vi.fn>;
   };
   let mockSSEClient: {
     on: ReturnType<typeof vi.fn>;
@@ -109,6 +112,9 @@ describe('WorkflowDetailPanel', () => {
         agents: [],
         questions: [],
         timestamp: Date.now(),
+      }),
+      getAgentOutput: vi.fn().mockResolvedValue({
+        output: ['line 1', 'line 2', 'line 3'],
       }),
     };
 
@@ -699,6 +705,482 @@ describe('WorkflowDetailPanel', () => {
       getDisposeHandler()?.();
 
       expect(WorkflowDetailPanel.get('workflow-1')).toBeUndefined();
+    });
+  });
+
+  describe('output streaming', () => {
+    /** Helper to load workflow and wait for it to be ready */
+    async function loadWorkflow(): Promise<void> {
+      getMessageHandler()?.({ type: 'ready' });
+      await vi.waitFor(() => {
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'state',
+            payload: expect.objectContaining({
+              workflow: expect.objectContaining({
+                id: 'workflow-1',
+              }),
+              isLoading: false,
+            }),
+          })
+        );
+      });
+    }
+
+    describe('selectStep message', () => {
+      it('should fetch historical output when selecting a completed step', async () => {
+        createPanel();
+
+        // First load the workflow
+        await loadWorkflow();
+        mockPanel.webview.postMessage.mockClear();
+
+        // Select a step
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-1' } });
+
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalledWith('task-1');
+        });
+
+        // Verify output state is included in state update
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  stepId: 'task-1',
+                  lines: ['line 1', 'line 2', 'line 3'],
+                  isLoading: false,
+                  isStreaming: false,
+                }),
+              }),
+            })
+          );
+        });
+      });
+
+      it('should clear output when selecting step with no stepId', async () => {
+        createPanel();
+
+        await loadWorkflow();
+        mockPanel.webview.postMessage.mockClear();
+
+        // Select with no stepId to clear
+        getMessageHandler()?.({ type: 'selectStep', payload: {} });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  stepId: null,
+                  lines: [],
+                }),
+              }),
+            })
+          );
+        });
+      });
+
+      it('should ignore selection for non-existent step', async () => {
+        createPanel();
+
+        await loadWorkflow();
+        mockDaemonClient.getAgentOutput.mockClear();
+
+        // Select non-existent step
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'non-existent' } });
+
+        // Should not fetch output
+        await new Promise((r) => setTimeout(r, 50));
+        expect(mockDaemonClient.getAgentOutput).not.toHaveBeenCalled();
+      });
+
+      it('should handle fetch error gracefully', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Set up error for next call
+        mockDaemonClient.getAgentOutput.mockRejectedValueOnce(new Error('Not found'));
+        mockPanel.webview.postMessage.mockClear();
+
+        // Select step - should not throw
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-1' } });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  stepId: 'task-1',
+                  lines: [],
+                  isLoading: false,
+                }),
+              }),
+            })
+          );
+        });
+      });
+    });
+
+    describe('agent.spawned event', () => {
+      it('should start streaming when agent spawns for selected step', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select a step first
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-2' } });
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalled();
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Emit agent.spawned event for the selected step
+        mockSSEClient.emit('event', {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-2' },
+          timestamp: Date.now(),
+        });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  stepId: 'task-2',
+                  isStreaming: true,
+                  lines: [],
+                }),
+              }),
+            })
+          );
+        });
+      });
+
+      it('should not affect output when agent spawns for different step', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select a step
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-1' } });
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalled();
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Emit agent.spawned for different task
+        mockSSEClient.emit('event', {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-3' },
+          timestamp: Date.now(),
+        });
+
+        // Should not update state for output
+        await new Promise((r) => setTimeout(r, 50));
+        // No output-related state update should have been triggered
+      });
+    });
+
+    describe('agent.output event', () => {
+      it('should append output for selected step', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select step and emit agent spawned
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-2' } });
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalled();
+        });
+
+        mockSSEClient.emit('event', {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-2' },
+          timestamp: Date.now(),
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Emit output
+        mockSSEClient.emit('event', {
+          type: 'agent.output',
+          data: { agentId: 'agent-1', taskId: 'task-2', chunk: 'Hello\nWorld' },
+          timestamp: Date.now(),
+        });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  lines: expect.arrayContaining(['Hello', 'World']),
+                  isStreaming: true,
+                }),
+              }),
+            })
+          );
+        });
+      });
+
+      it('should ignore output for non-selected step', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select task-1 and wait for output to be fetched and state updated
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-1' } });
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  stepId: 'task-1',
+                  lines: ['line 1', 'line 2', 'line 3'],
+                }),
+              }),
+            })
+          );
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Emit output for different task
+        mockSSEClient.emit('event', {
+          type: 'agent.output',
+          data: { agentId: 'agent-1', taskId: 'task-2', chunk: 'Should be ignored' },
+          timestamp: Date.now(),
+        });
+
+        // Should not trigger state update for this output
+        await new Promise((r) => setTimeout(r, 50));
+        expect(mockPanel.webview.postMessage).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('agent.completed event', () => {
+      it('should stop streaming when agent completes for selected step', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select and start streaming
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-2' } });
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalled();
+        });
+
+        mockSSEClient.emit('event', {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-2' },
+          timestamp: Date.now(),
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Complete the agent
+        mockSSEClient.emit('event', {
+          type: 'agent.completed',
+          data: { agentId: 'agent-1', taskId: 'task-2', exitCode: 0 },
+          timestamp: Date.now(),
+        });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  isStreaming: false,
+                }),
+              }),
+            })
+          );
+        });
+      });
+
+      it('should stop streaming when agent fails for selected step', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select and start streaming
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-2' } });
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalled();
+        });
+
+        mockSSEClient.emit('event', {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-2' },
+          timestamp: Date.now(),
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Fail the agent
+        mockSSEClient.emit('event', {
+          type: 'agent.failed',
+          data: { agentId: 'agent-1', taskId: 'task-2', error: 'Something went wrong' },
+          timestamp: Date.now(),
+        });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  isStreaming: false,
+                }),
+              }),
+            })
+          );
+        });
+      });
+    });
+
+    describe('toggleAutoScroll message', () => {
+      it('should toggle auto-scroll state', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Toggle auto-scroll off
+        getMessageHandler()?.({ type: 'toggleAutoScroll', payload: { autoScroll: false } });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  autoScroll: false,
+                }),
+              }),
+            })
+          );
+        });
+      });
+
+      it('should toggle auto-scroll when no payload', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // First verify auto-scroll is true by default
+        expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              output: expect.objectContaining({
+                autoScroll: true,
+              }),
+            }),
+          })
+        );
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Toggle without payload
+        getMessageHandler()?.({ type: 'toggleAutoScroll' });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  autoScroll: false,
+                }),
+              }),
+            })
+          );
+        });
+      });
+    });
+
+    describe('clearOutput message', () => {
+      it('should clear output lines', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Select step to get output
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-1' } });
+        await vi.waitFor(() => {
+          expect(mockDaemonClient.getAgentOutput).toHaveBeenCalled();
+        });
+
+        // Verify we have output
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  lines: ['line 1', 'line 2', 'line 3'],
+                }),
+              }),
+            })
+          );
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+
+        // Clear output
+        getMessageHandler()?.({ type: 'clearOutput' });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  lines: [],
+                }),
+              }),
+            })
+          );
+        });
+      });
+    });
+
+    describe('streaming for active agents', () => {
+      it('should start streaming immediately for steps with active agents', async () => {
+        createPanel();
+        await loadWorkflow();
+
+        // Simulate agent spawning before step selection
+        mockSSEClient.emit('event', {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-2' },
+          timestamp: Date.now(),
+        });
+
+        mockPanel.webview.postMessage.mockClear();
+        mockDaemonClient.getAgentOutput.mockClear();
+
+        // Now select the step with active agent
+        getMessageHandler()?.({ type: 'selectStep', payload: { stepId: 'task-2' } });
+
+        await vi.waitFor(() => {
+          expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: 'state',
+              payload: expect.objectContaining({
+                output: expect.objectContaining({
+                  stepId: 'task-2',
+                  isStreaming: true,
+                  isLoading: false,
+                }),
+              }),
+            })
+          );
+        });
+
+        // Should not fetch historical output for active agents
+        expect(mockDaemonClient.getAgentOutput).not.toHaveBeenCalled();
+      });
     });
   });
 });
