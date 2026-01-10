@@ -52,6 +52,7 @@ export const workspace = {
     onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
     dispose: vi.fn(),
   })),
+  openTextDocument: vi.fn(),
 };
 
 // Test helper to set workspace folders
@@ -80,7 +81,8 @@ export const window = {
   showErrorMessage: vi.fn(),
   showInputBox: vi.fn(),
   showQuickPick: vi.fn(),
-  setStatusBarMessage: vi.fn(),
+  showTextDocument: vi.fn(),
+  setStatusBarMessage: vi.fn(() => ({ dispose: vi.fn() })),
   withProgress: vi.fn(async (_options: unknown, task: (progress: unknown, token: unknown) => Promise<unknown>) => {
     return task({}, {});
   }),
