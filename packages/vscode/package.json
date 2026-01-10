@@ -104,6 +104,35 @@
       {
         "command": "coven.initCoven",
         "title": "Coven: Initialize Coven"
+      },
+      {
+        "command": "coven.daemon.startTask",
+        "title": "Coven: Start Task (Daemon)",
+        "icon": "$(play)"
+      },
+      {
+        "command": "coven.daemon.killTask",
+        "title": "Coven: Stop Task (Daemon)",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "coven.daemon.answerQuestion",
+        "title": "Coven: Answer Question (Daemon)"
+      },
+      {
+        "command": "coven.daemon.startSession",
+        "title": "Coven: Start Daemon Session",
+        "icon": "$(play)"
+      },
+      {
+        "command": "coven.daemon.stopSession",
+        "title": "Coven: Stop Daemon Session",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "coven.daemon.forceStopSession",
+        "title": "Coven: Force Stop Daemon Session",
+        "icon": "$(stop-circle)"
       }
     ],
     "menus": {

@@ -81,6 +81,9 @@ export const window = {
   showInputBox: vi.fn(),
   showQuickPick: vi.fn(),
   setStatusBarMessage: vi.fn(),
+  withProgress: vi.fn(async (_options: unknown, task: (progress: unknown, token: unknown) => Promise<unknown>) => {
+    return task({}, {});
+  }),
   createOutputChannel: vi.fn(
     (name: string): MockOutputChannel => ({
       appendLine: vi.fn(),
@@ -153,6 +156,12 @@ export enum TreeItemCollapsibleState {
   None = 0,
   Collapsed = 1,
   Expanded = 2,
+}
+
+export enum ProgressLocation {
+  SourceControl = 1,
+  Window = 10,
+  Notification = 15,
 }
 
 export class TreeItem {
