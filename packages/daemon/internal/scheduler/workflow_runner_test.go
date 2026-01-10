@@ -62,7 +62,8 @@ func TestStatusForResult(t *testing.T) {
 				Success: false,
 				Status:  workflow.WorkflowPendingMerge,
 			},
-			expected: types.TaskStatusPendingMerge,
+			// Maps to blocked for beads compatibility (beads doesn't support pending_merge)
+			expected: types.TaskStatusBlocked,
 		},
 		{
 			name: "blocked workflow",

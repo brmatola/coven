@@ -176,6 +176,14 @@ func (r *DefaultMergeRunner) Merge(ctx context.Context, workDir string) error {
 		return fmt.Errorf("git add failed: %w", err)
 	}
 
+	// Check if there are staged changes to commit
+	statusCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
+	statusCmd.Dir = workDir
+	if err := statusCmd.Run(); err == nil {
+		// No error means no changes staged - nothing to commit
+		return nil
+	}
+
 	// Create commit
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", "Merge changes from worktree")
 	commitCmd.Dir = workDir

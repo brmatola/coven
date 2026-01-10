@@ -46,7 +46,7 @@ steps:
 	}
 
 	// Should complete after first successful iteration
-	waitForTaskStatus(t, api, taskID, "closed", 30)
+	waitForTaskStatus(t, api, taskID, "closed", 10)
 
 	// Verify workflow completed successfully
 	logContent := readDaemonLog(t, env)
@@ -105,7 +105,7 @@ steps:
 		t.Fatalf("Failed to start task: %v", err)
 	}
 
-	waitForTaskStatus(t, api, taskID, "closed", 60)
+	waitForTaskStatus(t, api, taskID, "closed", 15)
 
 	// Verify workflow completed successfully
 	logContent := readDaemonLog(t, env)
@@ -153,7 +153,7 @@ steps:
 	}
 
 	// Should block after max iterations
-	waitForTaskStatus(t, api, taskID, "blocked", 60)
+	waitForTaskStatus(t, api, taskID, "blocked", 15)
 
 	// Verify workflow ended up blocked (from log)
 	logContent := readDaemonLog(t, env)
@@ -207,5 +207,5 @@ steps:
 	}
 
 	// Should complete after one successful iteration
-	waitForTaskStatus(t, api, taskID, "closed", 120)
+	waitForTaskStatus(t, api, taskID, "closed", 20)
 }

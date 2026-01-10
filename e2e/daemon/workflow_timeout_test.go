@@ -126,7 +126,6 @@ func TestWorkflowAgentStepTimeout(t *testing.T) {
 	defer env.Stop()
 
 	env.InitBeads(t)
-	env.InitBeads(t)
 
 	grimoireYAML := `name: test-agent-timeout
 description: Workflow with agent step timeout

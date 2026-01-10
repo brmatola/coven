@@ -61,13 +61,22 @@ func main() {
 	// Simulate more work
 	time.Sleep(*delay)
 
-	fmt.Println("Task completed successfully")
-
+	// Output structured JSON result for workflow parsing
+	// Use code fence format to match what the parser expects
 	// Handle failure mode
 	if *fail {
+		fmt.Println("```json")
+		fmt.Println(`{"success": false, "summary": "Task failed as requested", "error": "Simulated failure"}`)
+		fmt.Println("```")
 		fmt.Fprintln(os.Stderr, "Error: task failed")
 		os.Exit(1)
 	}
+
+	// Output success JSON in code fence format
+	fmt.Println("Task completed successfully")
+	fmt.Println("```json")
+	fmt.Println(`{"success": true, "summary": "Task completed successfully"}`)
+	fmt.Println("```")
 
 	os.Exit(*exitCode)
 }

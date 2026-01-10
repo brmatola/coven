@@ -61,7 +61,7 @@ steps:
 	logContent := readDaemonLog(t, env)
 	t.Logf("Daemon log after start:\n%s", logContent)
 
-	waitForTaskStatus(t, api, taskID, "closed", 30)
+	waitForTaskStatus(t, api, taskID, "closed", 10)
 
 	// Verify both steps executed by checking the step count in logs
 	logContent = readDaemonLog(t, env)
@@ -132,7 +132,7 @@ steps:
 	}
 
 	// Wait for workflow to complete
-	waitForTaskStatus(t, api, taskID, "closed", 60)
+	waitForTaskStatus(t, api, taskID, "closed", 15)
 }
 
 // TestWorkflowScriptStepFailure verifies that script step failures are handled.
@@ -173,7 +173,7 @@ steps:
 
 	// Task should end up blocked or open (not closed) due to failure
 	// Give it time to fail
-	waitForTaskStatus(t, api, taskID, "blocked", 30)
+	waitForTaskStatus(t, api, taskID, "blocked", 10)
 
 	// Verify second step did not run
 	logContent := readDaemonLog(t, env)

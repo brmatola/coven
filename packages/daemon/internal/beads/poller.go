@@ -84,17 +84,59 @@ func (p *Poller) Poll(ctx context.Context) error {
 
 	// Check for changes
 	oldTasks := p.store.GetTasks()
-	changed := p.tasksChanged(oldTasks, tasks)
+
+	// Merge status updates: preserve local "terminal" statuses (blocked, closed)
+	// that may not have propagated to beads yet
+	mergedTasks := p.mergeTaskStatuses(oldTasks, tasks)
+
+	changed := p.tasksChanged(oldTasks, mergedTasks)
 
 	// Update store
-	p.store.SetTasks(tasks)
+	p.store.SetTasks(mergedTasks)
 
 	// Emit event if changed
 	if changed && p.broker != nil {
-		p.broker.EmitTasksUpdated(tasks)
+		p.broker.EmitTasksUpdated(mergedTasks)
 	}
 
 	return nil
+}
+
+// mergeTaskStatuses merges local status updates with fetched tasks.
+// This preserves terminal statuses (blocked, closed) that may not have
+// propagated to beads yet due to timing.
+func (p *Poller) mergeTaskStatuses(oldTasks, newTasks []types.Task) []types.Task {
+	// Build map of old task statuses
+	oldStatusMap := make(map[string]types.TaskStatus)
+	for _, t := range oldTasks {
+		oldStatusMap[t.ID] = t.Status
+	}
+
+	// Merge statuses
+	for i := range newTasks {
+		oldStatus, exists := oldStatusMap[newTasks[i].ID]
+		if !exists {
+			continue
+		}
+
+		// If local status is a terminal status that beads doesn't have yet,
+		// preserve the local status
+		if isTerminalStatus(oldStatus) && !isTerminalStatus(newTasks[i].Status) {
+			newTasks[i].Status = oldStatus
+		}
+	}
+
+	return newTasks
+}
+
+// isTerminalStatus returns true for statuses that indicate workflow completion.
+func isTerminalStatus(status types.TaskStatus) bool {
+	switch status {
+	case types.TaskStatusBlocked, types.TaskStatusClosed, types.TaskStatusPendingMerge:
+		return true
+	default:
+		return false
+	}
 }
 
 // pollLoop runs the polling loop.

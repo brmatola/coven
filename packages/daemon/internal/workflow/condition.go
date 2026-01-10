@@ -40,8 +40,8 @@ func NewConditionEvaluator() *ConditionEvaluator {
 	return &ConditionEvaluator{}
 }
 
-// templateVarPattern matches template variables like {{.foo.bar}}
-var templateVarPattern = regexp.MustCompile(`\{\{\.([^}]+)\}\}`)
+// templatePattern matches Go template expressions like {{.foo.bar}} or {{not .foo.bar}}
+var templatePattern = regexp.MustCompile(`\{\{.*\}\}`)
 
 // Evaluate evaluates a 'when' condition and returns whether it is true.
 // The condition can be:
@@ -66,14 +66,14 @@ func (e *ConditionEvaluator) Evaluate(condition string, ctx *StepContext) (bool,
 	}
 
 	// Check if it's a template variable
-	if templateVarPattern.MatchString(condition) {
+	if templatePattern.MatchString(condition) {
 		return e.evaluateTemplate(condition, ctx)
 	}
 
 	// Unknown format - fail explicitly
 	return false, &ConditionError{
 		Condition: condition,
-		Message:   "invalid condition format, expected template variable like {{.previous.failed}} or literal 'true'/'false'",
+		Message:   "invalid condition format, expected Go template expression like {{.previous.failed}} or {{not .var}} or literal 'true'/'false'",
 	}
 }
 
@@ -225,7 +225,7 @@ func (e *ConditionEvaluator) EvaluateWithResult(condition string, ctx *StepConte
 	}
 
 	// Check if it's a template variable
-	if templateVarPattern.MatchString(condition) {
+	if templatePattern.MatchString(condition) {
 		evalValue, shouldExec, err := e.evaluateTemplateWithValue(condition, ctx)
 		if err != nil {
 			return nil, err
