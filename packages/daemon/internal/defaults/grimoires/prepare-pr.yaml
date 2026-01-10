@@ -1,0 +1,26 @@
+name: prepare-pr
+description: "Summarize changes and create a pull request"
+timeout: 30m
+
+steps:
+  - name: summarize-changes
+    type: script
+    command: "git diff --stat main...HEAD && git log --oneline main...HEAD"
+    timeout: 1m
+    output: changes_summary
+
+  - name: create-pr
+    type: script
+    command: |
+      gh pr create \
+        --title "{{.bead.title}}" \
+        --body "## Summary
+
+      {{.bead.body}}
+
+      ## Changes
+
+      {{.changes_summary}}" \
+        --draft
+    timeout: 5m
+    output: pr_url

@@ -1,0 +1,27 @@
+name: spec-to-beads
+description: "Convert an openspec proposal into implementation beads with acceptance criteria, testing requirements, and dependencies"
+timeout: 30m
+
+steps:
+  - name: analyze-spec
+    type: agent
+    spell: analyze-spec
+    timeout: 10m
+    input:
+      spec_path: "{{.spec_path}}"
+    output: analysis
+
+  - name: create-beads
+    type: agent
+    spell: create-beads
+    timeout: 15m
+    input:
+      analysis: "{{.analysis.outputs}}"
+      spec_path: "{{.spec_path}}"
+    output: beads
+
+  - name: validate-beads
+    type: script
+    command: "bd list --status=open | grep -c ."
+    timeout: 1m
+    on_fail: block

@@ -16,6 +16,7 @@ import (
 	"github.com/coven/daemon/internal/api"
 	"github.com/coven/daemon/internal/beads"
 	"github.com/coven/daemon/internal/config"
+	"github.com/coven/daemon/internal/defaults"
 	"github.com/coven/daemon/internal/git"
 	"github.com/coven/daemon/internal/logging"
 	"github.com/coven/daemon/internal/questions"
@@ -55,6 +56,16 @@ func New(workspace, version string) (*Daemon, error) {
 	// Ensure .coven directory exists
 	if err := os.MkdirAll(covenDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create .coven directory: %w", err)
+	}
+
+	// Initialize defaults (copies default grimoires/spells to .coven if not present)
+	// This is done early so defaults are available for the rest of initialization
+	if initResult, err := defaults.Initialize(covenDir); err != nil {
+		// Log warning but don't fail - defaults are optional
+		fmt.Fprintf(os.Stderr, "warning: failed to initialize defaults: %v\n", err)
+	} else if initResult.TotalCopied() > 0 {
+		fmt.Fprintf(os.Stderr, "Initialized %d default files (spells: %d, grimoires: %d)\n",
+			initResult.TotalCopied(), len(initResult.SpellsCopied), len(initResult.GrimoiresCopied))
 	}
 
 	// Load configuration
