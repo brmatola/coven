@@ -33,15 +33,6 @@
       }
     },
     {
-      "files": ["src/test/e2e/**/*.ts"],
-      "parserOptions": {
-        "project": "./src/test/e2e/tsconfig.json"
-      },
-      "rules": {
-        "no-console": "off"
-      }
-    },
-    {
       "files": ["src/setup/webview/**/*.tsx", "src/setup/webview/**/*.ts"],
       "parserOptions": {
         "project": "./src/setup/webview/tsconfig.json"

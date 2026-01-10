@@ -64,7 +64,7 @@ Track these steps as TODOs and complete them one by one.
 - All changes must pass `npm run build` (TypeScript compilation)
 - All changes must pass `npm run test:e2e` (VSCode E2E tests)
 - New features should include unit tests in `*.test.ts` files
-- New user-facing features should include E2E tests in `src/test/e2e/`
+- New user-facing features should include E2E tests in `e2e/vscode/`
 
 ### Stage 3: Archiving Changes
 After deployment, create separate PR to:
