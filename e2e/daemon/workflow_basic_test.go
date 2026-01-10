@@ -3,6 +3,7 @@
 package daemon_e2e
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +180,96 @@ steps:
 	logContent := readDaemonLog(t, env)
 	if strings.Contains(logContent, "This should not execute") {
 		t.Error("Second step should not have executed after first step failed")
+	}
+}
+
+// TestWorkflowJSONLLogging verifies that workflow execution creates JSONL log files.
+func TestWorkflowJSONLLogging(t *testing.T) {
+	env := helpers.NewTestEnv(t)
+	defer env.Stop()
+
+	env.InitBeads(t)
+
+	grimoireYAML := `name: test-logging
+description: Workflow to test JSONL logging
+timeout: 5m
+
+steps:
+  - name: first-step
+    type: script
+    command: "echo 'First step'"
+    timeout: 30s
+
+  - name: second-step
+    type: script
+    command: "echo 'Second step'"
+    timeout: 30s
+`
+	writeGrimoire(t, env, "test-logging", grimoireYAML)
+
+	taskID := createTaskWithLabel(t, env, "Test JSONL logging", "grimoire:test-logging")
+
+	env.ConfigureMockAgent(t)
+	env.MustStart()
+	api := helpers.NewAPIClient(env)
+
+	startSessionAndWaitForTask(t, env, api, taskID)
+
+	if err := api.StartTask(taskID); err != nil {
+		t.Fatalf("Failed to start task: %v", err)
+	}
+
+	waitForTaskStatus(t, api, taskID, "closed", 10)
+
+	// Check for workflow log directory
+	logDir := env.CovenDir + "/logs/workflows"
+	if _, err := os.Stat(logDir); os.IsNotExist(err) {
+		t.Error("Workflow log directory should exist")
+	}
+
+	// List log files
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatalf("Failed to read log directory: %v", err)
+	}
+
+	if len(entries) == 0 {
+		t.Error("Expected at least one workflow log file")
+	}
+
+	// Read the log file and verify structure
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+
+		logPath := logDir + "/" + entry.Name()
+		content, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("Failed to read log file: %v", err)
+		}
+
+		logContent := string(content)
+		t.Logf("JSONL log content:\n%s", logContent)
+
+		// Verify expected events are present
+		if !strings.Contains(logContent, `"event":"workflow.start"`) {
+			t.Error("Expected workflow.start event in log")
+		}
+		if !strings.Contains(logContent, `"event":"step.start"`) {
+			t.Error("Expected step.start event in log")
+		}
+		if !strings.Contains(logContent, `"event":"step.end"`) {
+			t.Error("Expected step.end event in log")
+		}
+		if !strings.Contains(logContent, `"event":"workflow.end"`) {
+			t.Error("Expected workflow.end event in log")
+		}
+		if !strings.Contains(logContent, `"step_name":"first-step"`) {
+			t.Error("Expected first-step in log")
+		}
+		if !strings.Contains(logContent, `"step_name":"second-step"`) {
+			t.Error("Expected second-step in log")
+		}
 	}
 }

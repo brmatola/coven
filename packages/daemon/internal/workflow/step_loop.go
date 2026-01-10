@@ -17,6 +17,9 @@ type StepExecutor interface {
 type LoopExecutor struct {
 	scriptExecutor StepExecutor
 	agentExecutor  StepExecutor
+	logger         *Logger
+	workflowID     string
+	beadID         string
 }
 
 // NewLoopExecutor creates a new loop executor.
@@ -25,6 +28,13 @@ func NewLoopExecutor(scriptExecutor, agentExecutor StepExecutor) *LoopExecutor {
 		scriptExecutor: scriptExecutor,
 		agentExecutor:  agentExecutor,
 	}
+}
+
+// SetLogger sets the logger for loop iteration events.
+func (e *LoopExecutor) SetLogger(logger *Logger, workflowID, beadID string) {
+	e.logger = logger
+	e.workflowID = workflowID
+	e.beadID = beadID
 }
 
 // Execute runs a loop step and returns the result.
@@ -134,6 +144,9 @@ func (e *LoopExecutor) executeIteration(ctx context.Context, loopStep *grimoire.
 		"iteration": iteration,
 	})
 
+	// Log loop iteration (loop type is "step" for step-based loops)
+	e.logLoopIteration(loopStep.Name, iteration, loopStep.MaxIterations, "step", false)
+
 	var lastResult *StepResult
 
 	for i := range loopStep.Steps {
@@ -214,6 +227,13 @@ func (e *LoopExecutor) executeStep(ctx context.Context, step *grimoire.Step, ste
 
 	default:
 		return nil, fmt.Errorf("unsupported step type in loop: %s", step.Type)
+	}
+}
+
+// logLoopIteration logs a loop iteration event.
+func (e *LoopExecutor) logLoopIteration(stepName string, iteration, maxIter int, loopType string, shouldBreak bool) {
+	if e.logger != nil {
+		e.logger.LogLoopIteration(e.workflowID, e.beadID, stepName, iteration, maxIter, loopType, shouldBreak)
 	}
 }
 

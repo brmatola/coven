@@ -64,6 +64,9 @@ type Engine struct {
 
 	// Event emitter for workflow events (optional)
 	eventEmitter EventEmitter
+
+	// JSONL logger for workflow execution (optional)
+	logger *Logger
 }
 
 // NewEngine creates a new workflow engine.
@@ -80,6 +83,7 @@ func NewEngine(config EngineConfig) *Engine {
 	mergeExecutor := NewMergeExecutor()
 
 	statePersister := NewStatePersister(config.CovenDir)
+	logger := NewLogger(config.CovenDir)
 
 	return &Engine{
 		config:         config,
@@ -90,6 +94,7 @@ func NewEngine(config EngineConfig) *Engine {
 		spellLoader:    spellLoader,
 		grimoireLoader: grimoireLoader,
 		statePersister: statePersister,
+		logger:         logger,
 	}
 }
 
@@ -131,8 +136,14 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 		StepResults: make(map[string]*StepResult),
 	}
 
-	// Emit workflow started event
+	// Emit workflow started event and log
 	e.emitWorkflowStarted(g.Name)
+	e.logWorkflowStart(g.Name)
+
+	// Set up loop executor logger for loop iteration events
+	if e.loopExecutor != nil && e.logger != nil {
+		e.loopExecutor.SetLogger(e.logger, e.config.WorkflowID, e.config.BeadID)
+	}
 
 	// Create step context
 	stepCtx := NewStepContext(e.config.WorktreePath, e.config.BeadID, e.config.WorkflowID)
@@ -186,6 +197,7 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 			result.Duration = time.Since(start)
 			e.saveWorkflowState(workflowState, result)
 			e.emitWorkflowCancelled()
+			e.logWorkflowEnd(WorkflowCancelled, result.Duration, len(result.StepResults), ctx.Err().Error())
 			return result
 		}
 
@@ -210,12 +222,18 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 				workflowState.CurrentStep = i
 				workflowState.CompletedSteps[step.Name] = stepResult
 				e.saveWorkflowState(workflowState, result)
+				e.logStepEnd(step.Name, string(step.Type), i, true, true, 0, 0, "")
 				continue
 			}
 		}
 
-		// Emit step started event
+		// Emit step started event and log
 		e.emitStepStarted(step.Name, string(step.Type), i)
+		e.logStepStart(step.Name, string(step.Type), i)
+
+		// Log step input (command or spell)
+		e.logStepInput(step.Name, nil, step.Spell, step.Command)
+
 		stepStart := time.Now()
 
 		// Execute the step
@@ -228,12 +246,24 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 			result.Duration = time.Since(start)
 			e.saveWorkflowState(workflowState, result)
 			e.emitStepCompleted(step.Name, i, false, stepDuration, err.Error())
+			exitCode := 0
+			if stepResult != nil {
+				exitCode = stepResult.ExitCode
+			}
+			e.logStepEnd(step.Name, string(step.Type), i, false, false, stepDuration, exitCode, err.Error())
 			e.emitWorkflowBlocked(err.Error())
+			e.logWorkflowEnd(WorkflowFailed, result.Duration, len(result.StepResults), err.Error())
 			return result
 		}
 
-		// Emit step completed event
+		// Emit step completed event and log
 		e.emitStepCompleted(step.Name, i, stepResult.Success, stepDuration, stepResult.Error)
+		e.logStepEnd(step.Name, string(step.Type), i, stepResult.Success, false, stepDuration, stepResult.ExitCode, stepResult.Error)
+
+		// Log step output if present
+		if stepResult.Output != "" || step.Output != "" {
+			e.logStepOutput(step.Name, stepResult.Output, step.Output, 0, 0)
+		}
 
 		// Store result
 		result.StepResults[step.Name] = stepResult
@@ -270,6 +300,7 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 			}
 			result.Duration = time.Since(start)
 			e.saveWorkflowState(workflowState, result)
+			e.logWorkflowEnd(result.Status, result.Duration, len(result.StepResults), stepResult.Error)
 			return result
 
 		case ActionFail:
@@ -279,6 +310,7 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 			result.Duration = time.Since(start)
 			e.saveWorkflowState(workflowState, result)
 			e.emitWorkflowBlocked(stepResult.Error)
+			e.logWorkflowEnd(WorkflowFailed, result.Duration, len(result.StepResults), stepResult.Error)
 			return result
 
 		case ActionExitLoop:
@@ -296,8 +328,9 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 		e.statePersister.Delete(e.config.BeadID)
 	}
 
-	// Emit workflow completed event
+	// Emit workflow completed event and log
 	e.emitWorkflowCompleted(g.Name, result.Duration)
+	e.logWorkflowEnd(WorkflowCompleted, result.Duration, len(result.StepResults), "")
 
 	return result
 }
@@ -437,5 +470,53 @@ func (e *Engine) emitWorkflowCompleted(grimoireName string, duration time.Durati
 func (e *Engine) emitWorkflowCancelled() {
 	if e.eventEmitter != nil {
 		e.eventEmitter.EmitWorkflowCancelled(e.config.WorkflowID, e.config.BeadID)
+	}
+}
+
+// SetLogger sets the JSONL logger for workflow events.
+func (e *Engine) SetLogger(logger *Logger) {
+	e.logger = logger
+}
+
+// GetLogger returns the workflow logger.
+func (e *Engine) GetLogger() *Logger {
+	return e.logger
+}
+
+// log helper methods
+
+func (e *Engine) logWorkflowStart(grimoireName string) {
+	if e.logger != nil {
+		e.logger.LogWorkflowStart(e.config.WorkflowID, e.config.BeadID, grimoireName, e.config.WorktreePath)
+	}
+}
+
+func (e *Engine) logWorkflowEnd(status WorkflowStatus, duration time.Duration, stepCount int, errMsg string) {
+	if e.logger != nil {
+		e.logger.LogWorkflowEnd(e.config.WorkflowID, e.config.BeadID, status, duration, stepCount, errMsg)
+	}
+}
+
+func (e *Engine) logStepStart(stepName, stepType string, stepIndex int) {
+	if e.logger != nil {
+		e.logger.LogStepStart(e.config.WorkflowID, e.config.BeadID, stepName, stepType, stepIndex)
+	}
+}
+
+func (e *Engine) logStepEnd(stepName, stepType string, stepIndex int, success, skipped bool, duration time.Duration, exitCode int, errMsg string) {
+	if e.logger != nil {
+		e.logger.LogStepEnd(e.config.WorkflowID, e.config.BeadID, stepName, stepType, stepIndex, success, skipped, duration, exitCode, errMsg)
+	}
+}
+
+func (e *Engine) logStepInput(stepName string, variables map[string]string, spell, command string) {
+	if e.logger != nil {
+		e.logger.LogStepInput(e.config.WorkflowID, e.config.BeadID, stepName, variables, spell, command)
+	}
+}
+
+func (e *Engine) logStepOutput(stepName, output, outputVar string, tokensUsed, tokensLimit int) {
+	if e.logger != nil {
+		e.logger.LogStepOutput(e.config.WorkflowID, e.config.BeadID, stepName, output, outputVar, tokensUsed, tokensLimit)
 	}
 }
