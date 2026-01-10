@@ -122,6 +122,50 @@ export class CovenStatusBar implements vscode.Disposable {
   }
 
   /**
+   * Show not initialized state when .coven/ directory is missing.
+   */
+  setNotInitialized(): void {
+    this.stopPulse();
+    this.statusBarItem.text = '$(warning) Coven: Not Initialized';
+    this.statusBarItem.tooltip = new vscode.MarkdownString(
+      '**Coven is not initialized in this workspace**\n\n' +
+      'Run `coven init` or click to set up.\n\n' +
+      '_Click to initialize workspace_'
+    );
+    this.statusBarItem.command = 'coven.showSetup';
+    this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  }
+
+  /**
+   * Show connected state.
+   */
+  setConnected(): void {
+    // If we have a state cache, let it drive the status
+    if (this.stateCache) {
+      this.updateFromSession(this.stateCache.getSessionState());
+    } else {
+      this.statusBarItem.text = '$(check) Coven: Connected';
+      this.statusBarItem.tooltip = 'Connected to Coven daemon';
+      this.statusBarItem.command = 'coven.revealSidebar';
+      this.statusBarItem.backgroundColor = undefined;
+    }
+  }
+
+  /**
+   * Show disconnected state.
+   */
+  setDisconnected(): void {
+    this.stopPulse();
+    this.statusBarItem.text = '$(warning) Coven: Disconnected';
+    this.statusBarItem.tooltip = new vscode.MarkdownString(
+      '**Connection to daemon lost**\n\n' +
+      '_Click to retry connection_'
+    );
+    this.statusBarItem.command = 'coven.startSession';
+    this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  }
+
+  /**
    * Start pulsing the status bar to attract attention.
    */
   private startPulse(): void {

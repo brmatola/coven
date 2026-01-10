@@ -3,6 +3,7 @@ import { WorkflowTreeProvider } from './sidebar/WorkflowTreeProvider';
 import { CovenStatusBar } from './sidebar/CovenStatusBar';
 import { checkPrerequisites } from './setup/prerequisites';
 import { SetupPanel } from './setup/SetupPanel';
+import { SetupTreeProvider } from './setup/SetupTreeProvider';
 import { TaskDetailPanel } from './tasks/TaskDetailPanel';
 import { ReviewPanel } from './review/ReviewPanel';
 import { ExtensionContext } from './shared/extensionContext';
@@ -17,11 +18,15 @@ import {
   StateCache,
   BinaryManager,
   DaemonLifecycle,
+  DaemonNotificationService,
+  DaemonStartError,
 } from './daemon';
 import { WorktreeManager } from './git/WorktreeManager';
+import { detectCoven } from './setup/detection';
 
 // Global state
 let workflowProvider: WorkflowTreeProvider | null = null;
+let setupProvider: SetupTreeProvider | null = null;
 let statusBar: CovenStatusBar | null = null;
 let connectionManager: ConnectionManager | null = null;
 let stateCache: StateCache | null = null;
@@ -32,6 +37,8 @@ let treeView: vscode.TreeView<unknown> | null = null;
 let beadsTaskSource: BeadsTaskSource | null = null;
 let worktreeManager: WorktreeManager | null = null;
 let daemonSocketPath: string | null = null;
+let daemonNotifications: DaemonNotificationService | null = null;
+let reconnectStatusDisposable: vscode.Disposable | null = null;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const ctx = ExtensionContext.initialize(context);
@@ -77,12 +84,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.stopTask', stopTask),
     vscode.commands.registerCommand('coven.refreshTasks', refreshTasks),
     vscode.commands.registerCommand('coven.respondToQuestion', respondToQuestion),
-    vscode.commands.registerCommand('coven.reviewTask', reviewTask)
+    vscode.commands.registerCommand('coven.reviewTask', reviewTask),
+    vscode.commands.registerCommand('coven.viewDaemonLogs', viewDaemonLogs)
   );
 
-  // Initialize daemon connection if workspace is available
+  // Check workspace initialization status
   if (workspaceRoot) {
-    await initializeDaemon(context, workspaceRoot);
+    // Initialize daemon notification service
+    daemonNotifications = new DaemonNotificationService(workspaceRoot);
+
+    // Check if .coven/ directory exists
+    const covenDetection = await detectCoven();
+
+    if (covenDetection.status === 'missing') {
+      // Show setup tree provider instead of workflow tree
+      ctx.logger.info('Coven not initialized in workspace, showing setup view');
+      setupProvider = new SetupTreeProvider(workspaceRoot);
+      ctx.subscriptions.push(setupProvider);
+      // Status bar will show "not initialized" state
+      statusBar.setNotInitialized();
+    } else {
+      // Initialize daemon connection
+      await initializeDaemon(context, workspaceRoot);
+    }
   }
 
   // Check prerequisites
@@ -102,6 +126,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
+  // Clean up reconnect status
+  reconnectStatusDisposable?.dispose();
+  reconnectStatusDisposable = null;
+
   if (connectionManager) {
     connectionManager.disconnect();
     connectionManager = null;
@@ -110,9 +138,25 @@ export function deactivate(): void {
     familiarOutputChannel.dispose();
     familiarOutputChannel = null;
   }
+  if (setupProvider) {
+    setupProvider.dispose();
+    setupProvider = null;
+  }
+  daemonNotifications = null;
   if (ExtensionContext.isInitialized()) {
     ExtensionContext.get().logger.info('Coven extension deactivating');
     ExtensionContext.dispose();
+  }
+}
+
+/**
+ * View daemon logs command handler.
+ */
+async function viewDaemonLogs(): Promise<void> {
+  if (daemonNotifications) {
+    await daemonNotifications.viewLogs();
+  } else {
+    await vscode.window.showErrorMessage('Coven: Daemon not configured');
   }
 }
 
@@ -138,8 +182,23 @@ async function initializeDaemon(
       workspaceRoot,
     });
 
-    // Ensure daemon is running
-    await lifecycle.ensureRunning();
+    // Show starting notification
+    const startingDisposable = await daemonNotifications?.showStarting();
+
+    try {
+      // Ensure daemon is running (auto-starts if needed)
+      await lifecycle.ensureRunning();
+      startingDisposable?.dispose();
+      daemonNotifications?.showStarted();
+    } catch (err) {
+      startingDisposable?.dispose();
+      if (err instanceof DaemonStartError) {
+        await daemonNotifications?.showError(err, {
+          viewLogs: () => daemonNotifications?.viewLogs(),
+        });
+      }
+      throw err;
+    }
 
     // Store socket path
     daemonSocketPath = lifecycle.getSocketPath();
@@ -153,13 +212,16 @@ async function initializeDaemon(
     // Create connection manager
     connectionManager = new ConnectionManager(daemonClient, sseClient, stateCache!);
 
+    // Wire up connection manager events to notifications
+    setupConnectionEventHandlers(connectionManager);
+
     // Connect to daemon
     await connectionManager.connect();
 
     // Wire up status bar to state cache
     statusBar?.setStateCache(stateCache);
 
-    // Initialize notification service (for future use)
+    // Initialize notification service for agent events
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const _notificationService = new NotificationService(() => ({
       notifications: true,
@@ -187,7 +249,58 @@ async function initializeDaemon(
     ctx.logger.error('Failed to initialize daemon connection', {
       error: err instanceof Error ? err.message : String(err),
     });
+
+    // Show user-friendly error notification
+    if (err instanceof Error && daemonNotifications) {
+      await daemonNotifications.showError(err, {
+        viewLogs: () => daemonNotifications?.viewLogs(),
+        startDaemon: () => initializeDaemon(context, workspaceRoot),
+      });
+    }
   }
+}
+
+/**
+ * Set up event handlers for connection manager events.
+ */
+function setupConnectionEventHandlers(manager: ConnectionManager): void {
+  manager.on('connected', () => {
+    // Clear any reconnecting status
+    reconnectStatusDisposable?.dispose();
+    reconnectStatusDisposable = null;
+    statusBar?.setConnected();
+  });
+
+  manager.on('disconnected', () => {
+    statusBar?.setDisconnected();
+    void daemonNotifications?.showConnectionLost({
+      retry: () => connectionManager?.connect(),
+    });
+  });
+
+  manager.on('reconnecting', (attempt: number, maxAttempts: number) => {
+    // Show reconnection progress in status bar
+    reconnectStatusDisposable?.dispose();
+    reconnectStatusDisposable = daemonNotifications?.showReconnecting(attempt, maxAttempts) ?? null;
+  });
+
+  manager.on('error', (error: Error) => {
+    const ctx = ExtensionContext.get();
+    ctx.logger.error('Connection error', {
+      error: error.message,
+    });
+
+    // Only show notification for fatal errors, not transient ones
+    if (error.message.includes('Max reconnection attempts')) {
+      void daemonNotifications?.showReconnectionFailed({
+        retry: () => connectionManager?.connect(),
+      });
+    }
+  });
+
+  manager.on('versionMismatch', (expected: string, actual: string) => {
+    void daemonNotifications?.showVersionMismatch(expected, actual);
+  });
 }
 
 async function startSession(

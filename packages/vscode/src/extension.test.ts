@@ -38,6 +38,8 @@ vi.mock('./daemon', () => ({
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn(),
     getSocketPath: vi.fn().mockReturnValue('/tmp/test.sock'),
+    on: vi.fn(),
+    off: vi.fn(),
   })),
   DaemonClient: vi.fn().mockImplementation(() => ({
     startSession: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +69,24 @@ vi.mock('./daemon', () => ({
     getSocketPath: vi.fn().mockReturnValue('/tmp/test.sock'),
     stop: vi.fn().mockResolvedValue(undefined),
   })),
+  DaemonNotificationService: vi.fn().mockImplementation(() => ({
+    viewLogs: vi.fn().mockResolvedValue(undefined),
+    showError: vi.fn().mockResolvedValue(undefined),
+    showConnectionLost: vi.fn().mockResolvedValue(undefined),
+    showReconnecting: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+    showReconnected: vi.fn().mockResolvedValue(undefined),
+    showReconnectionFailed: vi.fn().mockResolvedValue(undefined),
+    showVersionMismatch: vi.fn().mockResolvedValue(undefined),
+    showStarting: vi.fn().mockResolvedValue({ dispose: vi.fn() }),
+    showStarted: vi.fn(),
+    showStopped: vi.fn(),
+  })),
+  DaemonStartError: class DaemonStartError extends Error {
+    constructor(message: string, public readonly logPath: string) {
+      super(message);
+      this.name = 'DaemonStartError';
+    }
+  },
 }));
 
 // Mock FamiliarOutputChannel
@@ -119,6 +139,11 @@ vi.mock('./tasks/BeadsTaskSource', () => ({
 // Mock WorktreeManager
 vi.mock('./git/WorktreeManager', () => ({
   WorktreeManager: vi.fn().mockImplementation(() => ({})),
+}));
+
+// Mock detection
+vi.mock('./setup/detection', () => ({
+  detectCoven: vi.fn().mockResolvedValue({ status: 'initialized' }),
 }));
 
 import { checkPrerequisites } from './setup/prerequisites';
