@@ -183,6 +183,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.beadsPoller.Start()
 	defer d.beadsPoller.Stop()
 
+	// Start scheduler (handles workflow resumption and reconciliation)
+	d.scheduler.Start()
+	defer d.scheduler.Stop()
+
 	// Handle signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -311,6 +315,10 @@ func (d *Daemon) registerHandlers() {
 	// Scheduler/task control handlers
 	schedulerHandlers := scheduler.NewHandlers(d.store, d.scheduler)
 	schedulerHandlers.Register(d.server)
+
+	// Workflow handlers
+	workflowHandlers := scheduler.NewWorkflowHandlers(d.store, d.scheduler, d.covenDir)
+	workflowHandlers.Register(d.server)
 
 	// SSE event stream
 	d.eventBroker.Register(d.server)

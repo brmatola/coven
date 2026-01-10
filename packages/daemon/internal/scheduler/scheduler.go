@@ -42,6 +42,7 @@ type Scheduler struct {
 	doneCh            chan struct{}
 	agentCommand      string
 	agentArgs         []string
+	pendingResumes    map[string]*workflow.WorkflowState
 }
 
 // NewScheduler creates a new scheduler.
@@ -76,6 +77,7 @@ func NewScheduler(
 		maxAgents:         DefaultMaxAgents,
 		agentCommand:      agentCommand,
 		agentArgs:         agentArgs,
+		pendingResumes:    make(map[string]*workflow.WorkflowState),
 	}
 }
 
@@ -118,8 +120,101 @@ func (s *Scheduler) Start() {
 	// Set up process completion callback
 	s.processManager.OnComplete(s.handleAgentComplete)
 
+	// Check for and resume interrupted workflows
+	s.resumeInterruptedWorkflows()
+
 	go s.reconcileLoop()
 	s.logger.Info("scheduler started", "max_agents", s.maxAgents)
+}
+
+// resumeInterruptedWorkflows checks for workflows that were interrupted and resumes them.
+func (s *Scheduler) resumeInterruptedWorkflows() {
+	statePersister := workflow.NewStatePersister(s.covenDir)
+	interrupted, err := statePersister.ListInterrupted()
+	if err != nil {
+		s.logger.Error("failed to list interrupted workflows", "error", err)
+		return
+	}
+
+	if len(interrupted) == 0 {
+		return
+	}
+
+	s.logger.Info("found interrupted workflows", "count", len(interrupted))
+
+	for _, state := range interrupted {
+		s.logger.Info("scheduling workflow resume",
+			"task_id", state.TaskID,
+			"grimoire", state.GrimoireName,
+			"step", state.CurrentStep,
+		)
+
+		// Find the task in the store
+		tasks := s.store.GetTasks()
+		var task *types.Task
+		for _, t := range tasks {
+			if t.ID == state.TaskID {
+				task = &t
+				break
+			}
+		}
+
+		if task == nil {
+			// Save as pending - will retry when tasks sync
+			s.mu.Lock()
+			s.pendingResumes[state.TaskID] = state
+			s.mu.Unlock()
+			s.logger.Info("interrupted workflow task not found, saved as pending",
+				"task_id", state.TaskID,
+			)
+			continue
+		}
+
+		// Resume the workflow in background
+		go s.resumeWorkflow(context.Background(), *task, state)
+	}
+}
+
+// checkPendingResumes checks if any pending resumes can now proceed.
+func (s *Scheduler) checkPendingResumes() {
+	s.mu.RLock()
+	if len(s.pendingResumes) == 0 {
+		s.mu.RUnlock()
+		return
+	}
+
+	// Copy pending to avoid holding lock during resume
+	pending := make(map[string]*workflow.WorkflowState)
+	for k, v := range s.pendingResumes {
+		pending[k] = v
+	}
+	s.mu.RUnlock()
+
+	tasks := s.store.GetTasks()
+	taskMap := make(map[string]types.Task)
+	for _, t := range tasks {
+		taskMap[t.ID] = t
+	}
+
+	for taskID, state := range pending {
+		task, found := taskMap[taskID]
+		if !found {
+			continue
+		}
+
+		// Remove from pending
+		s.mu.Lock()
+		delete(s.pendingResumes, taskID)
+		s.mu.Unlock()
+
+		s.logger.Info("resuming pending workflow",
+			"task_id", taskID,
+			"grimoire", state.GrimoireName,
+		)
+
+		// Resume the workflow in background
+		go s.resumeWorkflow(context.Background(), task, state)
+	}
 }
 
 // Stop stops the scheduler.
@@ -170,6 +265,9 @@ func (s *Scheduler) reconcileLoop() {
 
 // Reconcile performs a single reconciliation cycle.
 func (s *Scheduler) Reconcile(ctx context.Context) error {
+	// Check for pending workflow resumes
+	s.checkPendingResumes()
+
 	s.mu.RLock()
 	maxAgents := s.maxAgents
 	s.mu.RUnlock()
@@ -327,6 +425,10 @@ func (s *Scheduler) runWorkflow(ctx context.Context, task types.Task, worktreePa
 	} else {
 		s.store.UpdateAgentStatus(taskID, types.AgentStatusFailed)
 		if result.Error != "" {
+			s.logger.Error("workflow failed",
+				"task_id", taskID,
+				"error", result.Error,
+			)
 			s.store.SetAgentError(taskID, result.Error)
 		}
 	}
@@ -357,8 +459,100 @@ func (s *Scheduler) runWorkflow(ctx context.Context, task types.Task, worktreePa
 	}
 }
 
-// StatusForResult is imported from workflow_runner.go but we need it here too
-// for inline access. The workflow_runner.go version handles all cases.
+// resumeWorkflow resumes an interrupted workflow from saved state.
+func (s *Scheduler) resumeWorkflow(ctx context.Context, task types.Task, state *workflow.WorkflowState) {
+	taskID := task.ID
+
+	s.logger.Info("resuming workflow",
+		"task_id", taskID,
+		"grimoire", state.GrimoireName,
+		"from_step", state.CurrentStep+1,
+		"worktree", state.WorktreePath,
+	)
+
+	// Update task status to in_progress
+	s.store.UpdateTaskStatus(taskID, types.TaskStatusInProgress)
+	s.beadsClient.UpdateStatus(ctx, taskID, types.TaskStatusInProgress)
+
+	// Create agent record in state
+	agentState := &types.Agent{
+		TaskID:    taskID,
+		Worktree:  state.WorktreePath,
+		Status:    types.AgentStatusRunning,
+		StartedAt: time.Now(),
+	}
+	s.store.AddAgent(agentState)
+
+	// Set up the agent runner for this workflow
+	s.agentRunner.SetTaskID(taskID)
+
+	// Run the resumed workflow
+	config := WorkflowConfig{
+		WorktreePath: state.WorktreePath,
+		BeadID:       taskID,
+		WorkflowID:   state.WorkflowID,
+		AgentRunner:  s.agentRunner,
+		ResumeState:  state, // Pass the state for resumption
+	}
+
+	result, err := s.workflowRunner.RunFromState(ctx, task, config, state)
+
+	// Handle errors from workflow runner itself
+	if err != nil {
+		s.logger.Error("resumed workflow error",
+			"task_id", taskID,
+			"error", err,
+		)
+		s.store.UpdateAgentStatus(taskID, types.AgentStatusFailed)
+		s.store.SetAgentError(taskID, err.Error())
+		s.beadsClient.UpdateStatus(ctx, taskID, types.TaskStatusBlocked)
+		return
+	}
+
+	// Log workflow completion
+	s.logger.Info("resumed workflow completed",
+		"task_id", taskID,
+		"grimoire", result.GrimoireName,
+		"status", result.Status,
+		"duration", result.Duration,
+		"steps", result.StepCount,
+	)
+
+	// Update agent status based on workflow result
+	if result.Success {
+		s.store.UpdateAgentStatus(taskID, types.AgentStatusCompleted)
+	} else {
+		s.store.UpdateAgentStatus(taskID, types.AgentStatusFailed)
+		if result.Error != "" {
+			s.logger.Error("resumed workflow failed",
+				"task_id", taskID,
+				"error", result.Error,
+			)
+			s.store.SetAgentError(taskID, result.Error)
+		}
+	}
+
+	// Convert workflow status to task status
+	newStatus := StatusForResult(result)
+
+	s.logger.Info("updating task status after resume",
+		"task_id", taskID,
+		"new_status", newStatus,
+	)
+
+	// Update task status
+	s.store.UpdateTaskStatus(taskID, newStatus)
+	if updateErr := s.beadsClient.UpdateStatus(ctx, taskID, newStatus); updateErr != nil {
+		s.logger.Error("failed to update task status in beads",
+			"task_id", taskID,
+			"status", newStatus,
+			"error", updateErr,
+		)
+	}
+}
+
+// statusForWorkflowResult is a local copy of StatusForResult for inline access.
+// Note: beads doesn't support "pending_merge", so we map it to "blocked".
 func statusForWorkflowResult(result *WorkflowResult) types.TaskStatus {
 	if result == nil {
 		return types.TaskStatusOpen
@@ -368,7 +562,8 @@ func statusForWorkflowResult(result *WorkflowResult) types.TaskStatus {
 	case workflow.WorkflowCompleted:
 		return types.TaskStatusClosed
 	case workflow.WorkflowPendingMerge:
-		return types.TaskStatusPendingMerge
+		// Map pending_merge to blocked for beads compatibility
+		return types.TaskStatusBlocked
 	case workflow.WorkflowBlocked:
 		return types.TaskStatusBlocked
 	case workflow.WorkflowCancelled:
@@ -454,4 +649,143 @@ func buildPromptFromTask(task types.Task) string {
 		prompt += "\n\n" + task.Description
 	}
 	return prompt
+}
+
+// MergeApproval represents a pending or completed merge approval.
+type MergeApproval struct {
+	TaskID   string
+	Approved bool
+	Reason   string
+	Ch       chan struct{}
+}
+
+// QueueWorkflowResume queues a blocked or failed workflow for resumption.
+func (s *Scheduler) QueueWorkflowResume(state *workflow.WorkflowState) error {
+	// Find the task
+	tasks := s.store.GetTasks()
+	var task *types.Task
+	for _, t := range tasks {
+		if t.ID == state.TaskID {
+			task = &t
+			break
+		}
+	}
+
+	if task == nil {
+		return fmt.Errorf("task %s not found", state.TaskID)
+	}
+
+	// Update state to running for resume
+	statePersister := workflow.NewStatePersister(s.covenDir)
+	state.Status = workflow.WorkflowRunning
+	if err := statePersister.Save(state); err != nil {
+		return fmt.Errorf("failed to update workflow state: %w", err)
+	}
+
+	// Resume the workflow in background
+	go s.resumeWorkflow(context.Background(), *task, state)
+
+	return nil
+}
+
+// ApproveMerge approves a pending merge for a workflow.
+func (s *Scheduler) ApproveMerge(taskID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Load the workflow state
+	statePersister := workflow.NewStatePersister(s.covenDir)
+	state, err := statePersister.Load(taskID)
+	if err != nil {
+		return fmt.Errorf("failed to load workflow state: %w", err)
+	}
+	if state == nil {
+		return fmt.Errorf("workflow state not found for task %s", taskID)
+	}
+
+	if state.Status != workflow.WorkflowPendingMerge {
+		return fmt.Errorf("workflow is not pending merge (status: %s)", state.Status)
+	}
+
+	// Perform the actual merge
+	mergeRunner := &workflow.DefaultMergeRunner{}
+	ctx := context.Background()
+	if err := mergeRunner.Merge(ctx, state.WorktreePath); err != nil {
+		return fmt.Errorf("merge failed: %w", err)
+	}
+
+	// Update state to running and increment step
+	state.Status = workflow.WorkflowRunning
+	state.CurrentStep++ // Move past the merge step
+	if err := statePersister.Save(state); err != nil {
+		return fmt.Errorf("failed to save workflow state: %w", err)
+	}
+
+	// Find the task and resume the workflow
+	tasks := s.store.GetTasks()
+	var task *types.Task
+	for _, t := range tasks {
+		if t.ID == taskID {
+			task = &t
+			break
+		}
+	}
+
+	if task == nil {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	// Resume the workflow in background (from after the merge step)
+	go s.resumeWorkflow(context.Background(), *task, state)
+
+	s.logger.Info("merge approved, workflow resuming",
+		"task_id", taskID,
+		"next_step", state.CurrentStep,
+	)
+
+	return nil
+}
+
+// RejectMerge rejects a pending merge and blocks the workflow.
+func (s *Scheduler) RejectMerge(taskID string, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Load the workflow state
+	statePersister := workflow.NewStatePersister(s.covenDir)
+	state, err := statePersister.Load(taskID)
+	if err != nil {
+		return fmt.Errorf("failed to load workflow state: %w", err)
+	}
+	if state == nil {
+		return fmt.Errorf("workflow state not found for task %s", taskID)
+	}
+
+	if state.Status != workflow.WorkflowPendingMerge {
+		return fmt.Errorf("workflow is not pending merge (status: %s)", state.Status)
+	}
+
+	// Update state to blocked
+	state.Status = workflow.WorkflowBlocked
+	state.Error = reason
+	if err := statePersister.Save(state); err != nil {
+		return fmt.Errorf("failed to save workflow state: %w", err)
+	}
+
+	// Update task status to blocked
+	s.store.UpdateTaskStatus(taskID, types.TaskStatusBlocked)
+	ctx := context.Background()
+	if err := s.beadsClient.UpdateStatus(ctx, taskID, types.TaskStatusBlocked); err != nil {
+		s.logger.Error("failed to update task status in beads",
+			"task_id", taskID,
+			"error", err,
+		)
+	}
+
+	s.logger.Info("merge rejected, workflow blocked",
+		"task_id", taskID,
+		"reason", reason,
+	)
+
+	return nil
 }

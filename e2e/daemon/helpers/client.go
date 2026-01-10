@@ -451,3 +451,111 @@ func (c *APIClient) RespondToAgent(taskID, response string) error {
 	}
 	return nil
 }
+
+// Workflow represents a workflow in the API response.
+type Workflow struct {
+	WorkflowID   string                 `json:"workflow_id"`
+	TaskID       string                 `json:"task_id"`
+	GrimoireName string                 `json:"grimoire_name"`
+	Status       string                 `json:"status"`
+	CurrentStep  int                    `json:"current_step"`
+	WorktreePath string                 `json:"worktree_path"`
+	StartedAt    string                 `json:"started_at,omitempty"`
+	UpdatedAt    string                 `json:"updated_at,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	Actions      []string               `json:"available_actions,omitempty"`
+	MergeReview  map[string]interface{} `json:"merge_review,omitempty"`
+}
+
+// WorkflowsResponse represents the workflows list response.
+type WorkflowsResponse struct {
+	Workflows []Workflow `json:"workflows"`
+	Count     int        `json:"count"`
+}
+
+// GetWorkflows calls GET /workflows.
+func (c *APIClient) GetWorkflows() (*WorkflowsResponse, error) {
+	resp, err := c.Get("/workflows")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	var workflows WorkflowsResponse
+	if err := resp.JSON(&workflows); err != nil {
+		return nil, err
+	}
+	return &workflows, nil
+}
+
+// GetWorkflow calls GET /workflows/:id.
+func (c *APIClient) GetWorkflow(id string) (*Workflow, error) {
+	resp, err := c.Get("/workflows/" + id)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	var workflow Workflow
+	if err := resp.JSON(&workflow); err != nil {
+		return nil, err
+	}
+	return &workflow, nil
+}
+
+// CancelWorkflow calls POST /workflows/:id/cancel.
+func (c *APIClient) CancelWorkflow(id string) error {
+	resp, err := c.Post("/workflows/"+id+"/cancel", nil)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}
+
+// RetryWorkflow calls POST /workflows/:id/retry.
+func (c *APIClient) RetryWorkflow(id string) error {
+	resp, err := c.Post("/workflows/"+id+"/retry", nil)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}
+
+// ApproveMerge calls POST /workflows/:id/approve-merge.
+func (c *APIClient) ApproveMerge(id string) error {
+	resp, err := c.Post("/workflows/"+id+"/approve-merge", nil)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}
+
+// RejectMerge calls POST /workflows/:id/reject-merge.
+func (c *APIClient) RejectMerge(id string, reason string) error {
+	body := map[string]string{}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	resp, err := c.Post("/workflows/"+id+"/reject-merge", body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+	}
+	return nil
+}
