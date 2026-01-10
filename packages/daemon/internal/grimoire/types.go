@@ -13,6 +13,9 @@ type Grimoire struct {
 	// Description explains what this grimoire does.
 	Description string `yaml:"description"`
 
+	// Timeout is the maximum duration for the entire workflow.
+	Timeout string `yaml:"timeout,omitempty"`
+
 	// Steps are the ordered steps to execute.
 	Steps []Step `yaml:"steps"`
 
@@ -250,6 +253,53 @@ func (s *Step) validateLoopStep() error {
 func (s *Step) validateMergeStep() error {
 	// Merge step has no required fields beyond name and type
 	// require_review defaults to true if not specified
+	return nil
+}
+
+// DefaultWorkflowTimeout is the default timeout for an entire workflow.
+const DefaultWorkflowTimeout = 1 * time.Hour
+
+// GetTimeout returns the workflow timeout as a time.Duration.
+// Returns DefaultWorkflowTimeout if not specified.
+func (g *Grimoire) GetTimeout() (time.Duration, error) {
+	if g.Timeout == "" {
+		return DefaultWorkflowTimeout, nil
+	}
+	return time.ParseDuration(g.Timeout)
+}
+
+// Validate validates the grimoire configuration.
+func (g *Grimoire) Validate() error {
+	if g.Name == "" {
+		return fmt.Errorf("grimoire name is required")
+	}
+
+	if len(g.Steps) == 0 {
+		return fmt.Errorf("grimoire %q: at least one step is required", g.Name)
+	}
+
+	// Validate timeout if specified
+	if g.Timeout != "" {
+		if _, err := time.ParseDuration(g.Timeout); err != nil {
+			return fmt.Errorf("grimoire %q: invalid timeout %q: %w", g.Name, g.Timeout, err)
+		}
+	}
+
+	// Validate all steps
+	stepNames := make(map[string]bool)
+	for i := range g.Steps {
+		step := &g.Steps[i]
+		if err := step.Validate(); err != nil {
+			return err
+		}
+
+		// Check for duplicate step names
+		if stepNames[step.Name] {
+			return fmt.Errorf("grimoire %q: duplicate step name %q", g.Name, step.Name)
+		}
+		stepNames[step.Name] = true
+	}
+
 	return nil
 }
 

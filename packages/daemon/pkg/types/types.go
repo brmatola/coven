@@ -27,9 +27,11 @@ const (
 type TaskStatus string
 
 const (
-	TaskStatusOpen       TaskStatus = "open"
-	TaskStatusInProgress TaskStatus = "in_progress"
-	TaskStatusClosed     TaskStatus = "closed"
+	TaskStatusOpen         TaskStatus = "open"
+	TaskStatusInProgress   TaskStatus = "in_progress"
+	TaskStatusClosed       TaskStatus = "closed"
+	TaskStatusBlocked      TaskStatus = "blocked"
+	TaskStatusPendingMerge TaskStatus = "pending_merge"
 )
 
 // Task represents a task from the beads issue tracker.

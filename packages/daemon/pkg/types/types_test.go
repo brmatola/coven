@@ -66,6 +66,8 @@ func TestTaskStatusConstants(t *testing.T) {
 		{TaskStatusOpen, "open"},
 		{TaskStatusInProgress, "in_progress"},
 		{TaskStatusClosed, "closed"},
+		{TaskStatusBlocked, "blocked"},
+		{TaskStatusPendingMerge, "pending_merge"},
 	}
 
 	for _, tt := range statuses {

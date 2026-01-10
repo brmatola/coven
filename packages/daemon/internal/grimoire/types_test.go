@@ -535,3 +535,151 @@ func TestOnMaxIterationsAction_Constants(t *testing.T) {
 		t.Errorf("OnMaxIterationsContinue = %q, want %q", OnMaxIterationsContinue, "continue")
 	}
 }
+
+func TestGrimoire_GetTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		grimoire Grimoire
+		expected time.Duration
+		wantErr  bool
+	}{
+		{
+			name:     "default timeout",
+			grimoire: Grimoire{Name: "test"},
+			expected: DefaultWorkflowTimeout,
+		},
+		{
+			name:     "custom timeout 30m",
+			grimoire: Grimoire{Name: "test", Timeout: "30m"},
+			expected: 30 * time.Minute,
+		},
+		{
+			name:     "custom timeout 2h",
+			grimoire: Grimoire{Name: "test", Timeout: "2h"},
+			expected: 2 * time.Hour,
+		},
+		{
+			name:     "invalid timeout",
+			grimoire: Grimoire{Name: "test", Timeout: "invalid"},
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.grimoire.GetTimeout()
+			if tt.wantErr {
+				if err == nil {
+					t.Error("GetTimeout() should return error")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("GetTimeout() error: %v", err)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("GetTimeout() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGrimoire_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		g       Grimoire
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid grimoire",
+			g: Grimoire{
+				Name: "test-workflow",
+				Steps: []Step{
+					{Name: "step1", Type: StepTypeScript, Command: "echo hello"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "missing name",
+			g:       Grimoire{Steps: []Step{{Name: "step1", Type: StepTypeScript, Command: "echo"}}},
+			wantErr: true,
+			errMsg:  "grimoire name is required",
+		},
+		{
+			name:    "no steps",
+			g:       Grimoire{Name: "test"},
+			wantErr: true,
+			errMsg:  "at least one step is required",
+		},
+		{
+			name: "invalid timeout",
+			g: Grimoire{
+				Name:    "test",
+				Timeout: "invalid",
+				Steps:   []Step{{Name: "step1", Type: StepTypeScript, Command: "echo"}},
+			},
+			wantErr: true,
+			errMsg:  "invalid timeout",
+		},
+		{
+			name: "invalid step",
+			g: Grimoire{
+				Name: "test",
+				Steps: []Step{
+					{Name: "step1", Type: "invalid"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid step type",
+		},
+		{
+			name: "duplicate step names",
+			g: Grimoire{
+				Name: "test",
+				Steps: []Step{
+					{Name: "step1", Type: StepTypeScript, Command: "echo 1"},
+					{Name: "step1", Type: StepTypeScript, Command: "echo 2"},
+				},
+			},
+			wantErr: true,
+			errMsg:  "duplicate step name",
+		},
+		{
+			name: "with timeout",
+			g: Grimoire{
+				Name:    "test",
+				Timeout: "30m",
+				Steps: []Step{
+					{Name: "step1", Type: StepTypeScript, Command: "echo hello"},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.g.Validate()
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Validate() should return error")
+					return
+				}
+				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Error = %q, want to contain %q", err.Error(), tt.errMsg)
+				}
+			} else if err != nil {
+				t.Errorf("Validate() error: %v", err)
+			}
+		})
+	}
+}
+
+func TestDefaultWorkflowTimeout(t *testing.T) {
+	if DefaultWorkflowTimeout != 1*time.Hour {
+		t.Errorf("DefaultWorkflowTimeout = %v, want %v", DefaultWorkflowTimeout, 1*time.Hour)
+	}
+}

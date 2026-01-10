@@ -37,11 +37,23 @@ func NewGrimoireMapper(covenDir string, grimoireLoader *grimoire.Loader) *Grimoi
 
 // BeadInfo contains the information needed to resolve a grimoire.
 type BeadInfo struct {
+	// ID is the bead identifier.
+	ID string
+
 	// Labels are the bead's labels (e.g., ["grimoire:implement-bead", "priority:high"]).
 	Labels []string
 
 	// Type is the bead type (e.g., "feature", "bug", "task").
 	Type string
+
+	// Title is the bead title.
+	Title string
+
+	// Body is the bead description/body.
+	Body string
+
+	// Priority is the bead priority (e.g., "P1", "P2").
+	Priority string
 }
 
 // Resolve determines which grimoire to use for a bead.
@@ -162,4 +174,12 @@ func (m *GrimoireMapper) GetConfig() *GrimoireMappingConfig {
 // Useful for testing.
 func (m *GrimoireMapper) SetConfig(cfg *GrimoireMappingConfig) {
 	m.config = cfg
+}
+
+// GetGrimoire loads and returns a grimoire by name.
+func (m *GrimoireMapper) GetGrimoire(name string) (*grimoire.Grimoire, error) {
+	if m.grimoireLoader == nil {
+		return nil, fmt.Errorf("grimoire loader not configured")
+	}
+	return m.grimoireLoader.Load(name)
 }
