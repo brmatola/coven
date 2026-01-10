@@ -1,137 +1,117 @@
 ## MODIFIED Requirements
 
 ### Requirement: Agent Spawning
-The system SHALL delegate agent spawning to the daemon rather than spawning processes directly.
+The system SHALL delegate all agent spawning to the daemon.
 
-#### Scenario: Spawn agent for task
+#### Scenario: Start task triggers workflow
 - **WHEN** user starts a task via extension
 - **THEN** extension calls daemon API: POST /tasks/:id/start
+- **THEN** daemon resolves grimoire for task
+- **THEN** daemon creates worktree
+- **THEN** daemon begins workflow execution
+- **THEN** extension receives `workflow.started` SSE event
+
+#### Scenario: Agent step execution
+- **WHEN** workflow reaches agent step
+- **THEN** daemon renders spell with context
 - **THEN** daemon spawns claude process in worktree
-- **THEN** extension receives `agent.spawned` SSE event
-- **THEN** extension updates UI to show task as "working"
+- **THEN** extension receives `workflow.step_started` SSE event
+- **THEN** extension receives `agent.started` SSE event
 
-#### Scenario: Agent working directory
-- **WHEN** agent is spawned by daemon
-- **THEN** daemon creates worktree and sets agent working directory
-- **THEN** extension has no direct access to agent process
-
-#### Scenario: Agent availability check
-- **WHEN** extension activates
-- **THEN** extension verifies daemon is running (health check)
-- **THEN** if daemon not running, extension auto-starts daemon
-- **THEN** daemon handles `claude` command availability check
+#### Scenario: Agent availability
+- **WHEN** daemon starts
+- **THEN** daemon verifies claude CLI is available
+- **THEN** if not available, daemon logs error
+- **THEN** agent steps will fail with clear error message
 
 ### Requirement: Output Streaming
-The system SHALL receive agent output via daemon SSE events rather than direct process capture.
+The system SHALL receive agent output via daemon SSE events.
 
 #### Scenario: Real-time output
 - **WHEN** agent produces output
-- **THEN** daemon captures output and emits `agent.output` SSE event
-- **THEN** extension receives event and appends to output channel
-- **THEN** sequence numbers ensure no output is missed
+- **THEN** daemon captures and buffers output
+- **THEN** daemon emits `agent.output` SSE event
+- **THEN** extension appends output to detail panel
+- **THEN** output channel updates in real-time
 
-#### Scenario: Output parsing
-- **WHEN** daemon receives agent output
-- **THEN** daemon detects status changes and completion signals
-- **THEN** daemon emits appropriate events (`agent.question`, `agent.completed`)
-- **THEN** extension reacts to events for UI updates
-
-#### Scenario: Historical output fetch
-- **WHEN** extension reconnects or opens output channel late
-- **THEN** extension fetches historical output via GET /agents/:id/output?since=0
-- **THEN** output channel shows full history
+#### Scenario: Output history
+- **WHEN** extension opens workflow detail after agent started
+- **THEN** extension fetches GET /agents/:id/output
+- **THEN** extension displays historical output
+- **THEN** extension continues with live updates
 
 ### Requirement: Question Handling
-The system SHALL handle questions via daemon API rather than direct stdin access.
+The system SHALL handle questions via daemon API.
 
 #### Scenario: Question detection
 - **WHEN** daemon detects question in agent output
+- **THEN** daemon stores question in question store
 - **THEN** daemon emits `agent.question` SSE event
-- **THEN** extension shows notification or modal to user
+- **THEN** extension shows notification
+- **THEN** extension adds to Questions sidebar section
 
-#### Scenario: Response injection
-- **WHEN** user provides response to question
-- **THEN** extension calls daemon API: POST /agents/:id/respond
-- **THEN** daemon writes response to agent stdin
+#### Scenario: Answer delivery
+- **WHEN** user answers question
+- **THEN** extension calls POST /questions/:id/answer
+- **THEN** daemon writes answer to agent stdin
 - **THEN** agent continues execution
-
-#### Scenario: Permission request
-- **WHEN** agent requests permission
-- **THEN** daemon parses question and includes type in event
-- **THEN** extension shows appropriate UI based on question type
+- **THEN** question removed from pending list
 
 ### Requirement: Agent Termination
-The system SHALL terminate agents via daemon API rather than direct process signals.
+The system SHALL terminate agents via daemon API.
 
-#### Scenario: Graceful termination
-- **WHEN** user requests task stop
-- **THEN** extension calls daemon API: POST /agents/:id/kill
+#### Scenario: Cancel workflow
+- **WHEN** user cancels workflow
+- **THEN** extension calls POST /workflows/:id/cancel
 - **THEN** daemon sends SIGTERM to agent process
-- **THEN** extension receives `agent.completed` or `agent.failed` event
+- **THEN** if no exit in 10s, daemon sends SIGKILL
+- **THEN** daemon cleans up worktree
+- **THEN** extension receives `workflow.cancelled` event
 
-#### Scenario: Forced termination
-- **WHEN** agent does not exit after SIGTERM timeout
-- **THEN** daemon sends SIGKILL
-- **THEN** extension receives `agent.failed` event
-
-#### Scenario: Timeout termination
-- **WHEN** daemon detects agent timeout
-- **THEN** daemon terminates agent and emits `agent.failed` event
-- **THEN** extension updates UI to show task as blocked
+#### Scenario: Stop specific agent
+- **WHEN** extension needs to stop agent directly
+- **THEN** extension calls POST /agents/:id/kill
+- **THEN** daemon terminates agent process
+- **THEN** workflow step fails
+- **THEN** workflow may block or continue based on config
 
 ### Requirement: Agent Completion
-The system SHALL receive completion notifications via daemon events.
+The system SHALL receive completion via daemon events.
 
-#### Scenario: Successful completion
+#### Scenario: Successful step completion
 - **WHEN** daemon detects agent completion
-- **THEN** daemon updates task in beads
-- **THEN** daemon emits `agent.completed` SSE event
-- **THEN** extension updates UI to show task in review
+- **THEN** daemon parses agent output JSON
+- **THEN** daemon updates workflow state
+- **THEN** daemon emits `workflow.step_completed` event
+- **THEN** workflow proceeds to next step
 
 #### Scenario: Agent failure
-- **WHEN** daemon detects agent failure
-- **THEN** daemon updates task in beads
-- **THEN** daemon emits `agent.failed` SSE event
-- **THEN** extension updates UI to show task as blocked
+- **WHEN** agent exits non-zero or times out
+- **THEN** daemon marks step as failed
+- **THEN** daemon applies on_fail policy (block/continue)
+- **THEN** daemon emits `workflow.step_completed` with error
+- **THEN** if blocked, daemon emits `workflow.blocked`
 
-### Requirement: MCP Server Configuration
-The system SHALL pass MCP configuration to daemon for agent spawning.
-
-#### Scenario: Session-level MCP servers
-- **WHEN** session is started with MCP server configuration
-- **THEN** configuration is passed to daemon via session start request
-- **THEN** daemon applies MCP configuration when spawning agents
-
-#### Scenario: Task-specific MCP servers
-- **WHEN** task specifies MCP servers in beads metadata
-- **THEN** daemon reads MCP config from task
-- **THEN** daemon spawns agent with combined session + task MCP servers
-
-### Requirement: Agent Profiles
-The system SHALL delegate profile application to daemon.
-
-#### Scenario: Default profile
-- **WHEN** daemon spawns agent
-- **THEN** daemon applies default profile from configuration
-- **THEN** profile includes task description and acceptance criteria
-
-#### Scenario: Profile selection by task type
-- **WHEN** task has type in beads metadata
-- **THEN** daemon selects matching profile
-- **THEN** daemon tailors prompt for task type
+#### Scenario: Workflow completion
+- **WHEN** all steps complete successfully
+- **THEN** daemon emits `workflow.completed` event
+- **THEN** daemon updates bead status to closed
+- **THEN** extension moves workflow to Completed section
 
 ### Requirement: Context Injection
 The system SHALL rely on daemon for context injection.
 
-#### Scenario: Task context injection
-- **WHEN** daemon spawns agent for task
-- **THEN** daemon reads task details from beads
-- **THEN** daemon injects context into agent prompt
+#### Scenario: Spell rendering
+- **WHEN** daemon executes agent step
+- **THEN** daemon loads spell template
+- **THEN** daemon injects bead context (title, description, etc)
+- **THEN** daemon injects step context (previous outputs)
+- **THEN** agent receives fully rendered prompt
 
-#### Scenario: Repository context hints
-- **WHEN** daemon spawns agent
-- **THEN** daemon can include file hints based on task description
-- **THEN** extension does not need to provide context directly
+#### Scenario: Step output mapping
+- **WHEN** step has `output` field configured
+- **THEN** daemon stores step output in context
+- **THEN** subsequent steps can reference via `{{.step_name}}`
 
 ## REMOVED Requirements
 
@@ -139,4 +119,17 @@ The system SHALL rely on daemon for context injection.
 **Reason**: Daemon handles all process management.
 **Migration**: Extension uses daemon API instead of spawning processes.
 
-The extension SHALL NOT spawn claude processes directly. All agent lifecycle management is delegated to the daemon.
+The extension SHALL NOT:
+- Spawn claude processes directly
+- Manage agent stdin/stdout
+- Track agent PIDs
+- Handle agent timeouts
+
+### Requirement: Extension-side Agent State
+**Reason**: Daemon maintains agent state.
+**Migration**: Extension reads agent state from daemon cache.
+
+The extension SHALL NOT:
+- Maintain FamiliarManager
+- Track agent status locally
+- Persist agent state to disk
