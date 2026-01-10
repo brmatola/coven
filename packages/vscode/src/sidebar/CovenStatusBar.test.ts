@@ -184,4 +184,75 @@ describe('CovenStatusBar', () => {
       expect(item.show).toBeDefined();
     });
   });
+
+  describe('setNotInitialized', () => {
+    it('shows not initialized text with warning icon', () => {
+      statusBar.setNotInitialized();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toBe('$(warning) Coven: Not Initialized');
+    });
+
+    it('sets command to show setup', () => {
+      statusBar.setNotInitialized();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.command).toBe('coven.showSetup');
+    });
+
+    it('shows tooltip with initialization instructions', () => {
+      statusBar.setNotInitialized();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.tooltip).toBeDefined();
+    });
+  });
+
+  describe('setConnected', () => {
+    beforeEach(() => {
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState()
+      );
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    });
+
+    it('updates from session when cache is set', () => {
+      statusBar.setStateCache(mockStateCache);
+      statusBar.setConnected();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toContain('Coven:');
+    });
+
+    it('shows connected text when no cache', () => {
+      statusBar.setConnected();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toBe('$(check) Coven: Connected');
+    });
+  });
+
+  describe('setDisconnected', () => {
+    it('shows disconnected text with warning icon', () => {
+      statusBar.setDisconnected();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toBe('$(warning) Coven: Disconnected');
+    });
+
+    it('sets command to start session', () => {
+      statusBar.setDisconnected();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.command).toBe('coven.startSession');
+    });
+
+    it('shows tooltip with connection lost message', () => {
+      statusBar.setDisconnected();
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.tooltip).toBeDefined();
+    });
+  });
 });
