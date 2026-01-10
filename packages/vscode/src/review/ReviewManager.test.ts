@@ -4,17 +4,20 @@ import { WorktreeManager } from '../git/WorktreeManager';
 import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 import { Worktree, MergeResult } from '../git/types';
 
+// Shared mock for execAsync that can be controlled in tests (hoisted to run before vi.mock)
+const mockExecAsync = vi.hoisted(() => vi.fn().mockResolvedValue({ stdout: '', stderr: '' }));
+
 // Mock child_process
 vi.mock('child_process', () => ({
   exec: vi.fn(),
 }));
 
-// Mock util.promisify to return our mock exec
+// Mock util.promisify to return our controllable mock
 vi.mock('util', async (importOriginal) => {
   const original = await importOriginal<typeof import('util')>();
   return {
     ...original,
-    promisify: vi.fn(() => vi.fn()),
+    promisify: vi.fn(() => mockExecAsync),
   };
 });
 
@@ -75,6 +78,8 @@ describe('ReviewManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockExecAsync.mockReset();
+    mockExecAsync.mockResolvedValue({ stdout: '', stderr: '' });
 
     config = createMockConfig();
     mockGetConfig = vi.fn(() => config);
@@ -224,6 +229,61 @@ describe('ReviewManager', () => {
         'No worktree found for task: task-1'
       );
     });
+
+    it('runs pre-merge check commands and returns passed results', async () => {
+      const worktree = createMockWorktree('task-1');
+      vi.mocked(mockWorktreeManager.getWorktree).mockReturnValue(worktree);
+      config = createMockConfig({
+        preMergeChecks: { enabled: true, commands: ['npm test', 'npm run lint'] },
+      });
+
+      mockExecAsync.mockResolvedValue({ stdout: 'All tests passed', stderr: '' });
+
+      await reviewManager.startReview('task-1');
+
+      const checkStartedHandler = vi.fn();
+      const checkCompletedHandler = vi.fn();
+      reviewManager.on('check:started', checkStartedHandler);
+      reviewManager.on('check:completed', checkCompletedHandler);
+
+      const results = await reviewManager.runPreMergeChecks('task-1');
+
+      expect(results).toHaveLength(2);
+      expect(results[0].status).toBe('passed');
+      expect(results[0].command).toBe('npm test');
+      expect(results[0].exitCode).toBe(0);
+      expect(results[0].stdout).toBe('All tests passed');
+      expect(results[1].status).toBe('passed');
+      expect(results[1].command).toBe('npm run lint');
+      expect(checkStartedHandler).toHaveBeenCalledTimes(2);
+      expect(checkCompletedHandler).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops on first failed check and returns results', async () => {
+      const worktree = createMockWorktree('task-1');
+      vi.mocked(mockWorktreeManager.getWorktree).mockReturnValue(worktree);
+      config = createMockConfig({
+        preMergeChecks: { enabled: true, commands: ['npm test', 'npm run lint'] },
+      });
+
+      await reviewManager.startReview('task-1');
+
+      // Set up mock to fail AFTER startReview (which also uses execAsync)
+      const testError = Object.assign(new Error('Test failed'), {
+        code: 1,
+        stdout: '',
+        stderr: 'Test failed: 2 failures',
+      });
+      mockExecAsync.mockRejectedValueOnce(testError);
+
+      const results = await reviewManager.runPreMergeChecks('task-1');
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('failed');
+      expect(results[0].command).toBe('npm test');
+      expect(results[0].exitCode).toBe(1);
+      expect(results[0].stderr).toContain('Test failed');
+    });
   });
 
   describe('approve', () => {
@@ -274,6 +334,21 @@ describe('ReviewManager', () => {
       reviewManager.on('error', errorHandler);
 
       await expect(reviewManager.approve('task-1')).rejects.toThrow('Merge failed with conflicts');
+      expect(errorHandler).toHaveBeenCalled();
+    });
+
+    it('throws when feature branch cannot be determined', async () => {
+      // No worktree - getWorktree returns undefined, so getFeatureBranchForTask returns null
+      vi.mocked(mockWorktreeManager.getWorktree).mockReturnValue(undefined);
+
+      await reviewManager.startReview('task-1');
+
+      const errorHandler = vi.fn();
+      reviewManager.on('error', errorHandler);
+
+      await expect(reviewManager.approve('task-1')).rejects.toThrow(
+        'Cannot determine feature branch'
+      );
       expect(errorHandler).toHaveBeenCalled();
     });
   });

@@ -208,5 +208,55 @@ describe('BinaryManager', () => {
       const manager = createManager();
       await expect(manager.ensureBinary()).rejects.toThrow('Bundled binary not found');
     });
+
+    it('should use override path when provided and exists', async () => {
+      const overridePath = '/custom/path/to/covend';
+      mockFs.stat.mockImplementation((p) => {
+        if (p.toString() === overridePath) {
+          return Promise.resolve({ isFile: () => true } as fs.FileHandle['stat'] extends () => Promise<infer R> ? R : never);
+        }
+        return Promise.reject(new Error('ENOENT'));
+      });
+
+      const manager = new BinaryManager({
+        extensionPath,
+        bundledVersion,
+        covenDir,
+        overridePath,
+      });
+      const binaryPath = await manager.ensureBinary();
+
+      expect(binaryPath).toBe(overridePath);
+      expect(mockFs.copyFile).not.toHaveBeenCalled();
+    });
+
+    it('should fall back to bundled when override path does not exist', async () => {
+      const overridePath = '/nonexistent/covend';
+      mockFs.stat.mockImplementation((p) => {
+        const pathStr = p.toString();
+        if (pathStr === overridePath) {
+          return Promise.reject(new Error('ENOENT'));
+        }
+        if (pathStr.includes('extension/bin/darwin-arm64')) {
+          return Promise.resolve({ isFile: () => true } as fs.FileHandle['stat'] extends () => Promise<infer R> ? R : never);
+        }
+        return Promise.reject(new Error('ENOENT'));
+      });
+      mockFs.mkdir.mockResolvedValue(undefined);
+      mockFs.copyFile.mockResolvedValue(undefined);
+      mockFs.chmod.mockResolvedValue(undefined);
+      mockFs.writeFile.mockResolvedValue(undefined);
+
+      const manager = new BinaryManager({
+        extensionPath,
+        bundledVersion,
+        covenDir,
+        overridePath,
+      });
+      const binaryPath = await manager.ensureBinary();
+
+      expect(binaryPath).toBe(path.join(binDir, 'covend'));
+      expect(mockFs.copyFile).toHaveBeenCalled();
+    });
   });
 });

@@ -11,6 +11,7 @@ vi.mock('../daemon/cache', () => ({
     off: vi.fn(),
     getSessionState: vi.fn(),
     getWorkflow: vi.fn(),
+    getWorkflows: vi.fn().mockReturnValue([]),
     getQuestions: vi.fn(),
   })),
 }));
@@ -56,7 +57,7 @@ describe('CovenStatusBar', () => {
 
     it('shows disconnected state initially', () => {
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(circle-outline) Coven: Disconnected');
+      expect(item.text).toBe('$(circle-outline) covend: disconnected');
     });
 
     it('shows status bar item', () => {
@@ -91,24 +92,26 @@ describe('CovenStatusBar', () => {
       statusBar.setStateCache(null);
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(circle-outline) Coven: Disconnected');
+      expect(item.text).toBe('$(circle-outline) covend: disconnected');
     });
 
     it('updates based on initial session state', () => {
       (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
         createMockSessionState({ active: true })
       );
+      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
       statusBar.setStateCache(mockStateCache);
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('Coven: Connected');
+      expect(item.text).toContain('covend:');
     });
   });
 
   describe('state updates', () => {
     beforeEach(() => {
       (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([]);
       (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([]);
     });
 
@@ -123,18 +126,33 @@ describe('CovenStatusBar', () => {
       expect(item.text).toBe('$(circle-outline) Coven: Inactive');
     });
 
-    it('shows running workflow count', () => {
+    it('shows active workflow count', () => {
       (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
         createMockSessionState({ active: true })
       );
-      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockWorkflowState({ status: 'running' })
-      );
+      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([
+        createMockWorkflowState({ id: 'wf-1', status: 'running' }),
+      ]);
 
       statusBar.setStateCache(mockStateCache);
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('1 running');
+      expect(item.text).toContain('1 active');
+    });
+
+    it('shows pending workflow count', () => {
+      (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockSessionState({ active: true })
+      );
+      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([
+        createMockWorkflowState({ id: 'wf-1', status: 'pending_merge' }),
+        createMockWorkflowState({ id: 'wf-2', status: 'blocked' }),
+      ]);
+
+      statusBar.setStateCache(mockStateCache);
+
+      const item = statusBar.getStatusBarItem();
+      expect(item.text).toContain('2 pending');
     });
 
     it('shows pending questions count', () => {
@@ -190,7 +208,7 @@ describe('CovenStatusBar', () => {
       statusBar.setNotInitialized();
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(warning) Coven: Not Initialized');
+      expect(item.text).toBe('$(warning) Coven: not initialized');
     });
 
     it('sets command to show setup', () => {
@@ -222,14 +240,14 @@ describe('CovenStatusBar', () => {
       statusBar.setConnected();
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('Coven:');
+      expect(item.text).toContain('covend:');
     });
 
     it('shows connected text when no cache', () => {
       statusBar.setConnected();
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(check) Coven: Connected');
+      expect(item.text).toBe('$(broadcast) covend: 0 active, 0 pending');
     });
   });
 
@@ -238,7 +256,7 @@ describe('CovenStatusBar', () => {
       statusBar.setDisconnected();
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toBe('$(warning) Coven: Disconnected');
+      expect(item.text).toBe('$(warning) covend: disconnected');
     });
 
     it('sets command to start session', () => {

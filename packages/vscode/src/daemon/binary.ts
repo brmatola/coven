@@ -17,6 +17,8 @@ export interface BinaryManagerOptions {
   bundledVersion: string;
   /** Override the coven directory (defaults to ~/.coven). Used for testing. */
   covenDir?: string;
+  /** Override path to the covend binary (for development). Bypasses bundled binary extraction. */
+  overridePath?: string;
 }
 
 /**
@@ -36,10 +38,12 @@ export class BinaryManager {
   private readonly covenDir: string;
   private readonly binDir: string;
   private readonly versionFile: string;
+  private readonly overridePath: string | undefined;
 
   constructor(options: BinaryManagerOptions) {
     this.extensionPath = options.extensionPath;
     this.bundledVersion = options.bundledVersion;
+    this.overridePath = options.overridePath;
 
     // ~/.coven/bin (or custom covenDir for testing)
     this.covenDir = options.covenDir ?? path.join(os.homedir(), '.coven');
@@ -54,6 +58,16 @@ export class BinaryManager {
    * @throws Error if platform is unsupported or extraction fails
    */
   async ensureBinary(): Promise<string> {
+    // Check override path first (for development)
+    if (this.overridePath) {
+      const exists = await this.binaryExists(this.overridePath);
+      if (exists) {
+        return this.overridePath;
+      }
+      // Override path doesn't exist - fall through to bundled binary
+      // This allows development setups to gracefully degrade
+    }
+
     const binaryPath = this.getExtractedBinaryPath();
 
     // Check if binary exists and is up to date

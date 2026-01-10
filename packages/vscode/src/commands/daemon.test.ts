@@ -5,6 +5,7 @@ import {
   restartDaemon,
   viewDaemonLogs,
   initializeWorkspace,
+  registerDaemonCommands,
   DaemonCommandDependencies,
 } from './daemon';
 import { DaemonClient } from '../daemon/client';
@@ -12,7 +13,7 @@ import { DaemonLifecycle, DaemonStartError } from '../daemon/lifecycle';
 import { DaemonClientError } from '../daemon/types';
 
 // Use vi.hoisted to create mock functions that can be used in vi.mock
-const { mockShowInformationMessage, mockShowWarningMessage, mockShowErrorMessage, mockShowTextDocument, mockOpenTextDocument, mockWithProgress } = vi.hoisted(() => ({
+const { mockShowInformationMessage, mockShowWarningMessage, mockShowErrorMessage, mockShowTextDocument, mockOpenTextDocument, mockWithProgress, mockRegisterCommand } = vi.hoisted(() => ({
   mockShowInformationMessage: vi.fn(),
   mockShowWarningMessage: vi.fn(),
   mockShowErrorMessage: vi.fn(),
@@ -23,6 +24,11 @@ const { mockShowInformationMessage, mockShowWarningMessage, mockShowErrorMessage
       return callback();
     }
   ),
+  mockRegisterCommand: vi.fn().mockImplementation((name: string, callback: (...args: unknown[]) => unknown) => ({
+    dispose: vi.fn(),
+    name,
+    callback,
+  })),
 }));
 
 // Mock vscode
@@ -37,6 +43,9 @@ vi.mock('vscode', () => ({
   workspace: {
     openTextDocument: mockOpenTextDocument,
     workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+  },
+  commands: {
+    registerCommand: mockRegisterCommand,
   },
   ProgressLocation: {
     Notification: 1,
@@ -271,6 +280,176 @@ describe('Daemon Commands', () => {
       expect(mockShowErrorMessage).toHaveBeenCalledWith(
         expect.stringContaining('Failed to initialize coven')
       );
+    });
+  });
+
+  describe('restartDaemon edge cases', () => {
+    it('should re-throw non-connection DaemonClientError during restart', async () => {
+      // First call to post (shutdown) throws a non-connection error
+      mockClient.post.mockRejectedValue(
+        new DaemonClientError('internal_error', 'Internal server error')
+      );
+
+      await restartDaemon(deps);
+
+      // Should show error since this is not a connection error
+      expect(mockShowErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to restart daemon')
+      );
+    });
+
+    it('should handle socket_not_found error during restart gracefully', async () => {
+      mockClient.post.mockRejectedValue(
+        new DaemonClientError('socket_not_found', 'Socket not found')
+      );
+      mockLifecycle.ensureRunning.mockResolvedValue(undefined);
+
+      await restartDaemon(deps);
+
+      expect(mockLifecycle.ensureRunning).toHaveBeenCalled();
+      expect(mockShowInformationMessage).toHaveBeenCalledWith('Daemon restarted.');
+    });
+  });
+
+  describe('registerDaemonCommands', () => {
+    let mockContext: {
+      subscriptions: { push: Mock };
+    };
+
+    beforeEach(() => {
+      mockContext = {
+        subscriptions: {
+          push: vi.fn(),
+        },
+      };
+    });
+
+    it('should register all daemon commands', () => {
+      const getDeps = vi.fn().mockReturnValue(deps);
+
+      const disposables = registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      expect(disposables).toHaveLength(4);
+      expect(mockRegisterCommand).toHaveBeenCalledWith('coven.stopDaemon', expect.any(Function));
+      expect(mockRegisterCommand).toHaveBeenCalledWith('coven.restartDaemon', expect.any(Function));
+      expect(mockRegisterCommand).toHaveBeenCalledWith('coven.viewDaemonLogs', expect.any(Function));
+      expect(mockRegisterCommand).toHaveBeenCalledWith('coven.initializeWorkspace', expect.any(Function));
+    });
+
+    it('should add disposables to context subscriptions', () => {
+      const getDeps = vi.fn().mockReturnValue(deps);
+
+      registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      expect(mockContext.subscriptions.push).toHaveBeenCalled();
+    });
+
+    it('should show error when stopDaemon called with null deps', async () => {
+      const getDeps = vi.fn().mockReturnValue(null);
+
+      registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      // Find the stopDaemon command handler
+      const stopDaemonCall = mockRegisterCommand.mock.calls.find(
+        (call: unknown[]) => call[0] === 'coven.stopDaemon'
+      );
+      const stopDaemonHandler = stopDaemonCall?.[1] as () => Promise<void>;
+      await stopDaemonHandler();
+
+      expect(mockShowErrorMessage).toHaveBeenCalledWith('Coven is not initialized.');
+    });
+
+    it('should show error when restartDaemon called with null deps', async () => {
+      const getDeps = vi.fn().mockReturnValue(null);
+
+      registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      const restartDaemonCall = mockRegisterCommand.mock.calls.find(
+        (call: unknown[]) => call[0] === 'coven.restartDaemon'
+      );
+      const restartDaemonHandler = restartDaemonCall?.[1] as () => Promise<void>;
+      await restartDaemonHandler();
+
+      expect(mockShowErrorMessage).toHaveBeenCalledWith('Coven is not initialized.');
+    });
+
+    it('should show error when viewDaemonLogs called with null deps', async () => {
+      const getDeps = vi.fn().mockReturnValue(null);
+
+      registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      const viewLogsCall = mockRegisterCommand.mock.calls.find(
+        (call: unknown[]) => call[0] === 'coven.viewDaemonLogs'
+      );
+      const viewLogsHandler = viewLogsCall?.[1] as () => Promise<void>;
+      await viewLogsHandler();
+
+      expect(mockShowErrorMessage).toHaveBeenCalledWith('Coven is not initialized.');
+    });
+
+    it('should show error when initializeWorkspace called with no workspace', async () => {
+      const getDeps = vi.fn().mockReturnValue(deps);
+
+      // Temporarily override workspace mock
+      const vscodeMock = await import('vscode');
+      const originalFolders = vscodeMock.workspace.workspaceFolders;
+      Object.defineProperty(vscodeMock.workspace, 'workspaceFolders', {
+        value: undefined,
+        configurable: true,
+      });
+
+      registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      const initCall = mockRegisterCommand.mock.calls.find(
+        (call: unknown[]) => call[0] === 'coven.initializeWorkspace'
+      );
+      const initHandler = initCall?.[1] as () => Promise<void>;
+      await initHandler();
+
+      expect(mockShowErrorMessage).toHaveBeenCalledWith('No workspace folder open.');
+
+      // Restore
+      Object.defineProperty(vscodeMock.workspace, 'workspaceFolders', {
+        value: originalFolders,
+        configurable: true,
+      });
+    });
+
+    it('should call stopDaemon when command is invoked with deps', async () => {
+      const getDeps = vi.fn().mockReturnValue(deps);
+      mockLifecycle.isRunning.mockResolvedValue(true);
+      mockClient.post.mockResolvedValue(undefined);
+
+      registerDaemonCommands(
+        mockContext as unknown as import('vscode').ExtensionContext,
+        getDeps
+      );
+
+      const stopDaemonCall = mockRegisterCommand.mock.calls.find(
+        (call: unknown[]) => call[0] === 'coven.stopDaemon'
+      );
+      const stopDaemonHandler = stopDaemonCall?.[1] as () => Promise<void>;
+      await stopDaemonHandler();
+
+      expect(mockClient.post).toHaveBeenCalledWith('/shutdown', {});
     });
   });
 });

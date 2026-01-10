@@ -53,6 +53,12 @@ export const workspace = {
     dispose: vi.fn(),
   })),
   openTextDocument: vi.fn(),
+  getConfiguration: vi.fn(() => ({
+    get: vi.fn(() => undefined),
+    has: vi.fn(() => false),
+    inspect: vi.fn(() => undefined),
+    update: vi.fn(),
+  })),
 };
 
 // Test helper to set workspace folders

@@ -60,25 +60,27 @@ export class CovenStatusBar implements vscode.Disposable {
     }
 
     // Active session - get workflow info
-    const workflow = this.stateCache?.getWorkflow();
+    const workflows = this.stateCache?.getWorkflows() ?? [];
     const questions = this.stateCache?.getQuestions() ?? [];
 
-    const running = workflow?.status === 'running' ? 1 : 0;
+    // Count active (running) and pending (pending_merge, blocked) workflows
+    const active = workflows.filter((w) => w.status === 'running').length;
+    const pending = workflows.filter(
+      (w) => w.status === 'pending_merge' || w.status === 'blocked'
+    ).length;
     const pendingQuestions = questions.length;
 
     let text: string;
-    let icon: string;
 
     if (pendingQuestions > 0) {
-      icon = '$(bell)';
-      text = `${icon} Coven: ${pendingQuestions} awaiting response`;
+      text = `$(bell) covend: ${pendingQuestions} awaiting response`;
       this.startPulse();
-    } else if (running > 0) {
-      icon = '$(sync~spin)';
-      text = `${icon} Coven: ${running} running`;
+    } else if (active > 0) {
+      text = `$(sync~spin) covend: ${active} active, ${pending} pending`;
+    } else if (pending > 0) {
+      text = `$(broadcast) covend: ${active} active, ${pending} pending`;
     } else {
-      icon = '$(circle-filled)';
-      text = `${icon} Coven: Connected`;
+      text = `$(broadcast) covend: 0 active, 0 pending`;
     }
 
     this.statusBarItem.text = text;
@@ -88,8 +90,9 @@ export class CovenStatusBar implements vscode.Disposable {
     const tooltipParts = [
       `**Status:** Connected`,
       '',
-      `**Workflows:** ${running} running`,
-      `**Questions:** ${pendingQuestions} pending`,
+      `**Active workflows:** ${active}`,
+      `**Pending review:** ${pending}`,
+      `**Questions:** ${pendingQuestions}`,
     ];
 
     if (pendingQuestions > 0) {
@@ -105,7 +108,7 @@ export class CovenStatusBar implements vscode.Disposable {
    * Show disconnected state.
    */
   private updateDisconnected(): void {
-    this.statusBarItem.text = '$(circle-outline) Coven: Disconnected';
+    this.statusBarItem.text = '$(circle-outline) covend: disconnected';
     this.statusBarItem.tooltip = 'Daemon not connected';
     this.statusBarItem.command = 'coven.startSession';
     this.statusBarItem.backgroundColor = undefined;
@@ -126,7 +129,7 @@ export class CovenStatusBar implements vscode.Disposable {
    */
   setNotInitialized(): void {
     this.stopPulse();
-    this.statusBarItem.text = '$(warning) Coven: Not Initialized';
+    this.statusBarItem.text = '$(warning) Coven: not initialized';
     this.statusBarItem.tooltip = new vscode.MarkdownString(
       '**Coven is not initialized in this workspace**\n\n' +
       'Run `coven init` or click to set up.\n\n' +
@@ -144,7 +147,7 @@ export class CovenStatusBar implements vscode.Disposable {
     if (this.stateCache) {
       this.updateFromSession(this.stateCache.getSessionState());
     } else {
-      this.statusBarItem.text = '$(check) Coven: Connected';
+      this.statusBarItem.text = '$(broadcast) covend: 0 active, 0 pending';
       this.statusBarItem.tooltip = 'Connected to Coven daemon';
       this.statusBarItem.command = 'coven.revealSidebar';
       this.statusBarItem.backgroundColor = undefined;
@@ -156,7 +159,7 @@ export class CovenStatusBar implements vscode.Disposable {
    */
   setDisconnected(): void {
     this.stopPulse();
-    this.statusBarItem.text = '$(warning) Coven: Disconnected';
+    this.statusBarItem.text = '$(warning) covend: disconnected';
     this.statusBarItem.tooltip = new vscode.MarkdownString(
       '**Connection to daemon lost**\n\n' +
       '_Click to retry connection_'

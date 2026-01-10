@@ -158,7 +158,17 @@ export function deactivate(): void {
     setupProvider.dispose();
     setupProvider = null;
   }
+
+  // Reset all daemon-related state
   daemonNotifications = null;
+  daemonSocketPath = null;
+  daemonLifecycle = null;
+  sseClient = null;
+  stateCache = null;
+  beadsTaskSource = null;
+  worktreeManager = null;
+  questionHandler = null;
+
   if (ExtensionContext.isInitialized()) {
     ExtensionContext.get().logger.info('Coven extension deactivating');
     ExtensionContext.dispose();

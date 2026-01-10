@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { App, VsCodeApi } from './App';
 import type { SetupState } from '../types';
 
@@ -25,6 +26,27 @@ function createMockState(overrides: Partial<SetupState> = {}): SetupState {
       folderCount: 1,
     },
     allMet: false,
+    ...overrides,
+  };
+}
+
+function createSessionConfigState(overrides: Partial<SetupState> = {}): SetupState {
+  return {
+    phase: 'session-config',
+    tools: [],
+    inits: [],
+    workspace: {
+      isMultiRoot: false,
+      folderCount: 1,
+    },
+    allMet: true,
+    availableBranches: ['main', 'develop', 'feature/test'],
+    selectedBranch: null,
+    sessionConfig: {
+      maxConcurrentAgents: 2,
+      worktreeBasePath: '.worktrees',
+      autoApprove: false,
+    },
     ...overrides,
   };
 }
@@ -410,6 +432,256 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Check Again' }));
 
       expect(mockVsCode.postMessage).toHaveBeenCalledWith({ type: 'refresh' });
+    });
+  });
+
+  describe('session config phase', () => {
+    it('renders session config view when phase is session-config', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Start Session')).toBeInTheDocument();
+      });
+    });
+
+    it('displays feature branch section', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Feature Branch')).toBeInTheDocument();
+      });
+    });
+
+    it('displays available branches in select', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('main')).toBeInTheDocument();
+        expect(screen.getByText('develop')).toBeInTheDocument();
+        expect(screen.getByText('feature/test')).toBeInTheDocument();
+      });
+    });
+
+    it('displays task sources section', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Task Sources')).toBeInTheDocument();
+        expect(screen.getByText('Manual Tasks')).toBeInTheDocument();
+      });
+    });
+
+    it('displays settings section', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Settings')).toBeInTheDocument();
+        expect(screen.getByLabelText('Max Concurrent Agents')).toBeInTheDocument();
+      });
+    });
+
+    it('sends selectBranch message when branch selected', async () => {
+      const user = userEvent.setup();
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox')).toBeInTheDocument();
+      });
+
+      mockVsCode.postMessage.mockClear();
+      const select = screen.getByRole('combobox');
+      await user.selectOptions(select, 'develop');
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({
+        type: 'selectBranch',
+        payload: { name: 'develop', isNew: false },
+      });
+    });
+
+    it('shows new branch input when create new is selected', async () => {
+      const user = userEvent.setup();
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Create new branch')).toBeInTheDocument();
+      });
+
+      // Click the "Create new branch" radio
+      const createNewRadio = screen.getByLabelText('Create new branch');
+      await user.click(createNewRadio);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('feature/my-feature')).toBeInTheDocument();
+      });
+    });
+
+    it('sends selectBranch message with isNew true when new branch created', async () => {
+      const user = userEvent.setup();
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Create new branch')).toBeInTheDocument();
+      });
+
+      // Click the "Create new branch" radio
+      const createNewRadio = screen.getByLabelText('Create new branch');
+      await user.click(createNewRadio);
+
+      mockVsCode.postMessage.mockClear();
+      const input = screen.getByPlaceholderText('feature/my-feature');
+      await user.type(input, 'feature/new-branch');
+      fireEvent.blur(input);
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({
+        type: 'selectBranch',
+        payload: { name: 'feature/new-branch', isNew: true },
+      });
+    });
+
+    it('sends updateConfig when max agents changed', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Max Concurrent Agents')).toBeInTheDocument();
+      });
+
+      mockVsCode.postMessage.mockClear();
+      const input = screen.getByLabelText('Max Concurrent Agents');
+      fireEvent.change(input, { target: { value: '5' } });
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({
+        type: 'updateConfig',
+        payload: { maxConcurrentAgents: 5 },
+      });
+    });
+
+    it('sends updateConfig when worktree path changed', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Worktree Base Path')).toBeInTheDocument();
+      });
+
+      mockVsCode.postMessage.mockClear();
+      const input = screen.getByLabelText('Worktree Base Path');
+      fireEvent.change(input, { target: { value: '.custom-worktrees' } });
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({
+        type: 'updateConfig',
+        payload: { worktreeBasePath: '.custom-worktrees' },
+      });
+    });
+
+    it('sends updateConfig when autoApprove toggled', async () => {
+      const user = userEvent.setup();
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/Auto-approve/)).toBeInTheDocument();
+      });
+
+      mockVsCode.postMessage.mockClear();
+      const checkbox = screen.getByLabelText(/Auto-approve/);
+      await user.click(checkbox);
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({
+        type: 'updateConfig',
+        payload: { autoApprove: true },
+      });
+    });
+
+    it('disables Begin Session button when no branch selected', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        const button = screen.getByRole('button', { name: 'Begin Session' });
+        expect(button).toBeDisabled();
+      });
+    });
+
+    it('enables Begin Session button when branch selected', async () => {
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createSessionConfigState({
+          selectedBranch: { name: 'develop', isNew: false },
+        }),
+      });
+
+      await waitFor(() => {
+        const button = screen.getByRole('button', { name: 'Begin Session' });
+        expect(button).not.toBeDisabled();
+      });
+    });
+
+    it('sends beginSession message when Begin Session clicked', async () => {
+      const user = userEvent.setup();
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({
+        type: 'state',
+        payload: createSessionConfigState({
+          selectedBranch: { name: 'develop', isNew: false },
+        }),
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Begin Session' })).not.toBeDisabled();
+      });
+
+      mockVsCode.postMessage.mockClear();
+      await user.click(screen.getByRole('button', { name: 'Begin Session' }));
+
+      expect(mockVsCode.postMessage).toHaveBeenCalledWith({ type: 'beginSession' });
+    });
+
+    it('does not send selectBranch for empty new branch name', async () => {
+      const user = userEvent.setup();
+      render(<App vsCodeApi={mockVsCode} />);
+
+      simulateMessage({ type: 'state', payload: createSessionConfigState() });
+
+      await waitFor(() => {
+        expect(screen.getByText('Create new branch')).toBeInTheDocument();
+      });
+
+      // Click the "Create new branch" radio
+      const createNewRadio = screen.getByLabelText('Create new branch');
+      await user.click(createNewRadio);
+
+      mockVsCode.postMessage.mockClear();
+      const input = screen.getByPlaceholderText('feature/my-feature');
+      // Just blur without typing anything
+      fireEvent.blur(input);
+
+      expect(mockVsCode.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'selectBranch' })
+      );
     });
   });
 });
