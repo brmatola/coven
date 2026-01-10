@@ -88,6 +88,22 @@
         "command": "coven.reviewTask",
         "title": "Review",
         "icon": "$(checklist)"
+      },
+      {
+        "command": "coven.initGit",
+        "title": "Coven: Initialize Git Repository"
+      },
+      {
+        "command": "coven.initBeads",
+        "title": "Coven: Initialize Beads"
+      },
+      {
+        "command": "coven.initOpenspec",
+        "title": "Coven: Initialize OpenSpec"
+      },
+      {
+        "command": "coven.initCoven",
+        "title": "Coven: Initialize Coven"
       }
     ],
     "menus": {

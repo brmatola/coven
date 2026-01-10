@@ -35,10 +35,23 @@ let _workspaceFolders: Array<{ uri: { fsPath: string } }> = [
   { uri: { fsPath: '/mock/workspace' } },
 ];
 
+interface MockFileSystemWatcher {
+  onDidCreate: ReturnType<typeof vi.fn>;
+  onDidDelete: ReturnType<typeof vi.fn>;
+  onDidChange: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+}
+
 export const workspace = {
   get workspaceFolders() {
     return _workspaceFolders;
   },
+  createFileSystemWatcher: vi.fn((): MockFileSystemWatcher => ({
+    onDidCreate: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidDelete: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+    dispose: vi.fn(),
+  })),
 };
 
 // Test helper to set workspace folders
@@ -121,6 +134,10 @@ export const extensions = {
   getExtension: vi.fn(),
 };
 
+export const env = {
+  openExternal: vi.fn(),
+};
+
 export enum StatusBarAlignment {
   Left = 1,
   Right = 2,
@@ -185,6 +202,10 @@ export class Uri {
     return new Uri(path);
   }
 
+  static parse(value: string): Uri {
+    return new Uri(value);
+  }
+
   toString(): string {
     return this.fsPath;
   }
@@ -222,5 +243,15 @@ export class MarkdownString {
   appendMarkdown(value: string): MarkdownString {
     this.value += value;
     return this;
+  }
+}
+
+export class RelativePattern {
+  base: string;
+  pattern: string;
+
+  constructor(base: string | { fsPath: string }, pattern: string) {
+    this.base = typeof base === 'string' ? base : base.fsPath;
+    this.pattern = pattern;
   }
 }
