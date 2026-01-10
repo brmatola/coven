@@ -350,6 +350,17 @@ func (h *WorkflowHandlers) handleRetryWorkflow(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// ApproveMergeResponse is the response for approve-merge endpoint.
+type ApproveMergeResponse struct {
+	Status        string   `json:"status"`
+	WorkflowID    string   `json:"workflow_id"`
+	TaskID        string   `json:"task_id"`
+	Message       string   `json:"message"`
+	MergeCommit   string   `json:"merge_commit,omitempty"`
+	HasConflicts  bool     `json:"has_conflicts,omitempty"`
+	ConflictFiles []string `json:"conflict_files,omitempty"`
+}
+
 // handleApproveMerge handles POST /workflows/:id/approve-merge.
 func (h *WorkflowHandlers) handleApproveMerge(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
@@ -374,16 +385,31 @@ func (h *WorkflowHandlers) handleApproveMerge(w http.ResponseWriter, r *http.Req
 	}
 
 	// Signal merge approval
-	if err := h.scheduler.ApproveMerge(state.TaskID); err != nil {
+	result, err := h.scheduler.ApproveMerge(state.TaskID)
+	if err != nil {
 		api.WriteError(w, http.StatusInternalServerError, "failed to approve merge: "+err.Error())
 		return
 	}
 
-	api.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"status":      "approved",
-		"workflow_id": state.WorkflowID,
-		"task_id":     state.TaskID,
-		"message":     "merge approved, workflow continuing",
+	// Check if there are conflicts
+	if result.HasConflicts {
+		api.WriteJSON(w, http.StatusOK, ApproveMergeResponse{
+			Status:        "conflicts",
+			WorkflowID:    state.WorkflowID,
+			TaskID:        state.TaskID,
+			Message:       "merge has conflicts that need to be resolved",
+			HasConflicts:  true,
+			ConflictFiles: result.ConflictFiles,
+		})
+		return
+	}
+
+	api.WriteJSON(w, http.StatusOK, ApproveMergeResponse{
+		Status:      "merged",
+		WorkflowID:  state.WorkflowID,
+		TaskID:      state.TaskID,
+		Message:     "merge completed, workflow continuing",
+		MergeCommit: result.MergeCommit,
 	})
 }
 

@@ -7,3 +7,4 @@ coverage
 # Build artifacts
 build/
 packages/daemon/coverage.out
+bin/

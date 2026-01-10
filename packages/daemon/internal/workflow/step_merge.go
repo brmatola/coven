@@ -35,6 +35,21 @@ type MergeReview struct {
 	ConflictFiles []string `json:"conflict_files,omitempty"`
 }
 
+// MergeResult contains the result of a merge-to-main operation.
+type MergeResult struct {
+	// Success indicates if the merge completed without conflicts.
+	Success bool `json:"success"`
+
+	// HasConflicts indicates if merge conflicts were detected.
+	HasConflicts bool `json:"has_conflicts"`
+
+	// ConflictFiles lists files with merge conflicts.
+	ConflictFiles []string `json:"conflict_files,omitempty"`
+
+	// MergeCommit is the SHA of the merge commit if successful.
+	MergeCommit string `json:"merge_commit,omitempty"`
+}
+
 // MergeRunner handles git operations for merging.
 type MergeRunner interface {
 	// GetDiff returns the diff of uncommitted changes in the worktree.
@@ -49,8 +64,12 @@ type MergeRunner interface {
 	// HasConflicts checks if there are merge conflicts.
 	HasConflicts(ctx context.Context, workDir string) (bool, []string, error)
 
-	// Merge performs the actual merge operation.
-	Merge(ctx context.Context, workDir string) error
+	// CommitWorktree stages and commits all changes in the worktree.
+	CommitWorktree(ctx context.Context, workDir string) error
+
+	// MergeToMain merges the worktree branch into the main branch.
+	// Returns MergeResult with conflict info if merge cannot proceed.
+	MergeToMain(ctx context.Context, mainRepoDir, worktreeBranch, baseBranch string) (*MergeResult, error)
 }
 
 // DefaultMergeRunner is the default implementation using git commands.
@@ -167,8 +186,8 @@ func (r *DefaultMergeRunner) HasConflicts(ctx context.Context, workDir string) (
 	return len(conflictFiles) > 0, conflictFiles, nil
 }
 
-// Merge performs the merge operation.
-func (r *DefaultMergeRunner) Merge(ctx context.Context, workDir string) error {
+// CommitWorktree stages and commits all changes in the worktree.
+func (r *DefaultMergeRunner) CommitWorktree(ctx context.Context, workDir string) error {
 	// Stage all changes
 	stageCmd := exec.CommandContext(ctx, "git", "add", "-A")
 	stageCmd.Dir = workDir
@@ -192,6 +211,89 @@ func (r *DefaultMergeRunner) Merge(ctx context.Context, workDir string) error {
 	}
 
 	return nil
+}
+
+// MergeToMain merges the worktree branch into the main/base branch.
+// This performs:
+// 1. Checkout base branch in main repo
+// 2. Attempt merge with --no-ff
+// 3. If conflicts, abort and return conflict info
+// 4. If success, return merge commit SHA
+func (r *DefaultMergeRunner) MergeToMain(ctx context.Context, mainRepoDir, worktreeBranch, baseBranch string) (*MergeResult, error) {
+	result := &MergeResult{}
+
+	// First, checkout the base branch
+	checkoutCmd := exec.CommandContext(ctx, "git", "checkout", baseBranch)
+	checkoutCmd.Dir = mainRepoDir
+	if output, err := checkoutCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to checkout %s: %s: %w", baseBranch, string(output), err)
+	}
+
+	// Pull latest changes from remote (if remote exists)
+	pullCmd := exec.CommandContext(ctx, "git", "pull", "--ff-only")
+	pullCmd.Dir = mainRepoDir
+	// Ignore errors - may not have a remote configured
+	_ = pullCmd.Run()
+
+	// Attempt the merge
+	mergeCmd := exec.CommandContext(ctx, "git", "merge", "--no-ff", "-m",
+		fmt.Sprintf("Merge branch '%s'", worktreeBranch), worktreeBranch)
+	mergeCmd.Dir = mainRepoDir
+
+	var mergeOutput bytes.Buffer
+	mergeCmd.Stdout = &mergeOutput
+	mergeCmd.Stderr = &mergeOutput
+
+	if err := mergeCmd.Run(); err != nil {
+		// Merge failed - check if it's a conflict
+		conflictFiles := r.getConflictFiles(ctx, mainRepoDir)
+		if len(conflictFiles) > 0 {
+			// Abort the merge
+			abortCmd := exec.CommandContext(ctx, "git", "merge", "--abort")
+			abortCmd.Dir = mainRepoDir
+			_ = abortCmd.Run()
+
+			result.Success = false
+			result.HasConflicts = true
+			result.ConflictFiles = conflictFiles
+			return result, nil
+		}
+
+		// Not a conflict, some other error
+		return nil, fmt.Errorf("merge failed: %s: %w", mergeOutput.String(), err)
+	}
+
+	// Merge succeeded - get the commit SHA
+	revCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	revCmd.Dir = mainRepoDir
+	revOutput, err := revCmd.Output()
+	if err == nil {
+		result.MergeCommit = strings.TrimSpace(string(revOutput))
+	}
+
+	result.Success = true
+	return result, nil
+}
+
+// getConflictFiles returns files that have merge conflicts.
+func (r *DefaultMergeRunner) getConflictFiles(ctx context.Context, repoDir string) []string {
+	// Use git diff --name-only --diff-filter=U to get unmerged files
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = repoDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var files []string
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
 }
 
 // MergeExecutor executes merge steps.
@@ -274,7 +376,7 @@ func (e *MergeExecutor) Execute(ctx context.Context, step *grimoire.Step, stepCt
 	}
 
 	// Auto-merge (require_review: false)
-	if err := e.runner.Merge(execCtx, stepCtx.WorktreePath); err != nil {
+	if err := e.runner.CommitWorktree(execCtx, stepCtx.WorktreePath); err != nil {
 		duration := time.Since(start)
 		return &StepResult{
 			Success:  false,

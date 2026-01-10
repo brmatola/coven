@@ -361,8 +361,12 @@ steps:
 	}
 
 	// Approve the merge
-	if err := api.ApproveMerge(taskID); err != nil {
+	result, err := api.ApproveMerge(taskID)
+	if err != nil {
 		t.Fatalf("Failed to approve merge: %v", err)
+	}
+	if result.Status != "merged" {
+		t.Errorf("Expected status 'merged', got %s", result.Status)
 	}
 
 	// Wait for workflow to complete

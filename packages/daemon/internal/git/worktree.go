@@ -176,9 +176,41 @@ func (m *WorktreeManager) Exists(taskID string) bool {
 	return err == nil
 }
 
+// DeleteBranch deletes a branch from the repository.
+// This should be called after the worktree has been removed and the branch merged.
+func (m *WorktreeManager) DeleteBranch(ctx context.Context, branchName string) error {
+	// Force delete since we might be on a different branch
+	if err := m.runGit(ctx, "branch", "-D", branchName); err != nil {
+		return fmt.Errorf("failed to delete branch %s: %w", branchName, err)
+	}
+	m.logger.Info("deleted branch", "branch", branchName)
+	return nil
+}
+
+// GetBaseBranch returns the base branch that worktrees are created from.
+// This is typically 'main' or 'master'.
+func (m *WorktreeManager) GetBaseBranch(ctx context.Context) (string, error) {
+	// Check for 'main' first, then 'master'
+	for _, branch := range []string{"main", "master"} {
+		cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+		cmd.Dir = m.repoPath
+		if err := cmd.Run(); err == nil {
+			return branch, nil
+		}
+	}
+
+	// Fall back to current branch
+	return m.getCurrentBranch(ctx)
+}
+
 // GetPath returns the path for a task's worktree.
 func (m *WorktreeManager) GetPath(taskID string) string {
 	return filepath.Join(m.worktreesDir, taskID)
+}
+
+// RepoPath returns the path to the main repository.
+func (m *WorktreeManager) RepoPath() string {
+	return m.repoPath
 }
 
 // getCurrentBranch returns the current branch name.

@@ -289,14 +289,25 @@ func (c *APIClient) GetAgent(agentID string) (*Agent, error) {
 }
 
 // Question represents a question in the API response.
+// QuestionContext provides workflow context for a question.
+type QuestionContext struct {
+	WorkflowID string `json:"workflow_id,omitempty"`
+	StepName   string `json:"step_name,omitempty"`
+	StepIndex  int    `json:"step_index"`
+	StepTaskID string `json:"step_task_id"`
+}
+
+// Question represents a detected question from agent output.
 type Question struct {
-	ID         string   `json:"id"`
-	TaskID     string   `json:"task_id"`
-	Type       string   `json:"type"`
-	Text       string   `json:"text"`
-	Options    []string `json:"options,omitempty"`
-	AnsweredAt string   `json:"answered_at,omitempty"`
-	Answer     string   `json:"answer,omitempty"`
+	ID          string          `json:"id"`
+	TaskID      string          `json:"task_id"`
+	Context     QuestionContext `json:"context"`
+	Type        string          `json:"type"`
+	Text        string          `json:"text"`
+	Options     []string        `json:"options,omitempty"`
+	AnsweredAt  string          `json:"answered_at,omitempty"`
+	Answer      string          `json:"answer,omitempty"`
+	DeliveredAt string          `json:"delivered_at,omitempty"`
 }
 
 // QuestionsResponse represents the questions list response.
@@ -534,16 +545,33 @@ func (c *APIClient) RetryWorkflow(id string) error {
 	return nil
 }
 
+// ApproveMergeResult contains the result of an approve-merge call.
+type ApproveMergeResult struct {
+	Status        string   `json:"status"`        // "merged" or "conflicts"
+	WorkflowID    string   `json:"workflow_id"`
+	TaskID        string   `json:"task_id"`
+	Message       string   `json:"message"`
+	MergeCommit   string   `json:"merge_commit,omitempty"`
+	HasConflicts  bool     `json:"has_conflicts,omitempty"`
+	ConflictFiles []string `json:"conflict_files,omitempty"`
+}
+
 // ApproveMerge calls POST /workflows/:id/approve-merge.
-func (c *APIClient) ApproveMerge(id string) error {
+// Returns the merge result which includes conflict information if any.
+func (c *APIClient) ApproveMerge(id string) (*ApproveMergeResult, error) {
 	resp, err := c.Post("/workflows/"+id+"/approve-merge", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
+		return nil, fmt.Errorf("unexpected status: %d - %s", resp.StatusCode, resp.String())
 	}
-	return nil
+
+	var result ApproveMergeResult
+	if err := resp.JSON(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
 }
 
 // RejectMerge calls POST /workflows/:id/reject-merge.

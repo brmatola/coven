@@ -28,14 +28,9 @@ steps:
 `
 
 // TestQuestionDetectionAndAnswer verifies the interactive question flow.
-// NOTE: With the workflow-based execution model, interactive question handling
-// is not supported through the direct API. The agent process is tracked under
-// step-specific IDs, not the main task ID, so the respond API cannot find it.
-// This test documents the current limitation and will be updated when
-// workflow-level question handling (e.g., approval steps) is implemented.
+// Questions are detected in agent output, stored with workflow context,
+// and answers are delivered to the agent via stdin using the step task ID.
 func TestQuestionDetectionAndAnswer(t *testing.T) {
-	t.Skip("Interactive question handling requires workflow-level support (not yet implemented)")
-
 	env := helpers.NewTestEnv(t)
 	defer env.Stop()
 
@@ -47,7 +42,7 @@ func TestQuestionDetectionAndAnswer(t *testing.T) {
 	// Create task with the simple grimoire
 	taskID := createTaskWithLabel(t, env, "Test task with question", "grimoire:simple-question")
 
-	// Configure mock agent with -question flag
+	// Configure mock agent with -question flag to ask a question
 	env.ConfigureMockAgentWithArgs(t, "-question")
 
 	env.MustStart()
@@ -68,36 +63,65 @@ func TestQuestionDetectionAndAnswer(t *testing.T) {
 	// Wait for agent to start
 	env.WaitForAgent(t, api, taskID, 10)
 
-	// Wait for question to appear in output
-	var questionFound bool
+	// Wait for question to be detected and stored
+	var question *helpers.Question
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		output, err := api.GetAgentOutput(taskID)
-		if err == nil && output != nil {
-			for _, line := range output.Lines {
-				if strings.Contains(line.Data, "proceed") {
-					questionFound = true
+		questions, err := api.GetQuestions()
+		if err == nil && questions != nil && len(questions.Questions) > 0 {
+			// Find question for our task
+			for i := range questions.Questions {
+				q := &questions.Questions[i]
+				if q.TaskID == taskID {
+					question = q
 					break
 				}
 			}
-			if questionFound {
+			if question != nil {
 				break
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	if !questionFound {
-		t.Fatal("Question not detected in agent output")
+	if question == nil {
+		t.Fatal("Question not detected via /questions API")
 	}
 
-	// Send response
-	if err := api.RespondToAgent(taskID, "y"); err != nil {
-		t.Fatalf("Failed to respond: %v", err)
+	t.Logf("Found question: ID=%s, TaskID=%s, StepTaskID=%s, Text=%s",
+		question.ID, question.TaskID, question.Context.StepTaskID, question.Text)
+
+	// Verify the question has workflow context
+	if question.Context.StepTaskID == "" {
+		t.Error("Question missing StepTaskID in context")
+	}
+	if !strings.HasPrefix(question.Context.StepTaskID, taskID+"-step-") {
+		t.Errorf("StepTaskID has unexpected format: %s", question.Context.StepTaskID)
+	}
+
+	// Answer the question using the questions API
+	if err := api.AnswerQuestion(question.ID, "y"); err != nil {
+		t.Fatalf("Failed to answer question: %v", err)
 	}
 
 	// Wait for agent to complete
 	env.WaitForAgentStatus(t, api, taskID, "completed", 10)
+
+	// Verify question was marked as answered
+	questionsAfter, err := api.GetQuestions()
+	if err != nil {
+		t.Fatalf("Failed to get questions after answer: %v", err)
+	}
+
+	// Check that pending count decreased or question is no longer pending
+	for _, q := range questionsAfter.Questions {
+		if q.ID == question.ID {
+			if q.AnsweredAt == "" {
+				t.Error("Question should be marked as answered")
+			}
+			break
+		}
+	}
 }
 
 // TestRespondToCompletedAgent verifies that responding to a completed agent fails gracefully.

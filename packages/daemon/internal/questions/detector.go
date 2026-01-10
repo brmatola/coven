@@ -1,61 +1,38 @@
-// Package questions provides question detection and handling for agent output.
 package questions
 
 import (
 	"regexp"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/coven/daemon/internal/agent"
 )
 
-// QuestionType categorizes questions.
-type QuestionType string
-
-const (
-	QuestionTypeConfirmation QuestionType = "confirmation"
-	QuestionTypeChoice       QuestionType = "choice"
-	QuestionTypeInput        QuestionType = "input"
-	QuestionTypePermission   QuestionType = "permission"
-	QuestionTypeUnknown      QuestionType = "unknown"
-)
-
-// Question represents a detected question from agent output.
-type Question struct {
-	ID          string       `json:"id"`
-	TaskID      string       `json:"task_id"`
-	Type        QuestionType `json:"type"`
-	Text        string       `json:"text"`
-	Context     string       `json:"context,omitempty"`
-	Options     []string     `json:"options,omitempty"`
-	Sequence    uint64       `json:"sequence"`
-	DetectedAt  time.Time    `json:"detected_at"`
-	AnsweredAt  *time.Time   `json:"answered_at,omitempty"`
-	Answer      string       `json:"answer,omitempty"`
+// DetectionContext provides context for question detection.
+type DetectionContext struct {
+	TaskID     string // Main bead/task ID
+	WorkflowID string // Workflow ID (if running in workflow)
+	StepName   string // Step name (if running in workflow)
+	StepIndex  int    // Step index (if running in workflow)
+	StepTaskID string // Step-specific task ID (for stdin delivery)
 }
 
 // Detector detects questions in agent output.
 type Detector struct {
-	mu               sync.RWMutex
-	questions        map[string]*Question
-	questionsByTask  map[string][]*Question
-	nextID           int
-	onQuestion       func(*Question)
+	nextID uint64
 
 	// Patterns for question detection
 	confirmationPattern *regexp.Regexp
 	choicePattern       *regexp.Regexp
 	permissionPattern   *regexp.Regexp
 	questionPattern     *regexp.Regexp
+
+	// Callbacks
+	onQuestion func(*Question)
 }
 
 // NewDetector creates a new question detector.
 func NewDetector() *Detector {
 	return &Detector{
-		questions:       make(map[string]*Question),
-		questionsByTask: make(map[string][]*Question),
-
 		// Patterns for different question types
 		confirmationPattern: regexp.MustCompile(`(?i)(proceed|continue|confirm|yes/no|y/n|\(y/n\))\??\s*\)?$`),
 		choicePattern:       regexp.MustCompile(`(?i)(?:select|choose|which|option)\s*(?:\[|\()?[\d\w,\s/]+(?:\]|\))?\s*[:?]?\s*$`),
@@ -66,19 +43,18 @@ func NewDetector() *Detector {
 
 // OnQuestion sets a callback for when questions are detected.
 func (d *Detector) OnQuestion(fn func(*Question)) {
-	d.mu.Lock()
 	d.onQuestion = fn
-	d.mu.Unlock()
 }
 
 // ProcessLine processes an output line and detects questions.
-func (d *Detector) ProcessLine(taskID string, line agent.OutputLine) *Question {
+// Returns the detected question or nil if no question was found.
+func (d *Detector) ProcessLine(ctx DetectionContext, stream string, text string, sequence uint64) *Question {
 	// Only check stdout
-	if line.Stream != "stdout" {
+	if stream != "stdout" {
 		return nil
 	}
 
-	text := strings.TrimSpace(line.Data)
+	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
 	}
@@ -89,16 +65,18 @@ func (d *Detector) ProcessLine(taskID string, line agent.OutputLine) *Question {
 		return nil
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.nextID++
 	q := &Question{
-		ID:         generateQuestionID(d.nextID),
-		TaskID:     taskID,
+		ID:       d.generateID(),
+		TaskID:   ctx.TaskID,
+		Context: WorkflowContext{
+			WorkflowID: ctx.WorkflowID,
+			StepName:   ctx.StepName,
+			StepIndex:  ctx.StepIndex,
+			StepTaskID: ctx.StepTaskID,
+		},
 		Type:       qType,
 		Text:       text,
-		Sequence:   line.Sequence,
+		Sequence:   sequence,
 		DetectedAt: time.Now(),
 	}
 
@@ -107,11 +85,8 @@ func (d *Detector) ProcessLine(taskID string, line agent.OutputLine) *Question {
 		q.Options = extractOptions(text)
 	}
 
-	d.questions[q.ID] = q
-	d.questionsByTask[taskID] = append(d.questionsByTask[taskID], q)
-
 	if d.onQuestion != nil {
-		go d.onQuestion(q)
+		d.onQuestion(q)
 	}
 
 	return q
@@ -137,103 +112,12 @@ func (d *Detector) detectQuestionType(text string) QuestionType {
 	return ""
 }
 
-// GetQuestion returns a question by ID.
-func (d *Detector) GetQuestion(id string) *Question {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	if q, ok := d.questions[id]; ok {
-		copy := *q
-		return &copy
-	}
-	return nil
+func (d *Detector) generateID() string {
+	n := atomic.AddUint64(&d.nextID, 1)
+	return "q-" + time.Now().Format("20060102150405") + "-" + uintToString(n)
 }
 
-// GetPendingQuestions returns all unanswered questions.
-func (d *Detector) GetPendingQuestions() []*Question {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	var pending []*Question
-	for _, q := range d.questions {
-		if q.AnsweredAt == nil {
-			copy := *q
-			pending = append(pending, &copy)
-		}
-	}
-	return pending
-}
-
-// GetPendingQuestionsForTask returns unanswered questions for a specific task.
-func (d *Detector) GetPendingQuestionsForTask(taskID string) []*Question {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	var pending []*Question
-	for _, q := range d.questionsByTask[taskID] {
-		if q.AnsweredAt == nil {
-			copy := *q
-			pending = append(pending, &copy)
-		}
-	}
-	return pending
-}
-
-// AnswerQuestion marks a question as answered.
-func (d *Detector) AnswerQuestion(id string, answer string) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	q, ok := d.questions[id]
-	if !ok {
-		return nil // Question not found
-	}
-
-	now := time.Now()
-	q.AnsweredAt = &now
-	q.Answer = answer
-
-	return nil
-}
-
-// ClearTaskQuestions removes all questions for a task.
-func (d *Detector) ClearTaskQuestions(taskID string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	for _, q := range d.questionsByTask[taskID] {
-		delete(d.questions, q.ID)
-	}
-	delete(d.questionsByTask, taskID)
-}
-
-// Count returns the total number of questions.
-func (d *Detector) Count() int {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return len(d.questions)
-}
-
-// PendingCount returns the number of pending questions.
-func (d *Detector) PendingCount() int {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	count := 0
-	for _, q := range d.questions {
-		if q.AnsweredAt == nil {
-			count++
-		}
-	}
-	return count
-}
-
-// generateQuestionID generates a unique question ID.
-func generateQuestionID(n int) string {
-	return "q-" + time.Now().Format("20060102150405") + "-" + intToString(n)
-}
-
-func intToString(n int) string {
+func uintToString(n uint64) string {
 	if n == 0 {
 		return "0"
 	}
@@ -271,4 +155,25 @@ func extractOptions(text string) []string {
 	}
 
 	return nil
+}
+
+// ParseStepTaskID extracts the main task ID from a step-specific task ID.
+// Step task IDs have the format "{taskID}-step-{N}".
+// Returns the original ID if it doesn't match the pattern.
+func ParseStepTaskID(stepTaskID string) (mainTaskID string, isStepTask bool) {
+	// Look for "-step-" suffix
+	idx := strings.LastIndex(stepTaskID, "-step-")
+	if idx == -1 {
+		return stepTaskID, false
+	}
+
+	// Check that what follows is a number
+	suffix := stepTaskID[idx+6:] // Skip "-step-"
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return stepTaskID, false
+		}
+	}
+
+	return stepTaskID[:idx], true
 }

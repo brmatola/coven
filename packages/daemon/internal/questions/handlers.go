@@ -5,18 +5,23 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/coven/daemon/internal/agent"
 	"github.com/coven/daemon/internal/api"
 )
 
 // Handlers provides HTTP handlers for question operations.
 type Handlers struct {
-	detector *Detector
+	store          *Store
+	detector       *Detector
+	processManager *agent.ProcessManager
 }
 
 // NewHandlers creates new question handlers.
-func NewHandlers(detector *Detector) *Handlers {
+func NewHandlers(store *Store, detector *Detector, pm *agent.ProcessManager) *Handlers {
 	return &Handlers{
-		detector: detector,
+		store:          store,
+		detector:       detector,
+		processManager: pm,
 	}
 }
 
@@ -35,16 +40,15 @@ func (h *Handlers) handleQuestions(w http.ResponseWriter, r *http.Request) {
 
 	// Check for task_id filter
 	taskID := r.URL.Query().Get("task_id")
-	pendingOnly := r.URL.Query().Get("pending") == "true"
+	pendingOnly := r.URL.Query().Get("pending") != "false" // Default to pending only
 
 	var questions []*Question
 	if taskID != "" {
-		questions = h.detector.GetPendingQuestionsForTask(taskID)
+		questions = h.store.GetPendingForTask(taskID)
 	} else if pendingOnly {
-		questions = h.detector.GetPendingQuestions()
+		questions = h.store.GetAllPending()
 	} else {
-		// Return all questions for now
-		questions = h.detector.GetPendingQuestions()
+		questions = h.store.GetAllPending() // TODO: Add GetAll if needed
 	}
 
 	response := struct {
@@ -54,7 +58,7 @@ func (h *Handlers) handleQuestions(w http.ResponseWriter, r *http.Request) {
 	}{
 		Questions:    questions,
 		Count:        len(questions),
-		PendingCount: h.detector.PendingCount(),
+		PendingCount: h.store.PendingCount(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -95,7 +99,7 @@ func (h *Handlers) handleGetQuestion(w http.ResponseWriter, r *http.Request, que
 		return
 	}
 
-	question := h.detector.GetQuestion(questionID)
+	question := h.store.Get(questionID)
 	if question == nil {
 		http.Error(w, "Question not found", http.StatusNotFound)
 		return
@@ -113,9 +117,15 @@ func (h *Handlers) handleAnswerQuestion(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Check if question exists
-	question := h.detector.GetQuestion(questionID)
+	question := h.store.Get(questionID)
 	if question == nil {
 		http.Error(w, "Question not found", http.StatusNotFound)
+		return
+	}
+
+	// Check if already answered
+	if question.AnsweredAt != nil {
+		http.Error(w, "Question already answered", http.StatusConflict)
 		return
 	}
 
@@ -133,19 +143,47 @@ func (h *Handlers) handleAnswerQuestion(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	// Mark as answered
-	h.detector.AnswerQuestion(questionID, req.Answer)
+	// Mark as answered first
+	if err := h.store.MarkAnswered(questionID, req.Answer); err != nil {
+		http.Error(w, "Failed to record answer: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Deliver answer to agent stdin using the step task ID
+	stepTaskID := question.Context.StepTaskID
+	if stepTaskID == "" {
+		// Fallback to task ID if no step task ID (shouldn't happen in workflow context)
+		stepTaskID = question.TaskID
+	}
+
+	deliveryError := ""
+	if err := h.processManager.WriteToStdin(stepTaskID, req.Answer); err != nil {
+		deliveryError = err.Error()
+		h.store.MarkDeliveryFailed(questionID, deliveryError)
+	} else {
+		h.store.MarkDelivered(questionID)
+	}
 
 	response := struct {
-		QuestionID string `json:"question_id"`
-		TaskID     string `json:"task_id"`
-		Status     string `json:"status"`
-		Message    string `json:"message"`
+		QuestionID    string `json:"question_id"`
+		TaskID        string `json:"task_id"`
+		StepTaskID    string `json:"step_task_id,omitempty"`
+		Status        string `json:"status"`
+		Delivered     bool   `json:"delivered"`
+		DeliveryError string `json:"delivery_error,omitempty"`
+		Message       string `json:"message"`
 	}{
-		QuestionID: questionID,
-		TaskID:     question.TaskID,
-		Status:     "answered",
-		Message:    "Answer recorded",
+		QuestionID:    questionID,
+		TaskID:        question.TaskID,
+		StepTaskID:    stepTaskID,
+		Status:        "answered",
+		Delivered:     deliveryError == "",
+		DeliveryError: deliveryError,
+		Message:       "Answer recorded",
+	}
+
+	if deliveryError != "" {
+		response.Message = "Answer recorded but delivery failed"
 	}
 
 	w.Header().Set("Content-Type", "application/json")

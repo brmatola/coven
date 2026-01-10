@@ -99,24 +99,19 @@ steps:
 	waitForTaskStatus(t, api, taskID, "closed", 10)
 }
 
-// TestWorkflowMergeConflictDetection verifies merge step detects conflicts and blocks workflow.
-// NOTE: The current merge step implementation commits changes to the worktree branch,
-// but does not actually merge into main. Full merge conflict detection would require
-// attempting the actual merge operation. This test is skipped until that functionality
-// is implemented.
+// TestWorkflowMergeConflictDetection verifies merge step detects conflicts when merging to main.
+// Flow:
+// 1. Create a test file in main branch
+// 2. Start workflow which creates worktree and modifies the file
+// 3. Wait for workflow to reach pending_merge
+// 4. Modify the same file in main branch (creating conflict)
+// 5. Call approve-merge API
+// 6. Verify response contains conflict information
 func TestWorkflowMergeConflictDetection(t *testing.T) {
-	t.Skip("Merge conflict detection requires actual merge into main (not yet implemented)")
-
 	env := helpers.NewTestEnv(t)
 	defer env.Stop()
 
 	env.InitBeads(t)
-
-	// Create a conflict scenario:
-	// 1. Create a test file in main branch
-	// 2. Modify it in main branch after worktree is created
-	// 3. Modify it differently in worktree
-	// 4. Merge step should detect conflict
 
 	testFile := "conflict-test.txt"
 	initialContent := "initial content\n"
@@ -141,8 +136,7 @@ func TestWorkflowMergeConflictDetection(t *testing.T) {
 		t.Fatalf("Failed to git commit: %v", err)
 	}
 
-	// Grimoire that creates a file change in worktree, then tries to merge
-	// while main branch also has changes
+	// Grimoire that creates a file change in worktree, then pauses at merge for review
 	grimoireYAML := `name: test-conflict
 description: Workflow to test merge conflict detection
 timeout: 5m
@@ -153,20 +147,14 @@ steps:
     command: "echo 'worktree change' > ` + testFile + `"
     timeout: 30s
 
-  - name: wait-for-main-change
-    type: script
-    command: "sleep 1"
-    timeout: 30s
-
   - name: merge
     type: merge
-    require_review: false
+    require_review: true
     timeout: 1m
 `
 	writeGrimoire(t, env, "test-conflict", grimoireYAML)
 
 	taskID := createTaskWithLabel(t, env, "Test conflict detection", "grimoire:test-conflict")
-	env.ConfigureMockAgent(t)
 
 	env.MustStart()
 	api := helpers.NewAPIClient(env)
@@ -177,10 +165,24 @@ steps:
 		t.Fatalf("Failed to start task: %v", err)
 	}
 
-	// Wait for worktree to be created and workflow to start
-	time.Sleep(1 * time.Second)
+	// Wait for workflow to reach pending_merge status
+	var workflow *helpers.Workflow
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		workflow, _ = api.GetWorkflow(taskID)
+		if workflow != nil && workflow.Status == "pending_merge" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 
-	// Now modify the file in main branch (creating conflict)
+	if workflow == nil || workflow.Status != "pending_merge" {
+		t.Fatalf("Expected workflow to reach pending_merge, got %v", workflow)
+	}
+
+	t.Logf("Workflow reached pending_merge at step %d", workflow.CurrentStep)
+
+	// Now modify the file in main branch (creating conflict condition)
 	if err := os.WriteFile(testFilePath, []byte(mainChange), 0644); err != nil {
 		t.Fatalf("Failed to write main change: %v", err)
 	}
@@ -197,25 +199,36 @@ steps:
 		t.Fatalf("Failed to commit main change: %v", err)
 	}
 
-	// The merge step should detect the conflict and block the workflow
-	// Wait for workflow to reach blocked state due to conflict
-	waitForTaskStatus(t, api, taskID, "blocked", 15)
-
-	// Get workflow details to verify conflict information
-	workflow, err := api.GetWorkflow(taskID)
+	// Call approve-merge - this should detect the conflict and return conflict info
+	result, err := api.ApproveMerge(taskID)
 	if err != nil {
-		t.Fatalf("Failed to get workflow: %v", err)
+		t.Fatalf("ApproveMerge failed: %v", err)
 	}
 
-	if workflow == nil {
-		t.Fatal("Workflow not found")
+	t.Logf("ApproveMerge result: status=%s, hasConflicts=%v, conflictFiles=%v",
+		result.Status, result.HasConflicts, result.ConflictFiles)
+
+	// Verify conflict was detected
+	if result.Status != "conflicts" {
+		t.Errorf("Expected status 'conflicts', got '%s'", result.Status)
+	}
+	if !result.HasConflicts {
+		t.Error("Expected HasConflicts to be true")
+	}
+	if len(result.ConflictFiles) == 0 {
+		t.Error("Expected conflict files to be reported")
 	}
 
-	t.Logf("Workflow status: %s, error: %s", workflow.Status, workflow.Error)
-
-	// Verify workflow blocked with conflict message
-	if workflow.Status != "blocked" {
-		t.Errorf("Expected workflow status 'blocked', got '%s'", workflow.Status)
+	// The conflict file should be our test file
+	foundConflict := false
+	for _, f := range result.ConflictFiles {
+		if f == testFile {
+			foundConflict = true
+			break
+		}
+	}
+	if !foundConflict {
+		t.Errorf("Expected %s in conflict files, got %v", testFile, result.ConflictFiles)
 	}
 }
 

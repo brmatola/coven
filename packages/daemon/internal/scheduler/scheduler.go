@@ -699,7 +699,10 @@ func (s *Scheduler) QueueWorkflowResume(state *workflow.WorkflowState) error {
 }
 
 // ApproveMerge approves a pending merge for a workflow.
-func (s *Scheduler) ApproveMerge(taskID string) error {
+// Returns a MergeResult indicating success or conflicts.
+// On success, the worktree branch is merged to main and cleaned up.
+// On conflicts, returns the conflicting files so the user can resolve them.
+func (s *Scheduler) ApproveMerge(taskID string) (*workflow.MergeResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -707,28 +710,65 @@ func (s *Scheduler) ApproveMerge(taskID string) error {
 	statePersister := workflow.NewStatePersister(s.covenDir)
 	state, err := statePersister.Load(taskID)
 	if err != nil {
-		return fmt.Errorf("failed to load workflow state: %w", err)
+		return nil, fmt.Errorf("failed to load workflow state: %w", err)
 	}
 	if state == nil {
-		return fmt.Errorf("workflow state not found for task %s", taskID)
+		return nil, fmt.Errorf("workflow state not found for task %s", taskID)
 	}
 
 	if state.Status != workflow.WorkflowPendingMerge {
-		return fmt.Errorf("workflow is not pending merge (status: %s)", state.Status)
+		return nil, fmt.Errorf("workflow is not pending merge (status: %s)", state.Status)
 	}
 
-	// Perform the actual merge
 	mergeRunner := &workflow.DefaultMergeRunner{}
 	ctx := context.Background()
-	if err := mergeRunner.Merge(ctx, state.WorktreePath); err != nil {
-		return fmt.Errorf("merge failed: %w", err)
+
+	// Step 1: Commit any uncommitted changes in the worktree
+	if err := mergeRunner.CommitWorktree(ctx, state.WorktreePath); err != nil {
+		return nil, fmt.Errorf("failed to commit worktree: %w", err)
 	}
 
-	// Update state to running and increment step
+	// Step 2: Get worktree info for branch name
+	wtInfo, err := s.worktreeManager.Get(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get worktree info: %w", err)
+	}
+
+	// Step 3: Get the base branch (main/master)
+	baseBranch, err := s.worktreeManager.GetBaseBranch(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get base branch: %w", err)
+	}
+
+	// Step 4: Merge the worktree branch to main
+	mainRepoDir := s.worktreeManager.RepoPath()
+	mergeResult, err := mergeRunner.MergeToMain(ctx, mainRepoDir, wtInfo.Branch, baseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("merge failed: %w", err)
+	}
+
+	// If there are conflicts, return them to the user
+	if mergeResult.HasConflicts {
+		s.logger.Info("merge has conflicts",
+			"task_id", taskID,
+			"conflict_files", mergeResult.ConflictFiles,
+		)
+		return mergeResult, nil
+	}
+
+	// Step 5: Cleanup - remove worktree and branch
+	if err := s.worktreeManager.Remove(ctx, taskID); err != nil {
+		s.logger.Warn("failed to remove worktree", "task_id", taskID, "error", err)
+	}
+	if err := s.worktreeManager.DeleteBranch(ctx, wtInfo.Branch); err != nil {
+		s.logger.Warn("failed to delete branch", "branch", wtInfo.Branch, "error", err)
+	}
+
+	// Step 6: Update state to running and increment step
 	state.Status = workflow.WorkflowRunning
 	state.CurrentStep++ // Move past the merge step
 	if err := statePersister.Save(state); err != nil {
-		return fmt.Errorf("failed to save workflow state: %w", err)
+		return nil, fmt.Errorf("failed to save workflow state: %w", err)
 	}
 
 	// Find the task and resume the workflow
@@ -742,7 +782,7 @@ func (s *Scheduler) ApproveMerge(taskID string) error {
 	}
 
 	if task == nil {
-		return fmt.Errorf("task %s not found", taskID)
+		return nil, fmt.Errorf("task %s not found", taskID)
 	}
 
 	// Resume the workflow in background (from after the merge step)
@@ -751,9 +791,10 @@ func (s *Scheduler) ApproveMerge(taskID string) error {
 	s.logger.Info("merge approved, workflow resuming",
 		"task_id", taskID,
 		"next_step", state.CurrentStep,
+		"merge_commit", mergeResult.MergeCommit,
 	)
 
-	return nil
+	return mergeResult, nil
 }
 
 // RejectMerge rejects a pending merge and blocks the workflow.

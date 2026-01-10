@@ -39,11 +39,16 @@ type MockMergeRunner struct {
 	// ConflictsErr to return from HasConflicts.
 	ConflictsErr error
 
-	// MergeErr to return from Merge.
-	MergeErr error
+	// CommitWorktreeErr to return from CommitWorktree.
+	CommitWorktreeErr error
 
-	// MergeCalled tracks if Merge was called.
-	MergeCalled bool
+	// CommitWorktreeCalled tracks if CommitWorktree was called.
+	CommitWorktreeCalled bool
+
+	// MergeToMainResult to return from MergeToMain.
+	MergeToMainResult *MergeResult
+	// MergeToMainErr to return from MergeToMain.
+	MergeToMainErr error
 }
 
 func (m *MockMergeRunner) GetDiff(ctx context.Context, workDir string) (string, error) {
@@ -62,9 +67,16 @@ func (m *MockMergeRunner) HasConflicts(ctx context.Context, workDir string) (boo
 	return m.HasConflictsResult, m.ConflictFiles, m.ConflictsErr
 }
 
-func (m *MockMergeRunner) Merge(ctx context.Context, workDir string) error {
-	m.MergeCalled = true
-	return m.MergeErr
+func (m *MockMergeRunner) CommitWorktree(ctx context.Context, workDir string) error {
+	m.CommitWorktreeCalled = true
+	return m.CommitWorktreeErr
+}
+
+func (m *MockMergeRunner) MergeToMain(ctx context.Context, mainRepoDir, worktreeBranch, baseBranch string) (*MergeResult, error) {
+	if m.MergeToMainResult != nil {
+		return m.MergeToMainResult, m.MergeToMainErr
+	}
+	return &MergeResult{Success: true}, m.MergeToMainErr
 }
 
 func TestNewMergeExecutor(t *testing.T) {
@@ -135,9 +147,9 @@ func TestMergeExecutor_Execute_RequireReviewTrue(t *testing.T) {
 		t.Error("Expected success (merge preparation successful)")
 	}
 
-	// Should not have called Merge
-	if runner.MergeCalled {
-		t.Error("Merge should not be called when require_review is true")
+	// Should not have called CommitWorktree
+	if runner.CommitWorktreeCalled {
+		t.Error("CommitWorktree should not be called when require_review is true")
 	}
 
 	// Check that review info was stored
@@ -189,9 +201,9 @@ func TestMergeExecutor_Execute_RequireReviewFalse(t *testing.T) {
 		t.Error("Expected success")
 	}
 
-	// Should have called Merge
-	if !runner.MergeCalled {
-		t.Error("Merge should be called when require_review is false")
+	// Should have called CommitWorktree
+	if !runner.CommitWorktreeCalled {
+		t.Error("CommitWorktree should be called when require_review is false")
 	}
 }
 
@@ -286,11 +298,11 @@ func TestMergeExecutor_Execute_DiffError(t *testing.T) {
 	}
 }
 
-func TestMergeExecutor_Execute_MergeError(t *testing.T) {
+func TestMergeExecutor_Execute_CommitWorktreeError(t *testing.T) {
 	runner := &MockMergeRunner{
-		Diff:     "diff content",
-		Files:    []string{"src/main.go"},
-		MergeErr: errors.New("merge failed"),
+		Diff:              "diff content",
+		Files:             []string{"src/main.go"},
+		CommitWorktreeErr: errors.New("commit failed"),
 	}
 	executor := NewMergeExecutorWithRunner(runner)
 
@@ -313,8 +325,8 @@ func TestMergeExecutor_Execute_MergeError(t *testing.T) {
 	if result.Action != ActionFail {
 		t.Errorf("Action = %q, want %q", result.Action, ActionFail)
 	}
-	if !strings.Contains(result.Error, "merge failed") {
-		t.Errorf("Error should mention merge failed, got: %q", result.Error)
+	if !strings.Contains(result.Error, "commit failed") {
+		t.Errorf("Error should mention commit failed, got: %q", result.Error)
 	}
 }
 
@@ -654,9 +666,9 @@ func TestDefaultMergeRunner_Merge(t *testing.T) {
 	}
 
 	runner := &DefaultMergeRunner{}
-	err := runner.Merge(context.Background(), tmpDir)
+	err := runner.CommitWorktree(context.Background(), tmpDir)
 	if err != nil {
-		t.Fatalf("Merge() error: %v", err)
+		t.Fatalf("CommitWorktree() error: %v", err)
 	}
 
 	// Verify commit was created

@@ -45,6 +45,7 @@ type Daemon struct {
 	processManager   *agent.ProcessManager
 	worktreeManager  *git.WorktreeManager
 	scheduler        *scheduler.Scheduler
+	questionStore    *questions.Store
 	questionDetector *questions.Detector
 	eventBroker      *api.EventBroker
 }
@@ -89,10 +90,16 @@ func New(workspace, version string) (*Daemon, error) {
 	eventBroker := api.NewEventBroker(store)
 	processManager := agent.NewProcessManager(logger)
 	worktreeManager := git.NewWorktreeManager(workspace, logger)
+	questionStore := questions.NewStore(covenDir)
 	questionDetector := questions.NewDetector()
 	sessionManager := session.NewManager(store, logger)
 	sched := scheduler.NewScheduler(store, beadsClient, processManager, worktreeManager, logger, covenDir)
 	beadsPoller := beads.NewPoller(beadsClient, store, eventBroker, logger)
+
+	// Load any persisted questions from previous daemon run
+	if err := questionStore.LoadAll(); err != nil {
+		logger.Warn("failed to load questions", "error", err)
+	}
 
 	// Apply config settings
 	sched.SetMaxAgents(cfg.MaxConcurrentAgents)
@@ -130,20 +137,41 @@ func New(workspace, version string) (*Daemon, error) {
 	})
 
 	processManager.OnOutput(func(taskID string, line agent.OutputLine) {
+		// Parse the step task ID to get the main task ID
+		mainTaskID, _ := questions.ParseStepTaskID(taskID)
+
+		// Create detection context
+		ctx := questions.DetectionContext{
+			TaskID:     mainTaskID,
+			StepTaskID: taskID, // The step-specific ID for stdin delivery
+		}
+
+		// TODO: Get workflow context from scheduler if available
+		// For now, workflow context is set when we have it
+
 		// Check for questions
-		questionDetector.ProcessLine(taskID, line)
+		questionDetector.ProcessLine(ctx, line.Stream, line.Data, line.Sequence)
 		eventBroker.EmitAgentOutput(taskID, line.Data)
 	})
 
 	questionDetector.OnQuestion(func(q *questions.Question) {
+		// Persist the question
+		if err := questionStore.Save(q); err != nil {
+			logger.Error("failed to save question", "error", err, "question_id", q.ID)
+		}
+
+		// Emit event
 		eventBroker.Broadcast(&types.Event{
 			Type: types.EventTypeAgentQuestion,
 			Data: map[string]interface{}{
-				"question_id": q.ID,
-				"task_id":     q.TaskID,
-				"type":        q.Type,
-				"text":        q.Text,
-				"options":     q.Options,
+				"question_id":   q.ID,
+				"task_id":       q.TaskID,
+				"step_task_id":  q.Context.StepTaskID,
+				"workflow_id":   q.Context.WorkflowID,
+				"step_name":     q.Context.StepName,
+				"type":          q.Type,
+				"text":          q.Text,
+				"options":       q.Options,
 			},
 			Timestamp: time.Now(),
 		})
@@ -164,6 +192,7 @@ func New(workspace, version string) (*Daemon, error) {
 		processManager:   processManager,
 		worktreeManager:  worktreeManager,
 		scheduler:        sched,
+		questionStore:    questionStore,
 		questionDetector: questionDetector,
 		eventBroker:      eventBroker,
 	}, nil
@@ -323,7 +352,7 @@ func (d *Daemon) registerHandlers() {
 	agentHandlers.Register(d.server)
 
 	// Question handlers
-	questionHandlers := questions.NewHandlers(d.questionDetector)
+	questionHandlers := questions.NewHandlers(d.questionStore, d.questionDetector, d.processManager)
 	questionHandlers.Register(d.server)
 
 	// Scheduler/task control handlers
