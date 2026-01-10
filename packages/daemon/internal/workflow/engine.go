@@ -43,6 +43,10 @@ type ExecutionResult struct {
 
 	// Duration is the total execution time.
 	Duration time.Duration
+
+	// NeedsAutoMerge indicates a merge step completed with require_review: false
+	// and the scheduler should perform the actual merge to main.
+	NeedsAutoMerge bool
 }
 
 // Engine executes workflow steps in sequence.
@@ -285,6 +289,10 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 		// Handle step action
 		switch stepResult.Action {
 		case ActionContinue:
+			// Check if this was a merge step with auto-merge (require_review: false)
+			if step.Type == grimoire.StepTypeMerge && !step.RequiresReview() {
+				result.NeedsAutoMerge = true
+			}
 			// Continue to next step
 			continue
 

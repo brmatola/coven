@@ -76,6 +76,10 @@ type WorkflowResult struct {
 
 	// LastStepName is the name of the last executed step.
 	LastStepName string
+
+	// NeedsAutoMerge indicates the workflow had a merge step with require_review: false
+	// and the scheduler should perform the actual merge to main.
+	NeedsAutoMerge bool
 }
 
 // Run executes the appropriate grimoire for a bead.
@@ -166,12 +170,13 @@ func (r *WorkflowRunner) Run(ctx context.Context, task types.Task, config Workfl
 	}
 
 	workflowResult := &WorkflowResult{
-		Success:      result.Status == workflow.WorkflowCompleted,
-		Status:       result.Status,
-		GrimoireName: grimoireName,
-		Duration:     result.Duration,
-		StepCount:    len(result.StepResults),
-		LastStepName: lastStepName,
+		Success:        result.Status == workflow.WorkflowCompleted,
+		Status:         result.Status,
+		GrimoireName:   grimoireName,
+		Duration:       result.Duration,
+		StepCount:      len(result.StepResults),
+		LastStepName:   lastStepName,
+		NeedsAutoMerge: result.NeedsAutoMerge,
 	}
 
 	if result.Error != nil {
@@ -254,12 +259,13 @@ func (r *WorkflowRunner) RunFromState(ctx context.Context, task types.Task, conf
 	}
 
 	workflowResult := &WorkflowResult{
-		Success:      result.Status == workflow.WorkflowCompleted,
-		Status:       result.Status,
-		GrimoireName: state.GrimoireName,
-		Duration:     result.Duration,
-		StepCount:    len(result.StepResults),
-		LastStepName: lastStepName,
+		Success:        result.Status == workflow.WorkflowCompleted,
+		Status:         result.Status,
+		GrimoireName:   state.GrimoireName,
+		Duration:       result.Duration,
+		StepCount:      len(result.StepResults),
+		LastStepName:   lastStepName,
+		NeedsAutoMerge: result.NeedsAutoMerge,
 	}
 
 	if result.Error != nil {

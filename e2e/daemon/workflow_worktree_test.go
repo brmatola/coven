@@ -180,6 +180,87 @@ steps:
 	}
 }
 
+// TestWorkflowAutoMerge verifies auto-merge (require_review: false) actually merges to main.
+func TestWorkflowAutoMerge(t *testing.T) {
+	env := helpers.NewTestEnv(t)
+	defer env.Stop()
+
+	env.InitBeads(t)
+
+	testFile := "auto-merge-test.txt"
+	testContent := "auto-merged content"
+
+	// Grimoire that creates a file and auto-merges (no review required)
+	grimoireYAML := `name: test-auto-merge
+description: Test auto-merge without review
+timeout: 5m
+
+steps:
+  - name: create-file
+    type: script
+    command: "echo '` + testContent + `' > ` + testFile + `"
+    timeout: 30s
+
+  - name: auto-merge
+    type: merge
+    require_review: false
+    timeout: 1m
+`
+	writeGrimoire(t, env, "test-auto-merge", grimoireYAML)
+
+	taskID := createTaskWithLabel(t, env, "Test auto merge", "grimoire:test-auto-merge")
+	env.ConfigureMockAgent(t)
+
+	env.MustStart()
+	api := helpers.NewAPIClient(env)
+
+	startSessionAndWaitForTask(t, env, api, taskID)
+
+	if err := api.StartTask(taskID); err != nil {
+		t.Fatalf("Failed to start task: %v", err)
+	}
+
+	// Capture worktree path during execution
+	var worktreePath string
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		workflow, err := api.GetWorkflow(taskID)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if workflow != nil && workflow.WorktreePath != "" {
+			worktreePath = workflow.WorktreePath
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Wait for workflow to complete - should NOT block at merge
+	waitForTaskStatus(t, api, taskID, "closed", 15)
+
+	// Give auto-merge a moment to complete
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify the file was merged to main repo
+	mainFilePath := filepath.Join(env.TmpDir, testFile)
+	content, err := os.ReadFile(mainFilePath)
+	if err != nil {
+		t.Errorf("Merged file should exist in main repo at %s: %v", mainFilePath, err)
+	} else {
+		if !strings.Contains(string(content), testContent) {
+			t.Errorf("File content mismatch: got %q, want %q", string(content), testContent)
+		}
+	}
+
+	// Verify worktree was cleaned up
+	if worktreePath != "" {
+		if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+			t.Errorf("Worktree should be cleaned up after auto-merge, but still exists at %s", worktreePath)
+		}
+	}
+}
+
 // TestWorkflowWorktreeContainsTask verifies worktree has task-related directory structure.
 func TestWorkflowWorktreeContainsTask(t *testing.T) {
 	env := helpers.NewTestEnv(t)

@@ -433,7 +433,23 @@ func (s *Scheduler) runWorkflow(ctx context.Context, task types.Task, worktreePa
 		"status", result.Status,
 		"duration", result.Duration,
 		"steps", result.StepCount,
+		"needs_auto_merge", result.NeedsAutoMerge,
 	)
+
+	// Handle auto-merge if needed (merge step with require_review: false)
+	if result.Success && result.NeedsAutoMerge {
+		s.logger.Info("performing auto-merge", "task_id", taskID)
+		if err := s.performAutoMerge(ctx, taskID, worktreePath); err != nil {
+			s.logger.Error("auto-merge failed",
+				"task_id", taskID,
+				"error", err,
+			)
+			// Don't fail the task - it completed, just couldn't merge
+			// The worktree is still there for manual inspection
+		} else {
+			s.logger.Info("auto-merge completed", "task_id", taskID)
+		}
+	}
 
 	// Update agent status based on workflow result
 	if result.Success {
@@ -801,6 +817,60 @@ func (s *Scheduler) ApproveMerge(taskID string) (*workflow.MergeResult, error) {
 	)
 
 	return mergeResult, nil
+}
+
+// performAutoMerge merges the worktree branch to main without requiring approval.
+// Used when a merge step has require_review: false.
+func (s *Scheduler) performAutoMerge(ctx context.Context, taskID, worktreePath string) error {
+	mergeRunner := &workflow.DefaultMergeRunner{}
+
+	// Step 1: Commit any uncommitted changes in the worktree
+	if err := mergeRunner.CommitWorktree(ctx, worktreePath); err != nil {
+		return fmt.Errorf("failed to commit worktree: %w", err)
+	}
+
+	// Step 2: Get worktree info for branch name
+	wtInfo, err := s.worktreeManager.Get(taskID)
+	if err != nil {
+		return fmt.Errorf("failed to get worktree info: %w", err)
+	}
+
+	// Step 3: Get the base branch (main/master)
+	baseBranch, err := s.worktreeManager.GetBaseBranch(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get base branch: %w", err)
+	}
+
+	// Step 4: Merge the worktree branch to main
+	mainRepoDir := s.worktreeManager.RepoPath()
+	mergeResult, err := mergeRunner.MergeToMain(ctx, mainRepoDir, wtInfo.Branch, baseBranch)
+	if err != nil {
+		return fmt.Errorf("merge failed: %w", err)
+	}
+
+	// If there are conflicts, return error (auto-merge can't resolve conflicts)
+	if mergeResult.HasConflicts {
+		s.logger.Warn("auto-merge has conflicts",
+			"task_id", taskID,
+			"conflict_files", mergeResult.ConflictFiles,
+		)
+		return fmt.Errorf("merge has conflicts: %v", mergeResult.ConflictFiles)
+	}
+
+	// Step 5: Cleanup - remove worktree and branch
+	if err := s.worktreeManager.Remove(ctx, taskID); err != nil {
+		s.logger.Warn("failed to remove worktree", "task_id", taskID, "error", err)
+	}
+	if err := s.worktreeManager.DeleteBranch(ctx, wtInfo.Branch); err != nil {
+		s.logger.Warn("failed to delete branch", "branch", wtInfo.Branch, "error", err)
+	}
+
+	s.logger.Info("auto-merge completed successfully",
+		"task_id", taskID,
+		"merge_commit", mergeResult.MergeCommit,
+	)
+
+	return nil
 }
 
 // RejectMerge rejects a pending merge and blocks the workflow.
