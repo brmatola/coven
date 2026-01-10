@@ -6,6 +6,7 @@
 export {
   // Configuration types
   type FixtureConfig,
+  type MockAgentConfig,
   // Preset configurations
   presets,
   // Sample content
@@ -18,4 +19,6 @@ export {
   // Helpers
   createBead,
   createGrimoire,
+  // Mock agent utilities
+  ensureMockAgentBuilt,
 } from './setup';

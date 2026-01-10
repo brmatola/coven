@@ -5,7 +5,9 @@ import {
   ChangedFile,
   CheckResult,
   CheckStatus,
+  MergeConflictInfo,
 } from '../types';
+import { StepOutputSummary } from '../../daemon/types';
 
 // VS Code API type
 export interface VsCodeApi {
@@ -96,6 +98,21 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
     }
   }, [vscode, overrideReason]);
 
+  const handleOpenWorktree = useCallback(() => {
+    vscode.postMessage({ type: 'openWorktree' });
+  }, [vscode]);
+
+  const handleRetryMerge = useCallback(() => {
+    vscode.postMessage({ type: 'retryMerge' });
+  }, [vscode]);
+
+  const handleOpenConflictFile = useCallback(
+    (filePath: string) => {
+      vscode.postMessage({ type: 'openConflictFile', payload: { filePath } });
+    },
+    [vscode]
+  );
+
   if (!state) {
     return <div className="loading">Loading review...</div>;
   }
@@ -145,11 +162,8 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
         </section>
       )}
 
-      {state.agentSummary && (
-        <section className="review-section">
-          <h2>Agent Summary</h2>
-          <pre className="agent-summary">{state.agentSummary}</pre>
-        </section>
+      {state.stepOutputs && state.stepOutputs.length > 0 && (
+        <StepOutputsSection stepOutputs={state.stepOutputs} />
       )}
 
       <section className="review-section">
@@ -199,6 +213,16 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
         </section>
       )}
 
+      {state.status === 'conflict' && state.mergeConflict && (
+        <MergeConflictSection
+          conflictInfo={state.mergeConflict}
+          isRetrying={state.isRetrying}
+          onOpenWorktree={handleOpenWorktree}
+          onRetryMerge={handleRetryMerge}
+          onOpenFile={handleOpenConflictFile}
+        />
+      )}
+
       <section className="review-section">
         <h2>Feedback (Optional)</h2>
         <textarea
@@ -210,23 +234,43 @@ export function App({ vsCodeApi }: AppProps): React.ReactElement {
       </section>
 
       <footer className="review-actions">
-        <button
-          className="button-primary approve-button"
-          onClick={handleApprove}
-          disabled={state.status === 'checking' || (state.checksEnabled && hasFailedChecks)}
-        >
-          {allChecksPassed ? 'Approve & Merge' : 'Approve & Merge'}
-        </button>
+        {state.status === 'conflict' ? (
+          <>
+            <button className="button-primary" onClick={handleOpenWorktree}>
+              Open Worktree
+            </button>
+            <button
+              className="button-secondary"
+              onClick={handleRetryMerge}
+              disabled={state.isRetrying}
+            >
+              {state.isRetrying ? 'Retrying...' : 'Retry Merge'}
+            </button>
+            <button className="button-danger" onClick={handleRevert}>
+              Reject Changes
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="button-primary approve-button"
+              onClick={handleApprove}
+              disabled={state.status === 'checking' || (state.checksEnabled && hasFailedChecks)}
+            >
+              {allChecksPassed ? 'Approve & Merge' : 'Approve & Merge'}
+            </button>
 
-        {state.checksEnabled && hasFailedChecks && (
-          <button className="button-warning" onClick={handleOverride}>
-            Override Checks
-          </button>
+            {state.checksEnabled && hasFailedChecks && (
+              <button className="button-warning" onClick={handleOverride}>
+                Override Checks
+              </button>
+            )}
+
+            <button className="button-danger" onClick={handleRevert}>
+              Revert Changes
+            </button>
+          </>
         )}
-
-        <button className="button-danger" onClick={handleRevert}>
-          Revert Changes
-        </button>
       </footer>
 
       {showRevertDialog && (
@@ -360,6 +404,133 @@ function CheckResultItem({ result }: CheckResultItemProps): React.ReactElement {
         </div>
       )}
     </div>
+  );
+}
+
+interface StepOutputsSectionProps {
+  stepOutputs: StepOutputSummary[];
+}
+
+const TRUNCATE_LENGTH = 200;
+
+function StepOutputsSection({ stepOutputs }: StepOutputsSectionProps): React.ReactElement {
+  return (
+    <section className="review-section">
+      <h2>Step Outputs</h2>
+      <div className="step-outputs-list">
+        {stepOutputs.map((step) => (
+          <StepOutputItem key={step.stepId} step={step} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+interface StepOutputItemProps {
+  step: StepOutputSummary;
+}
+
+function StepOutputItem({ step }: StepOutputItemProps): React.ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const isFailed = step.exitCode !== undefined && step.exitCode !== 0;
+  const isLong = step.summary.length > TRUNCATE_LENGTH;
+
+  const getStatusIcon = (): string => {
+    if (step.exitCode === undefined) {
+      return '•'; // In progress or unknown
+    }
+    return step.exitCode === 0 ? '✓' : '✗';
+  };
+
+  const getStatusClass = (): string => {
+    if (step.exitCode === undefined) {
+      return 'step-status pending';
+    }
+    return step.exitCode === 0 ? 'step-status passed' : 'step-status failed';
+  };
+
+  const displayText = expanded || !isLong ? step.summary : step.summary.substring(0, TRUNCATE_LENGTH) + '...';
+
+  return (
+    <div className={`step-output-item ${isFailed ? 'failed' : ''}`}>
+      <div className="step-output-header">
+        <span className={getStatusClass()}>{getStatusIcon()}</span>
+        <span className="step-name">{step.stepName}</span>
+      </div>
+      <div className="step-output-content">
+        <p className="step-summary">{displayText}</p>
+        {isLong && (
+          <button className="button-link" onClick={() => setExpanded(!expanded)}>
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface MergeConflictSectionProps {
+  conflictInfo: MergeConflictInfo;
+  isRetrying?: boolean;
+  onOpenWorktree: () => void;
+  onRetryMerge: () => void;
+  onOpenFile: (filePath: string) => void;
+}
+
+function MergeConflictSection({
+  conflictInfo,
+  isRetrying,
+  onOpenWorktree,
+  onRetryMerge,
+  onOpenFile,
+}: MergeConflictSectionProps): React.ReactElement {
+  return (
+    <section className="review-section conflict-section">
+      <div className="conflict-header">
+        <span className="conflict-icon">⚠️</span>
+        <h2>Merge Conflicts</h2>
+      </div>
+      <p className="conflict-message">
+        {conflictInfo.message ||
+          `Merge conflicts detected between ${conflictInfo.sourceBranch} and ${conflictInfo.targetBranch}.`}
+      </p>
+      <p className="conflict-instructions">
+        Please resolve the conflicts in the worktree and click &quot;Retry Merge&quot; when done.
+      </p>
+
+      {conflictInfo.conflictFiles.length > 0 && (
+        <div className="conflict-files">
+          <h3>Conflicting Files ({conflictInfo.conflictFiles.length})</h3>
+          <ul className="conflict-file-list">
+            {conflictInfo.conflictFiles.map((file) => (
+              <li key={file} className="conflict-file-item">
+                <span className="conflict-file-icon">⚠️</span>
+                <span className="conflict-file-path">{file}</span>
+                <button
+                  className="button-secondary button-small"
+                  onClick={() => onOpenFile(file)}
+                >
+                  Open
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="conflict-actions">
+        <button className="button-primary" onClick={onOpenWorktree}>
+          Open Worktree
+        </button>
+        <button
+          className="button-secondary"
+          onClick={onRetryMerge}
+          disabled={isRetrying}
+        >
+          {isRetrying ? 'Retrying...' : 'Retry Merge'}
+        </button>
+      </div>
+    </section>
   );
 }
 

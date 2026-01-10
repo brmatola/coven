@@ -23,6 +23,15 @@ import {
 } from './daemon';
 import { WorktreeManager } from './git/WorktreeManager';
 import { detectCoven } from './setup/detection';
+import {
+  stopDaemon,
+  restartDaemon,
+  DaemonCommandDependencies,
+} from './commands/daemon';
+import {
+  approveWorkflow,
+  rejectWorkflow,
+} from './commands/workflow';
 
 // Global state
 let workflowProvider: WorkflowTreeProvider | null = null;
@@ -39,6 +48,7 @@ let worktreeManager: WorktreeManager | null = null;
 let daemonSocketPath: string | null = null;
 let daemonNotifications: DaemonNotificationService | null = null;
 let reconnectStatusDisposable: vscode.Disposable | null = null;
+let daemonLifecycle: DaemonLifecycle | null = null;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const ctx = ExtensionContext.initialize(context);
@@ -85,7 +95,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.refreshTasks', refreshTasks),
     vscode.commands.registerCommand('coven.respondToQuestion', respondToQuestion),
     vscode.commands.registerCommand('coven.reviewTask', reviewTask),
-    vscode.commands.registerCommand('coven.viewDaemonLogs', viewDaemonLogs)
+    vscode.commands.registerCommand('coven.viewDaemonLogs', viewDaemonLogs),
+    vscode.commands.registerCommand('coven.stopDaemon', handleStopDaemon),
+    vscode.commands.registerCommand('coven.restartDaemon', handleRestartDaemon),
+    vscode.commands.registerCommand('coven.cancelWorkflow', cancelWorkflow),
+    vscode.commands.registerCommand('coven.retryWorkflow', retryWorkflow),
+    vscode.commands.registerCommand('coven.approveMerge', approveMerge),
+    vscode.commands.registerCommand('coven.rejectMerge', rejectMerge)
   );
 
   // Check workspace initialization status
@@ -170,10 +186,15 @@ async function initializeDaemon(
   const ctx = ExtensionContext.get();
 
   try {
+    // Get override path from settings (for development)
+    const config = vscode.workspace.getConfiguration('coven');
+    const overridePath = config.get<string>('binaryPath') || undefined;
+
     // Create binary manager
     const binaryManager = new BinaryManager({
       extensionPath: context.extensionPath,
       bundledVersion: '0.1.0',
+      overridePath,
     });
 
     // Create lifecycle manager
@@ -181,6 +202,7 @@ async function initializeDaemon(
       binaryManager,
       workspaceRoot,
     });
+    daemonLifecycle = lifecycle;
 
     // Show starting notification
     const startingDisposable = await daemonNotifications?.showStarting();
@@ -526,4 +548,157 @@ async function reviewTask(arg: unknown): Promise<void> {
       `Failed to open review: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+}
+
+/**
+ * Helper to get daemon command dependencies.
+ */
+function getDaemonDeps(): DaemonCommandDependencies | null {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot || !daemonSocketPath || !daemonLifecycle) {
+    return null;
+  }
+  return {
+    client: new DaemonClient(daemonSocketPath),
+    lifecycle: daemonLifecycle,
+    workspaceRoot,
+  };
+}
+
+/**
+ * Stop daemon command handler.
+ */
+async function handleStopDaemon(): Promise<void> {
+  const deps = getDaemonDeps();
+  if (!deps) {
+    await vscode.window.showErrorMessage('Coven: Daemon not connected');
+    return;
+  }
+  await stopDaemon(deps);
+  statusBar?.setDisconnected();
+}
+
+/**
+ * Restart daemon command handler.
+ */
+async function handleRestartDaemon(): Promise<void> {
+  const deps = getDaemonDeps();
+  if (!deps) {
+    await vscode.window.showErrorMessage('Coven: Daemon not connected');
+    return;
+  }
+  await restartDaemon(deps);
+}
+
+/**
+ * Extract workflow ID from command argument.
+ */
+function extractWorkflowId(arg: unknown): string | null {
+  if (typeof arg === 'string') {
+    return arg;
+  }
+  if (arg && typeof arg === 'object') {
+    const item = arg as { workflow?: { id?: string }; workflowId?: string; task?: { id?: string } };
+    if (item.workflow?.id) {
+      return item.workflow.id;
+    }
+    if (item.workflowId) {
+      return item.workflowId;
+    }
+    if (item.task?.id) {
+      return item.task.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Cancel a running workflow.
+ */
+async function cancelWorkflow(arg: unknown): Promise<void> {
+  const ctx = ExtensionContext.get();
+  const workflowId = extractWorkflowId(arg);
+
+  if (!workflowId || !daemonSocketPath) {
+    await vscode.window.showErrorMessage('Coven: Invalid workflow reference or daemon not connected');
+    return;
+  }
+
+  const confirm = await vscode.window.showWarningMessage(
+    'Cancel this workflow? Running agents will be terminated.',
+    { modal: true },
+    'Cancel Workflow'
+  );
+  if (confirm !== 'Cancel Workflow') {
+    return;
+  }
+
+  try {
+    const client = new DaemonClient(daemonSocketPath);
+    await client.post(`/workflows/${encodeURIComponent(workflowId)}/cancel`, {});
+    ctx.logger.info('Workflow cancelled', { workflowId });
+    void vscode.window.showInformationMessage('Workflow cancelled');
+  } catch (err) {
+    ctx.logger.error('Failed to cancel workflow', {
+      workflowId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await vscode.window.showErrorMessage(
+      `Failed to cancel workflow: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+/**
+ * Retry a failed or blocked workflow.
+ */
+async function retryWorkflow(arg: unknown): Promise<void> {
+  const ctx = ExtensionContext.get();
+  const workflowId = extractWorkflowId(arg);
+
+  if (!workflowId || !daemonSocketPath) {
+    await vscode.window.showErrorMessage('Coven: Invalid workflow reference or daemon not connected');
+    return;
+  }
+
+  try {
+    const client = new DaemonClient(daemonSocketPath);
+    await client.post(`/workflows/${encodeURIComponent(workflowId)}/retry`, {});
+    ctx.logger.info('Workflow retried', { workflowId });
+    void vscode.window.showInformationMessage('Workflow restarted');
+  } catch (err) {
+    ctx.logger.error('Failed to retry workflow', {
+      workflowId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await vscode.window.showErrorMessage(
+      `Failed to retry workflow: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+/**
+ * Approve a workflow and merge changes.
+ */
+async function approveMerge(arg: unknown): Promise<void> {
+  if (!daemonSocketPath) {
+    await vscode.window.showErrorMessage('Coven: Daemon not connected');
+    return;
+  }
+
+  const client = new DaemonClient(daemonSocketPath);
+  await approveWorkflow(client, arg);
+}
+
+/**
+ * Reject a workflow and discard changes.
+ */
+async function rejectMerge(arg: unknown): Promise<void> {
+  if (!daemonSocketPath) {
+    await vscode.window.showErrorMessage('Coven: Daemon not connected');
+    return;
+  }
+
+  const client = new DaemonClient(daemonSocketPath);
+  await rejectWorkflow(client, arg);
 }

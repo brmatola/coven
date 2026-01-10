@@ -24,11 +24,15 @@ describe('Review App', () => {
   });
 
   const mockState: ReviewState = {
+    workflowId: 'workflow-123',
     taskId: 'task-123',
     title: 'Test Task',
     description: 'Test description',
     acceptanceCriteria: '- Criterion 1\n- Criterion 2',
-    agentSummary: 'Task completed successfully',
+    stepOutputs: [
+      { stepId: 'step-1', stepName: 'implement', summary: 'Task completed successfully', exitCode: 0 },
+      { stepId: 'step-2', stepName: 'test', summary: 'All tests passed', exitCode: 0 },
+    ],
     completedAt: Date.now(),
     durationMs: 60000,
     changedFiles: [
@@ -91,13 +95,16 @@ describe('Review App', () => {
       });
     });
 
-    it('displays agent summary', async () => {
+    it('displays step outputs', async () => {
       render(<App vsCodeApi={mockVsCodeApi} />);
       act(() => sendState(mockState));
 
       await waitFor(() => {
-        expect(screen.getByText('Agent Summary')).toBeDefined();
+        expect(screen.getByText('Step Outputs')).toBeDefined();
+        expect(screen.getByText('implement')).toBeDefined();
         expect(screen.getByText('Task completed successfully')).toBeDefined();
+        expect(screen.getByText('test')).toBeDefined();
+        expect(screen.getByText('All tests passed')).toBeDefined();
       });
     });
 

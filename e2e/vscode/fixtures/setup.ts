@@ -9,6 +9,71 @@ import * as os from 'os';
 import { execSync } from 'child_process';
 
 /**
+ * Get the repository root directory.
+ */
+function getRepoRoot(): string {
+  return path.resolve(__dirname, '..', '..', '..');
+}
+
+/**
+ * Get the path to the mock agent binary.
+ * Returns null if not built.
+ */
+function getMockAgentPath(): string | null {
+  const repoRoot = getRepoRoot();
+  const mockAgentPath = path.join(repoRoot, 'build', 'mockagent');
+  if (fs.existsSync(mockAgentPath)) {
+    return mockAgentPath;
+  }
+  return null;
+}
+
+/**
+ * Build the mock agent if not already built.
+ * @returns Path to the mock agent binary
+ */
+export function ensureMockAgentBuilt(): string {
+  const existing = getMockAgentPath();
+  if (existing) {
+    return existing;
+  }
+
+  const repoRoot = getRepoRoot();
+  console.log('Building mock agent...');
+  try {
+    execSync('make build-mockagent', {
+      cwd: repoRoot,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    const error = err as { message?: string };
+    throw new Error(`Failed to build mock agent: ${error.message || 'Unknown error'}`);
+  }
+
+  const newPath = getMockAgentPath();
+  if (!newPath) {
+    throw new Error('Mock agent build succeeded but binary not found');
+  }
+  return newPath;
+}
+
+/**
+ * Mock agent configuration options.
+ */
+export interface MockAgentConfig {
+  /** Delay before completing (e.g., "100ms", "1s") */
+  delay?: string;
+  /** Whether to simulate failure */
+  fail?: boolean;
+  /** Exit code (default: 0) */
+  exitCode?: number;
+  /** Custom output text */
+  output?: string;
+  /** Whether to output a question */
+  question?: boolean;
+}
+
+/**
  * Fixture configuration for different test scenarios.
  */
 export interface FixtureConfig {
@@ -22,6 +87,8 @@ export interface FixtureConfig {
   sourceFiles?: boolean;
   /** Create sample grimoire */
   grimoire?: boolean;
+  /** Configure mock agent for E2E testing */
+  mockAgent?: boolean | MockAgentConfig;
   /** Additional files to create: path -> content */
   files?: Record<string, string>;
 }
@@ -30,13 +97,14 @@ export interface FixtureConfig {
  * Preset fixture configurations.
  */
 export const presets = {
-  /** Full workspace with all components initialized */
+  /** Full workspace with all components initialized and mock agent */
   complete: {
     git: true,
     coven: true,
     beads: true,
     sourceFiles: true,
     grimoire: true,
+    mockAgent: true,
   } as FixtureConfig,
 
   /** Git repo without coven initialization */
@@ -61,6 +129,26 @@ export const presets = {
     coven: false,
     beads: true,
     sourceFiles: false,
+  } as FixtureConfig,
+
+  /** Full workspace with mock agent configured to fail */
+  failingAgent: {
+    git: true,
+    coven: true,
+    beads: true,
+    sourceFiles: true,
+    grimoire: true,
+    mockAgent: { fail: true },
+  } as FixtureConfig,
+
+  /** Full workspace with mock agent that asks questions */
+  questionAgent: {
+    git: true,
+    coven: true,
+    beads: true,
+    sourceFiles: true,
+    grimoire: true,
+    mockAgent: { question: true },
   } as FixtureConfig,
 };
 
@@ -178,10 +266,36 @@ export function createWorkspace(
     if (config.coven) {
       const covenDir = path.join(tempDir, '.coven');
       fs.mkdirSync(covenDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(covenDir, 'config.yaml'),
-        'version: 1\nworkspace: .\n'
-      );
+
+      // Build config content
+      let configContent = 'version: 1\nworkspace: .\n';
+
+      // Set up mock agent if configured
+      if (config.mockAgent) {
+        const mockAgentPath = ensureMockAgentBuilt();
+        const binDir = path.join(covenDir, 'bin');
+        fs.mkdirSync(binDir, { recursive: true });
+
+        // Copy mock agent to workspace
+        const destPath = path.join(binDir, 'mockagent');
+        fs.copyFileSync(mockAgentPath, destPath);
+        fs.chmodSync(destPath, 0o755);
+
+        // Build agent command with flags
+        let agentCommand = destPath;
+        if (typeof config.mockAgent === 'object') {
+          const opts = config.mockAgent;
+          if (opts.delay) agentCommand += ` -delay ${opts.delay}`;
+          if (opts.fail) agentCommand += ' -fail';
+          if (opts.exitCode !== undefined) agentCommand += ` -exit-code ${opts.exitCode}`;
+          if (opts.output) agentCommand += ` -output "${opts.output}"`;
+          if (opts.question) agentCommand += ' -question';
+        }
+
+        configContent += `agent_command: ${agentCommand}\n`;
+      }
+
+      fs.writeFileSync(path.join(covenDir, 'config.yaml'), configContent);
 
       if (config.grimoire) {
         const grimoireDir = path.join(covenDir, 'grimoires');

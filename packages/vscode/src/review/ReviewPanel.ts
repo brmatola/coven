@@ -283,27 +283,53 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
   private async handleViewDiff(filePath: string): Promise<void> {
     const worktreePath = this.currentState.worktreePath;
     const baseBranch = this.currentState.baseBranch ?? 'main';
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
     if (!worktreePath) {
       await vscode.window.showErrorMessage('Worktree path not available');
       return;
     }
 
-    try {
-      // Create URIs for the diff
-      // Left: file at base branch, Right: file in worktree
-      const leftUri = vscode.Uri.parse(
-        `git://${worktreePath}/${filePath}?ref=${baseBranch}`
-      );
-      const rightUri = vscode.Uri.file(`${worktreePath}/${filePath}`);
+    // Find the change type for this file
+    const fileInfo = this.currentState.changedFiles?.find((f) => f.path === filePath);
+    const changeType = fileInfo?.changeType ?? 'modified';
 
-      // Open diff editor
-      await vscode.commands.executeCommand(
-        'vscode.diff',
-        leftUri,
-        rightUri,
-        `${filePath} (${baseBranch} ↔ workflow)`
-      );
+    try {
+      const worktreeUri = vscode.Uri.file(`${worktreePath}/${filePath}`);
+
+      if (changeType === 'added') {
+        // New file - just open it, there's nothing to compare against
+        await vscode.commands.executeCommand('vscode.open', worktreeUri);
+        return;
+      }
+
+      if (changeType === 'deleted') {
+        // Deleted file - show the file from workspace root if available
+        if (workspaceRoot) {
+          const mainUri = vscode.Uri.file(`${workspaceRoot}/${filePath}`);
+          // Open just the original file since the new version doesn't exist
+          await vscode.commands.executeCommand('vscode.open', mainUri);
+        } else {
+          await vscode.window.showErrorMessage('Cannot view deleted file: workspace not available');
+        }
+        return;
+      }
+
+      // Modified or renamed file - show side-by-side diff
+      // Left: file from workspace root (main branch)
+      // Right: file in worktree (workflow changes)
+      if (workspaceRoot) {
+        const mainUri = vscode.Uri.file(`${workspaceRoot}/${filePath}`);
+        await vscode.commands.executeCommand(
+          'vscode.diff',
+          mainUri,
+          worktreeUri,
+          `${filePath} (${baseBranch} ↔ workflow)`
+        );
+      } else {
+        // Fallback: just open the worktree file
+        await vscode.commands.executeCommand('vscode.open', worktreeUri);
+      }
     } catch (err) {
       this.logger.error('Failed to open diff', {
         workflowId: this.workflowId,

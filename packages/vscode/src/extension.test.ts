@@ -221,16 +221,15 @@ describe('extension', () => {
       expect(window.createStatusBarItem).toHaveBeenCalled();
     });
 
-    it('sets status bar text to inactive when no session is active', async () => {
+    it('sets status bar text during activation', async () => {
       const mockCtx = createMockExtensionContext();
 
       await activate(mockCtx);
 
       const mockStatusBar = (window.createStatusBarItem as ReturnType<typeof vi.fn>).mock
         .results[0]?.value;
-      // After activation, status bar shows inactive (not disconnected) because
-      // the state cache is connected but no session is active
-      expect(mockStatusBar?.text).toBe('$(circle-outline) Coven: Inactive');
+      // During activation, status bar is initially disconnected until daemon connects
+      expect(mockStatusBar?.text).toBe('$(circle-outline) Coven: Disconnected');
     });
 
     it('creates tree view for sessions', async () => {

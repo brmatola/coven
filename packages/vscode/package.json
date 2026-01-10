@@ -16,6 +16,16 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Coven",
+      "properties": {
+        "coven.binaryPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `covend` binary. Leave empty to use bundled binary. For development, use `${workspaceFolder}/build/covend`."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -188,6 +198,26 @@
         "command": "coven.answerQuestion",
         "title": "Answer Question",
         "icon": "$(comment)"
+      },
+      {
+        "command": "coven.cancelWorkflow",
+        "title": "Coven: Cancel Workflow",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "coven.retryWorkflow",
+        "title": "Coven: Retry Workflow",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "coven.approveMerge",
+        "title": "Coven: Approve and Merge",
+        "icon": "$(check)"
+      },
+      {
+        "command": "coven.rejectMerge",
+        "title": "Coven: Reject Changes",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -271,6 +301,7 @@
     "build": "npm run lint && tsx scripts/build.ts && npm run build:webviews",
     "watch": "tsx scripts/build.ts --watch",
     "package": "vsce package",
+    "dogfood": "bash scripts/dogfood.sh",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
