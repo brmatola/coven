@@ -16,8 +16,11 @@ import (
 func createMockBd(t *testing.T, tmpDir string, output string) string {
 	t.Helper()
 	mockBd := filepath.Join(tmpDir, "bd")
+	// Handle both list (for poller) and ready (for scheduler) commands
 	script := `#!/bin/bash
-if [ "$1" = "ready" ] && [ "$2" = "--json" ]; then
+if [ "$1" = "list" ]; then
+    echo '` + output + `'
+elif [ "$1" = "ready" ] && [ "$2" = "--json" ]; then
     echo '` + output + `'
 fi
 `

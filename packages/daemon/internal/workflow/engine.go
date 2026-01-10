@@ -22,6 +22,9 @@ type EngineConfig struct {
 
 	// WorkflowID is the unique ID for this workflow execution.
 	WorkflowID string
+
+	// Bead contains the full bead data for template context.
+	Bead *BeadData
 }
 
 // ExecutionResult contains the result of workflow execution.
@@ -109,6 +112,11 @@ func (e *Engine) Execute(ctx context.Context, g *grimoire.Grimoire) *ExecutionRe
 
 	// Create step context
 	stepCtx := NewStepContext(e.config.WorktreePath, e.config.BeadID, e.config.WorkflowID)
+
+	// Set bead data in context if provided
+	if e.config.Bead != nil {
+		stepCtx.SetBead(e.config.Bead)
+	}
 
 	// Execute steps in sequence
 	for i := range g.Steps {

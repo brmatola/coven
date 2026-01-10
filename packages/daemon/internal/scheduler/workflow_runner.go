@@ -103,12 +103,23 @@ func (r *WorkflowRunner) Run(ctx context.Context, task types.Task, config Workfl
 		"grimoire", grimoireName,
 	)
 
+	// Create bead data for template context
+	beadData := &workflow.BeadData{
+		ID:       task.ID,
+		Title:    task.Title,
+		Body:     task.Description,
+		Type:     string(task.Type),
+		Priority: fmt.Sprintf("P%d", task.Priority),
+		Labels:   task.Labels,
+	}
+
 	// Create workflow engine
 	engine := workflow.NewEngine(workflow.EngineConfig{
 		CovenDir:     r.covenDir,
 		WorktreePath: config.WorktreePath,
 		BeadID:       config.BeadID,
 		WorkflowID:   config.WorkflowID,
+		Bead:         beadData,
 	})
 
 	// Set agent runner if provided

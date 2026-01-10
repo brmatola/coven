@@ -80,7 +80,7 @@ func New(workspace, version string) (*Daemon, error) {
 	worktreeManager := git.NewWorktreeManager(workspace, logger)
 	questionDetector := questions.NewDetector()
 	sessionManager := session.NewManager(store, logger)
-	sched := scheduler.NewScheduler(store, beadsClient, processManager, worktreeManager, logger)
+	sched := scheduler.NewScheduler(store, beadsClient, processManager, worktreeManager, logger, covenDir)
 	beadsPoller := beads.NewPoller(beadsClient, store, eventBroker, logger)
 
 	// Apply config settings

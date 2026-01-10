@@ -54,6 +54,10 @@ func (e *AgentExecutor) Execute(ctx context.Context, step *grimoire.Step, stepCt
 		return nil, fmt.Errorf("agent step %q has no spell", step.Name)
 	}
 
+	if e.runner == nil {
+		return nil, fmt.Errorf("agent runner not configured for step %q", step.Name)
+	}
+
 	// Get timeout
 	timeout, err := step.GetTimeout()
 	if err != nil {
@@ -168,9 +172,20 @@ func (e *AgentExecutor) preparePrompt(step *grimoire.Step, stepCtx *StepContext)
 		renderCtx[k] = rendered
 	}
 
-	// Add bead info
-	renderCtx["bead"] = map[string]interface{}{
-		"id": stepCtx.BeadID,
+	// Add bead info - use full bead from context if available, otherwise just ID
+	if bead := stepCtx.GetBead(); bead != nil {
+		renderCtx["bead"] = map[string]interface{}{
+			"id":       bead.ID,
+			"title":    bead.Title,
+			"body":     bead.Body,
+			"type":     bead.Type,
+			"priority": bead.Priority,
+			"labels":   bead.Labels,
+		}
+	} else {
+		renderCtx["bead"] = map[string]interface{}{
+			"id": stepCtx.BeadID,
+		}
 	}
 
 	// Render the spell

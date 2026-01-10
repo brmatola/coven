@@ -264,6 +264,21 @@ func (s *Store) GetLastTaskSync() *time.Time {
 	return s.state.LastTaskSync
 }
 
+// UpdateTaskStatus updates the status of a specific task.
+func (s *Store) UpdateTaskStatus(taskID string, status types.TaskStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.state.Tasks {
+		if s.state.Tasks[i].ID == taskID {
+			s.state.Tasks[i].Status = status
+			s.state.Tasks[i].UpdatedAt = time.Now()
+			s.dirty = true
+			return
+		}
+	}
+}
+
 // IsDirty returns whether state has unsaved changes.
 func (s *Store) IsDirty() bool {
 	s.mu.RLock()

@@ -65,6 +65,26 @@ func (c *Client) Ready(ctx context.Context) ([]types.Task, error) {
 	return tasks, nil
 }
 
+// List returns all tasks (including in_progress and closed).
+func (c *Client) List(ctx context.Context) ([]types.Task, error) {
+	output, err := c.runCommand(ctx, "list", "--all", "--json", "-n", "0")
+	if err != nil {
+		return nil, fmt.Errorf("bd list failed: %w", err)
+	}
+
+	var beadsTasks []BeadsTask
+	if err := json.Unmarshal(output, &beadsTasks); err != nil {
+		return nil, fmt.Errorf("failed to parse bd list output: %w", err)
+	}
+
+	tasks := make([]types.Task, len(beadsTasks))
+	for i, bt := range beadsTasks {
+		tasks[i] = convertBeadsTask(bt)
+	}
+
+	return tasks, nil
+}
+
 // UpdateStatus updates the status of a task.
 func (c *Client) UpdateStatus(ctx context.Context, taskID string, status types.TaskStatus) error {
 	statusStr := string(status)

@@ -77,7 +77,7 @@ func (p *Poller) IsRunning() bool {
 
 // Poll fetches tasks once and updates state.
 func (p *Poller) Poll(ctx context.Context) error {
-	tasks, err := p.client.Ready(ctx)
+	tasks, err := p.client.List(ctx)
 	if err != nil {
 		return err
 	}

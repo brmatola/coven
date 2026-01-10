@@ -12,6 +12,7 @@ import (
 	"github.com/coven/daemon/internal/git"
 	"github.com/coven/daemon/internal/logging"
 	"github.com/coven/daemon/internal/state"
+	"github.com/coven/daemon/internal/workflow"
 	"github.com/coven/daemon/pkg/types"
 )
 
@@ -30,7 +31,10 @@ type Scheduler struct {
 	beadsClient       *beads.Client
 	processManager    *agent.ProcessManager
 	worktreeManager   *git.WorktreeManager
+	workflowRunner    *WorkflowRunner
+	agentRunner       *ProcessAgentRunner
 	logger            *logging.Logger
+	covenDir          string
 	reconcileInterval time.Duration
 	maxAgents         int
 	running           bool
@@ -47,17 +51,31 @@ func NewScheduler(
 	processManager *agent.ProcessManager,
 	worktreeManager *git.WorktreeManager,
 	logger *logging.Logger,
+	covenDir string,
 ) *Scheduler {
+	// Default agent command
+	agentCommand := "claude"
+	agentArgs := []string{"-p"}
+
+	// Create the agent runner adapter
+	agentRunner := NewProcessAgentRunner(processManager, agentCommand, agentArgs)
+
+	// Create the workflow runner
+	workflowRunner := NewWorkflowRunner(covenDir, logger)
+
 	return &Scheduler{
 		store:             store,
 		beadsClient:       beadsClient,
 		processManager:    processManager,
 		worktreeManager:   worktreeManager,
+		workflowRunner:    workflowRunner,
+		agentRunner:       agentRunner,
 		logger:            logger,
+		covenDir:          covenDir,
 		reconcileInterval: DefaultReconcileInterval,
 		maxAgents:         DefaultMaxAgents,
-		agentCommand:      "claude",
-		agentArgs:         []string{"-p"},
+		agentCommand:      agentCommand,
+		agentArgs:         agentArgs,
 	}
 }
 
@@ -80,6 +98,8 @@ func (s *Scheduler) SetAgentCommand(cmd string, args []string) {
 	s.mu.Lock()
 	s.agentCommand = cmd
 	s.agentArgs = args
+	// Update the agent runner as well
+	s.agentRunner.SetCommand(cmd, args)
 	s.mu.Unlock()
 }
 
@@ -218,7 +238,7 @@ func (s *Scheduler) getReadyTasks() []types.Task {
 }
 
 func (s *Scheduler) startAgent(ctx context.Context, task types.Task) error {
-	s.logger.Info("starting agent for task", "task_id", task.ID, "title", task.Title)
+	s.logger.Info("starting workflow for task", "task_id", task.ID, "title", task.Title)
 
 	// Create worktree for the task
 	wtInfo, err := s.worktreeManager.Create(ctx, task.ID)
@@ -226,7 +246,10 @@ func (s *Scheduler) startAgent(ctx context.Context, task types.Task) error {
 		return fmt.Errorf("failed to create worktree: %w", err)
 	}
 
-	// Update task status to in_progress
+	// Update task status to in_progress (local store for immediate visibility)
+	s.store.UpdateTaskStatus(task.ID, types.TaskStatusInProgress)
+
+	// Update task status in beads (persistent storage)
 	if err := s.beadsClient.UpdateStatus(ctx, task.ID, types.TaskStatusInProgress); err != nil {
 		// Clean up worktree on failure
 		s.worktreeManager.Remove(ctx, task.ID)
@@ -243,47 +266,118 @@ func (s *Scheduler) startAgent(ctx context.Context, task types.Task) error {
 	}
 	s.store.AddAgent(agentState)
 
-	// Build the prompt from task
-	prompt := buildPromptFromTask(task)
-
-	// Get command configuration
-	s.mu.RLock()
-	agentCmd := s.agentCommand
-	agentArgs := append([]string{}, s.agentArgs...)
-	s.mu.RUnlock()
-
-	// Add prompt to args
-	agentArgs = append(agentArgs, prompt)
-
-	// Spawn the agent process
-	info, err := s.processManager.Spawn(ctx, agent.SpawnConfig{
-		TaskID:     task.ID,
-		Command:    agentCmd,
-		Args:       agentArgs,
-		WorkingDir: wtInfo.Path,
-	})
-	if err != nil {
-		// Update state on failure
-		s.store.UpdateAgentStatus(task.ID, types.AgentStatusFailed)
-		s.store.SetAgentError(task.ID, err.Error())
-		return fmt.Errorf("failed to spawn agent: %w", err)
-	}
-
-	// Update agent state with PID
+	// Update agent state to running
 	s.store.UpdateAgentStatus(task.ID, types.AgentStatusRunning)
-	// Update PID directly via agent access
-	if agent := s.store.GetAgent(task.ID); agent != nil {
-		agent.PID = info.PID
-		s.store.AddAgent(agent)
-	}
 
-	s.logger.Info("agent started",
+	// Run workflow in a goroutine
+	go s.runWorkflow(ctx, task, wtInfo.Path)
+
+	s.logger.Info("workflow started",
 		"task_id", task.ID,
-		"pid", info.PID,
 		"worktree", wtInfo.Path,
 	)
 
 	return nil
+}
+
+// runWorkflow executes the workflow for a task.
+func (s *Scheduler) runWorkflow(ctx context.Context, task types.Task, worktreePath string) {
+	taskID := task.ID
+
+	// Set up the agent runner for this workflow
+	s.agentRunner.SetTaskID(taskID)
+
+	// Create workflow ID
+	workflowID := fmt.Sprintf("wf-%s-%d", taskID, time.Now().UnixNano())
+
+	// Run the workflow
+	config := WorkflowConfig{
+		WorktreePath: worktreePath,
+		BeadID:       taskID,
+		WorkflowID:   workflowID,
+		AgentRunner:  s.agentRunner,
+	}
+
+	result, err := s.workflowRunner.Run(ctx, task, config)
+
+	// Handle errors from workflow runner itself
+	if err != nil {
+		s.logger.Error("workflow runner error",
+			"task_id", taskID,
+			"error", err,
+		)
+		s.store.UpdateAgentStatus(taskID, types.AgentStatusFailed)
+		s.store.SetAgentError(taskID, err.Error())
+		s.beadsClient.UpdateStatus(ctx, taskID, types.TaskStatusBlocked)
+		return
+	}
+
+	// Log workflow completion
+	s.logger.Info("workflow completed",
+		"task_id", taskID,
+		"grimoire", result.GrimoireName,
+		"status", result.Status,
+		"duration", result.Duration,
+		"steps", result.StepCount,
+	)
+
+	// Update agent status based on workflow result
+	if result.Success {
+		s.store.UpdateAgentStatus(taskID, types.AgentStatusCompleted)
+	} else {
+		s.store.UpdateAgentStatus(taskID, types.AgentStatusFailed)
+		if result.Error != "" {
+			s.store.SetAgentError(taskID, result.Error)
+		}
+	}
+
+	// Convert workflow status to task status
+	newStatus := StatusForResult(result)
+
+	s.logger.Info("updating task status",
+		"task_id", taskID,
+		"new_status", newStatus,
+	)
+
+	// Update task status in local store (for immediate API visibility)
+	s.store.UpdateTaskStatus(taskID, newStatus)
+
+	// Update task status in beads (persistent storage)
+	if updateErr := s.beadsClient.UpdateStatus(ctx, taskID, newStatus); updateErr != nil {
+		s.logger.Error("failed to update task status in beads",
+			"task_id", taskID,
+			"status", newStatus,
+			"error", updateErr,
+		)
+	} else {
+		s.logger.Info("task status updated successfully",
+			"task_id", taskID,
+			"status", newStatus,
+		)
+	}
+}
+
+// StatusForResult is imported from workflow_runner.go but we need it here too
+// for inline access. The workflow_runner.go version handles all cases.
+func statusForWorkflowResult(result *WorkflowResult) types.TaskStatus {
+	if result == nil {
+		return types.TaskStatusOpen
+	}
+
+	switch result.Status {
+	case workflow.WorkflowCompleted:
+		return types.TaskStatusClosed
+	case workflow.WorkflowPendingMerge:
+		return types.TaskStatusPendingMerge
+	case workflow.WorkflowBlocked:
+		return types.TaskStatusBlocked
+	case workflow.WorkflowCancelled:
+		return types.TaskStatusOpen
+	case workflow.WorkflowFailed:
+		return types.TaskStatusBlocked
+	default:
+		return types.TaskStatusOpen
+	}
 }
 
 func (s *Scheduler) handleAgentComplete(result *agent.ProcessResult) {
