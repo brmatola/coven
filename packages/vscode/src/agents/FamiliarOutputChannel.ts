@@ -1,34 +1,63 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { FamiliarManager } from './FamiliarManager';
-import { SessionEvents } from '../shared/types';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient, SSEEvent } from '../daemon/sse';
+
+/**
+ * SSE event data for agent spawned
+ */
+interface AgentSpawnedData {
+  agentId: string;
+  taskId: string;
+}
+
+/**
+ * SSE event data for agent output
+ */
+interface AgentOutputData {
+  agentId: string;
+  taskId: string;
+  chunk: string;
+}
+
+/**
+ * SSE event data for agent completed
+ */
+interface AgentCompletedData {
+  agentId: string;
+  taskId: string;
+  exitCode: number;
+}
+
+/**
+ * SSE event data for agent failed
+ */
+interface AgentFailedData {
+  agentId: string;
+  taskId: string;
+  error: string;
+}
 
 /**
  * Manages VSCode output channels for familiars (AI agents).
- * Creates one output channel per active familiar, streams output in real-time,
- * and persists output to disk for recovery.
+ * Receives output via SSE events from the daemon and displays in output channels.
  */
 export class FamiliarOutputChannel {
   private channels: Map<string, vscode.OutputChannel> = new Map();
-  private outputDir: string;
-  private fileHandles: Map<string, fs.promises.FileHandle> = new Map();
-  private subscriptions: Array<() => void> = [];
+  private activeAgentId: string | null = null;
+  private activeTaskId: string | null = null;
   private taskTitles: Map<string, string> = new Map();
+  private eventHandler: ((event: SSEEvent) => void) | null = null;
 
   constructor(
-    private familiarManager: FamiliarManager,
-    workspaceRoot: string
-  ) {
-    this.outputDir = path.join(workspaceRoot, '.coven', 'output');
-  }
+    private client: DaemonClient,
+    private sseClient: SSEClient
+  ) {}
 
   /**
    * Initialize the output channel manager.
-   * Subscribes to FamiliarManager events.
+   * Subscribes to SSE events.
    */
-  async initialize(): Promise<void> {
-    await this.ensureOutputDir();
+  initialize(): void {
     this.subscribeToEvents();
   }
 
@@ -40,7 +69,7 @@ export class FamiliarOutputChannel {
   }
 
   /**
-   * Get or create an output channel for a familiar.
+   * Get or create an output channel for a task.
    */
   getOrCreateChannel(taskId: string): vscode.OutputChannel {
     let channel = this.channels.get(taskId);
@@ -53,7 +82,7 @@ export class FamiliarOutputChannel {
   }
 
   /**
-   * Show the output channel for a familiar.
+   * Show the output channel for a task.
    */
   showChannel(taskId: string, preserveFocus = true): void {
     const channel = this.channels.get(taskId);
@@ -63,33 +92,41 @@ export class FamiliarOutputChannel {
   }
 
   /**
+   * Append content to the output channel.
+   */
+  append(taskId: string, content: string): void {
+    const channel = this.getOrCreateChannel(taskId);
+    channel.append(content);
+  }
+
+  /**
    * Append a line to the output channel with timestamp.
    */
   appendLine(taskId: string, line: string): void {
     const channel = this.getOrCreateChannel(taskId);
     const timestamp = this.formatTimestamp(new Date());
     channel.appendLine(`[${timestamp}] ${line}`);
-
-    // Also persist to file (fire and forget)
-    void this.persistLine(taskId, timestamp, line);
   }
 
   /**
-   * Load persisted output into a channel (for recovery).
+   * Fetch historical output from daemon and display in channel.
+   * Used when reconnecting to an active agent.
    */
-  async loadPersistedOutput(taskId: string): Promise<void> {
-    const filePath = this.getOutputFilePath(taskId);
+  async fetchHistory(taskId: string): Promise<void> {
     try {
-      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const response = await this.client.getAgentOutput(taskId);
       const channel = this.getOrCreateChannel(taskId);
-      channel.append(content);
+      channel.clear();
+      for (const line of response.output) {
+        channel.appendLine(line);
+      }
     } catch {
-      // File doesn't exist or can't be read - that's okay
+      // Swallow error - agent might not exist or have no output
     }
   }
 
   /**
-   * Clear the output channel for a familiar.
+   * Clear the output channel for a task.
    */
   clearChannel(taskId: string): void {
     const channel = this.channels.get(taskId);
@@ -107,15 +144,13 @@ export class FamiliarOutputChannel {
       channel.dispose();
       this.channels.delete(taskId);
     }
-
-    // Close file handle if open
-    const handle = this.fileHandles.get(taskId);
-    if (handle) {
-      void handle.close();
-      this.fileHandles.delete(taskId);
-    }
-
     this.taskTitles.delete(taskId);
+
+    // Clear active agent if this was it
+    if (this.activeTaskId === taskId) {
+      this.activeAgentId = null;
+      this.activeTaskId = null;
+    }
   }
 
   /**
@@ -133,33 +168,17 @@ export class FamiliarOutputChannel {
   }
 
   /**
-   * Clean up old output files based on retention policy.
+   * Get the currently active task ID.
    */
-  async cleanupOldOutputFiles(retentionDays: number): Promise<number> {
-    const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-    let deletedCount = 0;
+  getActiveTaskId(): string | null {
+    return this.activeTaskId;
+  }
 
-    try {
-      const files = await fs.promises.readdir(this.outputDir);
-      for (const file of files) {
-        if (!file.endsWith('.log')) continue;
-
-        const filePath = path.join(this.outputDir, file);
-        try {
-          const stats = await fs.promises.stat(filePath);
-          if (stats.mtimeMs < cutoffTime) {
-            await fs.promises.unlink(filePath);
-            deletedCount++;
-          }
-        } catch {
-          // Skip files we can't stat or delete
-        }
-      }
-    } catch {
-      // Directory might not exist
-    }
-
-    return deletedCount;
+  /**
+   * Get the currently active agent ID.
+   */
+  getActiveAgentId(): string | null {
+    return this.activeAgentId;
   }
 
   /**
@@ -167,97 +186,94 @@ export class FamiliarOutputChannel {
    */
   dispose(): void {
     // Unsubscribe from events
-    for (const unsubscribe of this.subscriptions) {
-      unsubscribe();
+    if (this.eventHandler) {
+      this.sseClient.off('event', this.eventHandler);
+      this.eventHandler = null;
     }
-    this.subscriptions = [];
 
     // Dispose all channels
     for (const channel of this.channels.values()) {
       channel.dispose();
     }
     this.channels.clear();
-
-    // Close all file handles
-    for (const handle of this.fileHandles.values()) {
-      void handle.close();
-    }
-    this.fileHandles.clear();
-
     this.taskTitles.clear();
+    this.activeAgentId = null;
+    this.activeTaskId = null;
   }
 
   // ============================================================================
   // Private Methods
   // ============================================================================
 
-  private async ensureOutputDir(): Promise<void> {
-    try {
-      await fs.promises.mkdir(this.outputDir, { recursive: true });
-    } catch {
-      // Directory might already exist
+  private subscribeToEvents(): void {
+    this.eventHandler = (event: SSEEvent) => {
+      switch (event.type) {
+        case 'agent.spawned':
+          this.handleAgentSpawned(event.data as AgentSpawnedData);
+          break;
+        case 'agent.output':
+          this.handleAgentOutput(event.data as AgentOutputData);
+          break;
+        case 'agent.completed':
+          this.handleAgentCompleted(event.data as AgentCompletedData);
+          break;
+        case 'agent.failed':
+          this.handleAgentFailed(event.data as AgentFailedData);
+          break;
+      }
+    };
+
+    this.sseClient.on('event', this.eventHandler);
+  }
+
+  private handleAgentSpawned(data: AgentSpawnedData): void {
+    this.activeAgentId = data.agentId;
+    this.activeTaskId = data.taskId;
+
+    const channel = this.getOrCreateChannel(data.taskId);
+    channel.clear();
+    channel.show();
+    this.appendLine(data.taskId, '--- Agent started ---');
+  }
+
+  private handleAgentOutput(data: AgentOutputData): void {
+    // Only append output if it's for the active agent or a known task
+    if (data.taskId && this.channels.has(data.taskId)) {
+      const channel = this.getOrCreateChannel(data.taskId);
+      channel.append(data.chunk);
+    } else if (data.agentId === this.activeAgentId && this.activeTaskId) {
+      const channel = this.getOrCreateChannel(this.activeTaskId);
+      channel.append(data.chunk);
     }
   }
 
-  private subscribeToEvents(): void {
-    // Subscribe to familiar:spawned - create channel
-    const onSpawned = (event: SessionEvents['familiar:spawned']): void => {
-      this.getOrCreateChannel(event.familiar.taskId);
-      this.appendLine(event.familiar.taskId, '--- Agent started ---');
-    };
-    this.familiarManager.on('familiar:spawned', onSpawned);
-    this.subscriptions.push(() => this.familiarManager.off('familiar:spawned', onSpawned));
+  private handleAgentCompleted(data: AgentCompletedData): void {
+    const taskId = data.taskId || this.activeTaskId;
+    if (taskId) {
+      this.appendLine(taskId, `--- Agent completed (exit code: ${data.exitCode}) ---`);
+    }
 
-    // Subscribe to familiar:output - append line
-    const onOutput = (event: SessionEvents['familiar:output']): void => {
-      this.appendLine(event.familiarId, event.line);
-    };
-    this.familiarManager.on('familiar:output', onOutput);
-    this.subscriptions.push(() => this.familiarManager.off('familiar:output', onOutput));
+    // Clear active agent if this was it
+    if (data.agentId === this.activeAgentId) {
+      this.activeAgentId = null;
+      this.activeTaskId = null;
+    }
+  }
 
-    // Subscribe to familiar:terminated - add termination message
-    const onTerminated = (event: SessionEvents['familiar:terminated']): void => {
-      this.appendLine(event.familiarId, `--- Agent terminated: ${event.reason} ---`);
-      // Note: We don't dispose the channel here so user can review output
-    };
-    this.familiarManager.on('familiar:terminated', onTerminated);
-    this.subscriptions.push(() => this.familiarManager.off('familiar:terminated', onTerminated));
+  private handleAgentFailed(data: AgentFailedData): void {
+    const taskId = data.taskId || this.activeTaskId;
+    if (taskId) {
+      this.appendLine(taskId, `--- Agent failed: ${data.error} ---`);
+    }
 
-    // Subscribe to familiar:statusChanged - log status changes
-    const onStatusChanged = (event: SessionEvents['familiar:statusChanged']): void => {
-      const { familiar, previousStatus } = event;
-      this.appendLine(familiar.taskId, `--- Status: ${previousStatus} → ${familiar.status} ---`);
-    };
-    this.familiarManager.on('familiar:statusChanged', onStatusChanged);
-    this.subscriptions.push(() => this.familiarManager.off('familiar:statusChanged', onStatusChanged));
-
-    // Subscribe to familiar:question - log question
-    const onQuestion = (event: SessionEvents['familiar:question']): void => {
-      this.appendLine(event.question.taskId, `--- Question: ${event.question.question} ---`);
-    };
-    this.familiarManager.on('familiar:question', onQuestion);
-    this.subscriptions.push(() => this.familiarManager.off('familiar:question', onQuestion));
+    // Clear active agent if this was it
+    if (data.agentId === this.activeAgentId) {
+      this.activeAgentId = null;
+      this.activeTaskId = null;
+    }
   }
 
   private formatTimestamp(date: Date): string {
     return date.toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
-  }
-
-  private getOutputFilePath(taskId: string): string {
-    // Sanitize taskId to prevent path traversal
-    const safeTaskId = taskId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(this.outputDir, `${safeTaskId}.log`);
-  }
-
-  private async persistLine(taskId: string, timestamp: string, line: string): Promise<void> {
-    const filePath = this.getOutputFilePath(taskId);
-    const formattedLine = `[${timestamp}] ${line}\n`;
-
-    try {
-      // Use appendFile for simplicity (could optimize with file handles for high-frequency writes)
-      await fs.promises.appendFile(filePath, formattedLine);
-    } catch {
-      // Swallow errors - persistence is best-effort
-    }
   }
 }

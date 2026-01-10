@@ -1,72 +1,234 @@
 import * as vscode from 'vscode';
-import { FamiliarManager } from './FamiliarManager';
-import { AgentOrchestrator } from './AgentOrchestrator';
-import { PendingQuestion } from '../shared/types';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient, SSEEvent } from '../daemon/sse';
+import { Question } from '../daemon/types';
+
+/**
+ * SSE event data for questions asked
+ */
+interface QuestionsAskedData {
+  questionId: string;
+  taskId: string;
+  agentId: string;
+  question: string;
+  options?: string[];
+}
+
+/**
+ * SSE event data for questions answered
+ */
+interface QuestionsAnsweredData {
+  questionId: string;
+}
+
+/**
+ * Callback for badge updates
+ */
+export type BadgeUpdateCallback = (count: number) => void;
 
 /**
  * Handles agent questions by presenting UI for user response.
- * Supports suggested responses via quick pick and custom text input.
+ * Receives questions via SSE events and submits answers via daemon API.
  */
 export class QuestionHandler {
+  private pendingQuestions: Map<string, Question> = new Map();
+  private eventHandler: ((event: SSEEvent) => void) | null = null;
+  private onBadgeUpdate: BadgeUpdateCallback | null = null;
+
   constructor(
-    private familiarManager: FamiliarManager,
-    private orchestrator: AgentOrchestrator
+    private client: DaemonClient,
+    private sseClient: SSEClient
   ) {}
 
   /**
-   * Show a response UI for a pending question and send the response to the agent.
+   * Initialize the question handler.
+   * Subscribes to SSE events.
    */
-  async handleQuestion(question: PendingQuestion): Promise<boolean> {
-    const response = await this.promptForResponse(question);
+  initialize(): void {
+    this.subscribeToEvents();
+  }
 
-    if (response === undefined) {
+  /**
+   * Set the callback for badge count updates.
+   */
+  setBadgeUpdateCallback(callback: BadgeUpdateCallback): void {
+    this.onBadgeUpdate = callback;
+  }
+
+  /**
+   * Get all pending questions.
+   */
+  getPendingQuestions(): Question[] {
+    return Array.from(this.pendingQuestions.values());
+  }
+
+  /**
+   * Get the count of pending questions.
+   */
+  getPendingCount(): number {
+    return this.pendingQuestions.size;
+  }
+
+  /**
+   * Check if there's a pending question for a task.
+   */
+  hasQuestion(taskId: string): boolean {
+    for (const question of this.pendingQuestions.values()) {
+      if (question.taskId === taskId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Get a pending question by ID.
+   */
+  getQuestion(questionId: string): Question | undefined {
+    return this.pendingQuestions.get(questionId);
+  }
+
+  /**
+   * Get a pending question by task ID.
+   */
+  getQuestionByTaskId(taskId: string): Question | undefined {
+    for (const question of this.pendingQuestions.values()) {
+      if (question.taskId === taskId) {
+        return question;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Show the answer dialog for a question.
+   */
+  async showAnswerDialog(questionId: string): Promise<boolean> {
+    const question = this.pendingQuestions.get(questionId);
+    if (!question) {
+      await vscode.window.showWarningMessage('Question not found or already answered');
+      return false;
+    }
+
+    const answer = await this.promptForAnswer(question);
+    if (answer === undefined) {
       // User cancelled
       return false;
     }
 
-    // Send response to agent via orchestrator
+    return this.submitAnswer(questionId, answer);
+  }
+
+  /**
+   * Show the answer dialog for a question by task ID.
+   */
+  async showAnswerDialogByTaskId(taskId: string): Promise<boolean> {
+    const question = this.getQuestionByTaskId(taskId);
+    if (!question) {
+      await vscode.window.showWarningMessage('No pending question for this task');
+      return false;
+    }
+
+    return this.showAnswerDialog(question.id);
+  }
+
+  /**
+   * Submit an answer for a question.
+   */
+  async submitAnswer(questionId: string, answer: string): Promise<boolean> {
     try {
-      await this.orchestrator.respondToQuestion(question.taskId, response);
-      // Mark question as answered in familiar manager
-      this.familiarManager.answerQuestion(question.familiarId);
+      await this.client.answerQuestion(questionId, answer);
+      this.pendingQuestions.delete(questionId);
+      this.updateBadge();
       return true;
     } catch (error) {
       await vscode.window.showErrorMessage(
-        `Failed to send response: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to send answer: ${error instanceof Error ? error.message : String(error)}`
       );
       return false;
     }
   }
 
   /**
-   * Show a response UI for a question by task ID.
+   * Dispose of all resources.
    */
-  async handleQuestionByTaskId(taskId: string): Promise<boolean> {
-    const question = this.familiarManager.getQuestion(taskId);
-    if (!question) {
-      await vscode.window.showWarningMessage('No pending question for this task');
-      return false;
+  dispose(): void {
+    if (this.eventHandler) {
+      this.sseClient.off('event', this.eventHandler);
+      this.eventHandler = null;
     }
-    return this.handleQuestion(question);
+    this.pendingQuestions.clear();
+    this.onBadgeUpdate = null;
   }
 
-  /**
-   * Prompt user for a response using quick pick or input box.
-   */
-  private async promptForResponse(question: PendingQuestion): Promise<string | undefined> {
-    // If question has suggested options, show quick pick
+  // ============================================================================
+  // Private Methods
+  // ============================================================================
+
+  private subscribeToEvents(): void {
+    this.eventHandler = (event: SSEEvent) => {
+      switch (event.type) {
+        case 'questions.asked':
+          this.handleQuestionAsked(event.data as QuestionsAskedData);
+          break;
+        case 'questions.answered':
+          this.handleQuestionAnswered(event.data as QuestionsAnsweredData);
+          break;
+      }
+    };
+
+    this.sseClient.on('event', this.eventHandler);
+  }
+
+  private async handleQuestionAsked(data: QuestionsAskedData): Promise<void> {
+    const question: Question = {
+      id: data.questionId,
+      taskId: data.taskId,
+      agentId: data.agentId,
+      text: data.question,
+      options: data.options,
+      askedAt: Date.now(),
+    };
+
+    this.pendingQuestions.set(question.id, question);
+    this.updateBadge();
+
+    // Show notification with question preview
+    const preview =
+      question.text.length > 50 ? question.text.slice(0, 50) + '...' : question.text;
+
+    const action = await vscode.window.showInformationMessage(
+      `Agent question: ${preview}`,
+      'Answer'
+    );
+
+    if (action === 'Answer') {
+      await this.showAnswerDialog(question.id);
+    }
+  }
+
+  private handleQuestionAnswered(data: QuestionsAnsweredData): void {
+    this.pendingQuestions.delete(data.questionId);
+    this.updateBadge();
+  }
+
+  private updateBadge(): void {
+    if (this.onBadgeUpdate) {
+      this.onBadgeUpdate(this.pendingQuestions.size);
+    }
+  }
+
+  private async promptForAnswer(question: Question): Promise<string | undefined> {
+    // If question has options, show quick pick
     if (question.options && question.options.length > 0) {
-      return this.showQuickPickResponse(question);
+      return this.showQuickPickAnswer(question);
     }
 
-    // Otherwise, show input box for free-form response
-    return this.showInputResponse(question);
+    // Otherwise, show input box for free-form answer
+    return this.showInputAnswer(question);
   }
 
-  /**
-   * Show quick pick with suggested responses plus custom input option.
-   */
-  private async showQuickPickResponse(question: PendingQuestion): Promise<string | undefined> {
+  private async showQuickPickAnswer(question: Question): Promise<string | undefined> {
     const items: vscode.QuickPickItem[] = (question.options || []).map((option) => ({
       label: option,
       description: '',
@@ -81,7 +243,7 @@ export class QuestionHandler {
 
     const result = await vscode.window.showQuickPick(items, {
       title: 'Agent Question',
-      placeHolder: question.question,
+      placeHolder: question.text,
       ignoreFocusOut: true,
     });
 
@@ -91,19 +253,16 @@ export class QuestionHandler {
 
     // If custom response selected, show input box
     if (result.label === '$(edit) Custom response...') {
-      return this.showInputResponse(question);
+      return this.showInputAnswer(question);
     }
 
     return result.label;
   }
 
-  /**
-   * Show input box for free-form response.
-   */
-  private async showInputResponse(question: PendingQuestion): Promise<string | undefined> {
+  private async showInputAnswer(question: Question): Promise<string | undefined> {
     return vscode.window.showInputBox({
       title: 'Agent Question',
-      prompt: question.question,
+      prompt: question.text,
       placeHolder: 'Type your response...',
       ignoreFocusOut: true,
       validateInput: (value) => {

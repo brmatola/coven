@@ -1,50 +1,47 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import { FamiliarOutputChannel } from './FamiliarOutputChannel';
-import { FamiliarManager } from './FamiliarManager';
-import { DEFAULT_SESSION_CONFIG, ProcessInfo } from '../shared/types';
+import { DaemonClient } from '../daemon/client';
+import { SSEClient, SSEEvent } from '../daemon/sse';
+import { EventEmitter } from 'events';
 
-// Mock fs module
-vi.mock('fs', () => ({
-  promises: {
-    mkdir: vi.fn().mockResolvedValue(undefined),
-    readdir: vi.fn().mockResolvedValue([]),
-    readFile: vi.fn().mockRejectedValue(new Error('ENOENT')),
-    appendFile: vi.fn().mockResolvedValue(undefined),
-    stat: vi.fn().mockResolvedValue({ mtimeMs: Date.now() }),
-    unlink: vi.fn().mockResolvedValue(undefined),
-  },
+// Mock daemon client
+vi.mock('../daemon/client', () => ({
+  DaemonClient: vi.fn().mockImplementation(() => ({
+    getAgentOutput: vi.fn(),
+  })),
 }));
 
 describe('FamiliarOutputChannel', () => {
-  let familiarManager: FamiliarManager;
+  let mockDaemonClient: { getAgentOutput: ReturnType<typeof vi.fn> };
+  let mockSSEClient: EventEmitter & { connectionState: string };
   let outputChannel: FamiliarOutputChannel;
-  const workspaceRoot = '/test/workspace';
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    familiarManager = new FamiliarManager(workspaceRoot, DEFAULT_SESSION_CONFIG);
-    outputChannel = new FamiliarOutputChannel(familiarManager, workspaceRoot);
-    await outputChannel.initialize();
+
+    mockDaemonClient = {
+      getAgentOutput: vi.fn(),
+    };
+
+    mockSSEClient = Object.assign(new EventEmitter(), {
+      connectionState: 'connected',
+    });
+
+    outputChannel = new FamiliarOutputChannel(
+      mockDaemonClient as unknown as DaemonClient,
+      mockSSEClient as unknown as SSEClient
+    );
   });
 
   afterEach(() => {
     outputChannel.dispose();
-    familiarManager.dispose();
   });
 
   describe('initialization', () => {
-    it('should create output directory on initialize', async () => {
-      const newChannel = new FamiliarOutputChannel(familiarManager, workspaceRoot);
-      await newChannel.initialize();
-
-      expect(fs.promises.mkdir).toHaveBeenCalledWith(
-        path.join(workspaceRoot, '.coven', 'output'),
-        { recursive: true }
-      );
-      newChannel.dispose();
+    it('should subscribe to SSE events on initialize', () => {
+      outputChannel.initialize();
+      expect(mockSSEClient.listenerCount('event')).toBe(1);
     });
   });
 
@@ -119,169 +116,341 @@ describe('FamiliarOutputChannel', () => {
       outputChannel.getOrCreateChannel('task-123');
       expect(outputChannel.hasChannel('task-123')).toBe(true);
     });
+
+    it('should return null for active task ID when no agent is active', () => {
+      expect(outputChannel.getActiveTaskId()).toBe(null);
+    });
+
+    it('should return null for active agent ID when no agent is active', () => {
+      expect(outputChannel.getActiveAgentId()).toBe(null);
+    });
   });
 
   describe('output handling', () => {
+    it('should append content without timestamp', () => {
+      const channel = outputChannel.getOrCreateChannel('task-123');
+      outputChannel.append('task-123', 'Raw content');
+
+      expect(channel.append).toHaveBeenCalledWith('Raw content');
+    });
+
     it('should append line with timestamp', () => {
       const channel = outputChannel.getOrCreateChannel('task-123');
       outputChannel.appendLine('task-123', 'Test output');
 
-      expect(channel.appendLine).toHaveBeenCalledWith(expect.stringMatching(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] Test output$/));
-    });
-
-    it('should persist line to file', async () => {
-      outputChannel.appendLine('task-123', 'Test output');
-
-      // Wait for async persistence
-      await vi.waitFor(() => {
-        expect(fs.promises.appendFile).toHaveBeenCalledWith(
-          path.join(workspaceRoot, '.coven', 'output', 'task-123.log'),
-          expect.stringMatching(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] Test output\n$/)
-        );
-      });
-    });
-
-    it('should sanitize task ID for file path', async () => {
-      outputChannel.appendLine('../../../etc/passwd', 'malicious');
-
-      await vi.waitFor(() => {
-        // ../../../etc/passwd -> _________etc_passwd (9 dots/slashes replaced)
-        expect(fs.promises.appendFile).toHaveBeenCalledWith(
-          path.join(workspaceRoot, '.coven', 'output', '_________etc_passwd.log'),
-          expect.any(String)
-        );
-      });
+      expect(channel.appendLine).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] Test output$/)
+      );
     });
   });
 
-  describe('persistence', () => {
-    it('should load persisted output into channel', async () => {
-      vi.mocked(fs.promises.readFile).mockResolvedValueOnce('Previous output\n');
-      const channel = outputChannel.getOrCreateChannel('task-123');
-
-      await outputChannel.loadPersistedOutput('task-123');
-
-      expect(channel.append).toHaveBeenCalledWith('Previous output\n');
-    });
-
-    it('should handle missing persisted file gracefully', async () => {
-      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(new Error('ENOENT'));
-
-      await expect(outputChannel.loadPersistedOutput('task-123')).resolves.not.toThrow();
-    });
-  });
-
-  describe('cleanup', () => {
-    it('should clean up old output files', async () => {
-      const oldTime = Date.now() - 10 * 24 * 60 * 60 * 1000; // 10 days ago
-      vi.mocked(fs.promises.readdir).mockResolvedValueOnce(['old.log', 'recent.log'] as unknown as fs.Dirent[]);
-      vi.mocked(fs.promises.stat)
-        .mockResolvedValueOnce({ mtimeMs: oldTime } as fs.Stats)
-        .mockResolvedValueOnce({ mtimeMs: Date.now() } as fs.Stats);
-
-      const deletedCount = await outputChannel.cleanupOldOutputFiles(7);
-
-      expect(deletedCount).toBe(1);
-      expect(fs.promises.unlink).toHaveBeenCalledTimes(1);
-    });
-
-    it('should skip non-log files', async () => {
-      vi.mocked(fs.promises.readdir).mockResolvedValueOnce(['file.txt', 'other.json'] as unknown as fs.Dirent[]);
-
-      const deletedCount = await outputChannel.cleanupOldOutputFiles(7);
-
-      expect(deletedCount).toBe(0);
-      expect(fs.promises.stat).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('event subscriptions', () => {
-    const createProcessInfo = (): ProcessInfo => ({
-      pid: 12345,
-      startTime: Date.now(),
-      command: 'claude',
-      worktreePath: '/test/worktree',
-    });
-
-    it('should create channel when familiar spawned', async () => {
-      await familiarManager.initialize();
-      familiarManager.spawnFamiliar('task-123', createProcessInfo());
-
-      expect(outputChannel.hasChannel('task-123')).toBe(true);
-    });
-
-    it('should append start message when familiar spawned', async () => {
-      await familiarManager.initialize();
-      familiarManager.spawnFamiliar('task-123', createProcessInfo());
-
-      const channel = outputChannel.getOrCreateChannel('task-123');
-      expect(channel.appendLine).toHaveBeenCalledWith(
-        expect.stringContaining('--- Agent started ---')
-      );
-    });
-
-    it('should append output when familiar outputs', async () => {
-      await familiarManager.initialize();
-      familiarManager.spawnFamiliar('task-123', createProcessInfo());
-
-      const channel = outputChannel.getOrCreateChannel('task-123');
-      vi.clearAllMocks();
-
-      familiarManager.addOutput('task-123', 'Some output line');
-
-      expect(channel.appendLine).toHaveBeenCalledWith(
-        expect.stringContaining('Some output line')
-      );
-    });
-
-    it('should append termination message when familiar terminated', async () => {
-      await familiarManager.initialize();
-      familiarManager.spawnFamiliar('task-123', createProcessInfo());
-
-      const channel = outputChannel.getOrCreateChannel('task-123');
-      vi.clearAllMocks();
-
-      familiarManager.terminateFamiliar('task-123', 'user requested');
-
-      expect(channel.appendLine).toHaveBeenCalledWith(
-        expect.stringContaining('--- Agent terminated: user requested ---')
-      );
-    });
-
-    it('should append status change message', async () => {
-      await familiarManager.initialize();
-      familiarManager.spawnFamiliar('task-123', createProcessInfo());
-
-      const channel = outputChannel.getOrCreateChannel('task-123');
-      vi.clearAllMocks();
-
-      familiarManager.updateStatus('task-123', 'waiting');
-
-      expect(channel.appendLine).toHaveBeenCalledWith(
-        expect.stringContaining('--- Status: working → waiting ---')
-      );
-    });
-
-    it('should append question message', async () => {
-      await familiarManager.initialize();
-      familiarManager.spawnFamiliar('task-123', createProcessInfo());
-
-      const channel = outputChannel.getOrCreateChannel('task-123');
-      vi.clearAllMocks();
-
-      familiarManager.addQuestion({
-        familiarId: 'task-123',
+  describe('fetch history', () => {
+    it('should fetch and display historical output', async () => {
+      mockDaemonClient.getAgentOutput.mockResolvedValue({
         taskId: 'task-123',
-        question: 'Should I continue?',
+        output: ['Line 1', 'Line 2', 'Line 3'],
+        totalLines: 3,
       });
 
-      expect(channel.appendLine).toHaveBeenCalledWith(
-        expect.stringContaining('--- Question: Should I continue? ---')
-      );
+      const channel = outputChannel.getOrCreateChannel('task-123');
+      await outputChannel.fetchHistory('task-123');
+
+      expect(mockDaemonClient.getAgentOutput).toHaveBeenCalledWith('task-123');
+      expect(channel.clear).toHaveBeenCalled();
+      expect(channel.appendLine).toHaveBeenCalledWith('Line 1');
+      expect(channel.appendLine).toHaveBeenCalledWith('Line 2');
+      expect(channel.appendLine).toHaveBeenCalledWith('Line 3');
+    });
+
+    it('should handle fetch history errors gracefully', async () => {
+      mockDaemonClient.getAgentOutput.mockRejectedValue(new Error('Agent not found'));
+
+      await expect(outputChannel.fetchHistory('task-123')).resolves.not.toThrow();
+    });
+  });
+
+  describe('SSE event handling', () => {
+    beforeEach(() => {
+      outputChannel.initialize();
+    });
+
+    describe('agent.spawned event', () => {
+      it('should create channel and show it when agent spawned', () => {
+        const event: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        expect(outputChannel.hasChannel('task-123')).toBe(true);
+        expect(outputChannel.getActiveAgentId()).toBe('agent-1');
+        expect(outputChannel.getActiveTaskId()).toBe('task-123');
+      });
+
+      it('should clear and show channel on agent spawn', () => {
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        vi.clearAllMocks();
+
+        const event: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        expect(channel.clear).toHaveBeenCalled();
+        expect(channel.show).toHaveBeenCalled();
+      });
+
+      it('should append start message when agent spawned', () => {
+        const event: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        expect(channel.appendLine).toHaveBeenCalledWith(
+          expect.stringContaining('--- Agent started ---')
+        );
+      });
+    });
+
+    describe('agent.output event', () => {
+      it('should append output to channel when task has channel', () => {
+        outputChannel.getOrCreateChannel('task-123');
+
+        const event: SSEEvent = {
+          type: 'agent.output',
+          data: { agentId: 'agent-1', taskId: 'task-123', chunk: 'Hello world' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        expect(channel.append).toHaveBeenCalledWith('Hello world');
+      });
+
+      it('should append output using active agent if no direct task channel', () => {
+        // First spawn an agent to set active agent
+        const spawnEvent: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', spawnEvent);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        vi.clearAllMocks();
+
+        // Now emit output without taskId (will use activeTaskId)
+        const outputEvent: SSEEvent = {
+          type: 'agent.output',
+          data: { agentId: 'agent-1', taskId: '', chunk: 'Output' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', outputEvent);
+
+        // Should use activeTaskId lookup
+        expect(channel.append).toHaveBeenCalledWith('Output');
+      });
+
+      it('should ignore output for unknown agent/task', () => {
+        const event: SSEEvent = {
+          type: 'agent.output',
+          data: { agentId: 'unknown', taskId: '', chunk: 'Hello' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        // No channel should be created
+        expect(vscode.window.createOutputChannel).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('agent.completed event', () => {
+      it('should append completion message to channel', () => {
+        outputChannel.getOrCreateChannel('task-123');
+
+        const event: SSEEvent = {
+          type: 'agent.completed',
+          data: { agentId: 'agent-1', taskId: 'task-123', exitCode: 0 },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        expect(channel.appendLine).toHaveBeenCalledWith(
+          expect.stringContaining('--- Agent completed (exit code: 0) ---')
+        );
+      });
+
+      it('should clear active agent on completion', () => {
+        // Spawn first
+        const spawnEvent: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', spawnEvent);
+
+        expect(outputChannel.getActiveAgentId()).toBe('agent-1');
+
+        // Complete
+        const completeEvent: SSEEvent = {
+          type: 'agent.completed',
+          data: { agentId: 'agent-1', taskId: 'task-123', exitCode: 0 },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', completeEvent);
+
+        expect(outputChannel.getActiveAgentId()).toBe(null);
+        expect(outputChannel.getActiveTaskId()).toBe(null);
+      });
+
+      it('should use activeTaskId when taskId not in event', () => {
+        // Spawn first
+        const spawnEvent: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', spawnEvent);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        vi.clearAllMocks();
+
+        // Complete without taskId
+        const completeEvent: SSEEvent = {
+          type: 'agent.completed',
+          data: { agentId: 'agent-1', taskId: '', exitCode: 0 },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', completeEvent);
+
+        expect(channel.appendLine).toHaveBeenCalledWith(
+          expect.stringContaining('--- Agent completed (exit code: 0) ---')
+        );
+      });
+    });
+
+    describe('agent.failed event', () => {
+      it('should append failure message to channel', () => {
+        outputChannel.getOrCreateChannel('task-123');
+
+        const event: SSEEvent = {
+          type: 'agent.failed',
+          data: { agentId: 'agent-1', taskId: 'task-123', error: 'Process crashed' },
+          timestamp: Date.now(),
+        };
+
+        mockSSEClient.emit('event', event);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        expect(channel.appendLine).toHaveBeenCalledWith(
+          expect.stringContaining('--- Agent failed: Process crashed ---')
+        );
+      });
+
+      it('should clear active agent on failure', () => {
+        // Spawn first
+        const spawnEvent: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', spawnEvent);
+
+        expect(outputChannel.getActiveAgentId()).toBe('agent-1');
+
+        // Fail
+        const failEvent: SSEEvent = {
+          type: 'agent.failed',
+          data: { agentId: 'agent-1', taskId: 'task-123', error: 'Error' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', failEvent);
+
+        expect(outputChannel.getActiveAgentId()).toBe(null);
+        expect(outputChannel.getActiveTaskId()).toBe(null);
+      });
+
+      it('should use activeTaskId when taskId not in event', () => {
+        // Spawn first
+        const spawnEvent: SSEEvent = {
+          type: 'agent.spawned',
+          data: { agentId: 'agent-1', taskId: 'task-123' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', spawnEvent);
+
+        const channel = outputChannel.getOrCreateChannel('task-123');
+        vi.clearAllMocks();
+
+        // Fail without taskId
+        const failEvent: SSEEvent = {
+          type: 'agent.failed',
+          data: { agentId: 'agent-1', taskId: '', error: 'Timeout' },
+          timestamp: Date.now(),
+        };
+        mockSSEClient.emit('event', failEvent);
+
+        expect(channel.appendLine).toHaveBeenCalledWith(
+          expect.stringContaining('--- Agent failed: Timeout ---')
+        );
+      });
+    });
+
+    describe('unhandled events', () => {
+      it('should ignore unknown event types', () => {
+        const event: SSEEvent = {
+          type: 'workflow.started',
+          data: { id: 'workflow-1' },
+          timestamp: Date.now(),
+        };
+
+        expect(() => mockSSEClient.emit('event', event)).not.toThrow();
+      });
+    });
+  });
+
+  describe('dispose channel with active agent', () => {
+    beforeEach(() => {
+      outputChannel.initialize();
+    });
+
+    it('should clear active agent when disposing its channel', () => {
+      const spawnEvent: SSEEvent = {
+        type: 'agent.spawned',
+        data: { agentId: 'agent-1', taskId: 'task-123' },
+        timestamp: Date.now(),
+      };
+      mockSSEClient.emit('event', spawnEvent);
+
+      expect(outputChannel.getActiveAgentId()).toBe('agent-1');
+      expect(outputChannel.getActiveTaskId()).toBe('task-123');
+
+      outputChannel.disposeChannel('task-123');
+
+      expect(outputChannel.getActiveAgentId()).toBe(null);
+      expect(outputChannel.getActiveTaskId()).toBe(null);
     });
   });
 
   describe('dispose', () => {
+    beforeEach(() => {
+      outputChannel.initialize();
+    });
+
     it('should dispose all channels', () => {
       const channel1 = outputChannel.getOrCreateChannel('task-1');
       const channel2 = outputChannel.getOrCreateChannel('task-2');
@@ -292,17 +461,41 @@ describe('FamiliarOutputChannel', () => {
       expect(channel2.dispose).toHaveBeenCalled();
     });
 
-    it('should unsubscribe from events', async () => {
-      await familiarManager.initialize();
+    it('should unsubscribe from events', () => {
       outputChannel.dispose();
 
-      // Spawning after dispose should not create a channel
-      familiarManager.spawnFamiliar('task-123', {
-        pid: 12345,
-        startTime: Date.now(),
-        command: 'claude',
-        worktreePath: '/test/worktree',
-      });
+      expect(mockSSEClient.listenerCount('event')).toBe(0);
+    });
+
+    it('should clear active agent state', () => {
+      const spawnEvent: SSEEvent = {
+        type: 'agent.spawned',
+        data: { agentId: 'agent-1', taskId: 'task-123' },
+        timestamp: Date.now(),
+      };
+      mockSSEClient.emit('event', spawnEvent);
+
+      outputChannel.dispose();
+
+      expect(outputChannel.getActiveAgentId()).toBe(null);
+      expect(outputChannel.getActiveTaskId()).toBe(null);
+    });
+
+    it('should not throw when disposing twice', () => {
+      outputChannel.dispose();
+      expect(() => outputChannel.dispose()).not.toThrow();
+    });
+
+    it('should not receive events after dispose', () => {
+      outputChannel.dispose();
+
+      const event: SSEEvent = {
+        type: 'agent.spawned',
+        data: { agentId: 'agent-1', taskId: 'task-123' },
+        timestamp: Date.now(),
+      };
+
+      mockSSEClient.emit('event', event);
 
       expect(outputChannel.hasChannel('task-123')).toBe(false);
     });
