@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { Task, TaskSource, TaskStatus, TaskPriority } from '../shared/types';
-import { BeadsClient, BeadData, BeadsClientError } from './BeadsClient';
+import { BeadsClient } from './BeadsClient';
 import { DaemonClient } from '../daemon/client';
 import { SSEClient, SSEEvent } from '../daemon/sse';
 import { DaemonTask, DaemonClientError } from '../daemon/types';
@@ -31,71 +31,63 @@ interface TaskEventData {
 }
 
 /**
- * TaskSource implementation for Beads.
- * Uses DaemonClient for reading tasks and SSE for real-time updates.
+ * TaskSource implementation for Beads - Thin Client.
+ *
+ * REQUIRES daemon for all read operations (fetching tasks, watching).
  * Uses BeadsClient (CLI) for write operations until daemon exposes those endpoints.
  */
 export class BeadsTaskSource extends EventEmitter implements TaskSource {
   readonly id = 'beads';
   readonly name = 'Beads Tasks';
 
-  private beadsClient: BeadsClient;
-  private daemonClient: DaemonClient | null = null;
-  private sseClient: SSEClient | null = null;
-  private config: Required<BeadsTaskSourceConfig>;
-  private logger = getLogger();
-  private workspaceRoot: string;
+  private readonly daemonClient: DaemonClient;
+  private readonly sseClient: SSEClient;
+  private readonly beadsClient: BeadsClient;
+  private readonly config: Required<BeadsTaskSourceConfig>;
+  private readonly logger = getLogger();
   private watchInterval: ReturnType<typeof setInterval> | null = null;
   private cachedTasks: Map<string, Task> = new Map();
-  private beadMetadata: Map<string, BeadData> = new Map();
   private eventHandler: ((event: SSEEvent) => void) | null = null;
-  private useDaemon = false;
 
-  constructor(workspaceRoot: string, config: BeadsTaskSourceConfig = {}) {
+  /**
+   * Create a new BeadsTaskSource.
+   * @param daemonClient Required daemon client for task operations
+   * @param sseClient Required SSE client for real-time updates
+   * @param workspaceRoot Workspace root for CLI write operations
+   * @param config Optional configuration
+   */
+  constructor(
+    daemonClient: DaemonClient,
+    sseClient: SSEClient,
+    workspaceRoot: string,
+    config: BeadsTaskSourceConfig = {}
+  ) {
     super();
-    this.workspaceRoot = workspaceRoot;
+    this.daemonClient = daemonClient;
+    this.sseClient = sseClient;
     this.beadsClient = new BeadsClient(workspaceRoot);
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
   /**
-   * Set daemon clients for real-time updates.
-   * When set, the task source will use daemon for fetching and SSE for watching.
-   */
-  setDaemonClients(daemonClient: DaemonClient, sseClient: SSEClient): void {
-    this.daemonClient = daemonClient;
-    this.sseClient = sseClient;
-    this.useDaemon = true;
-  }
-
-  /**
-   * Check if Beads is available and initialized.
+   * Check if daemon is available.
    */
   async isAvailable(): Promise<boolean> {
-    const cliAvailable = await this.beadsClient.isAvailable();
-    if (!cliAvailable) {
+    try {
+      await this.daemonClient.getHealth();
+      return true;
+    } catch {
       return false;
     }
-    return this.beadsClient.isInitialized();
   }
 
   /**
-   * Fetch all ready tasks.
-   * Uses daemon if available, falls back to CLI.
+   * Fetch all tasks from daemon.
    */
   async fetchTasks(): Promise<Task[]> {
     try {
-      let tasks: Task[];
-
-      if (this.useDaemon && this.daemonClient) {
-        // Use daemon API
-        const daemonTasks = await this.daemonClient.getTasks();
-        tasks = daemonTasks.map((dt) => this.daemonTaskToTask(dt));
-      } else {
-        // Fall back to CLI
-        const beads = await this.beadsClient.listReady();
-        tasks = beads.map((bead) => this.beadToTask(bead));
-      }
+      const daemonTasks = await this.daemonClient.getTasks();
+      const tasks = daemonTasks.map((dt) => this.daemonTaskToTask(dt));
 
       // Update cache
       this.cachedTasks.clear();
@@ -105,17 +97,16 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
 
       return tasks;
     } catch (err) {
-      this.logger.error('Failed to fetch tasks', { error: String(err) });
-      if (err instanceof BeadsClientError || err instanceof DaemonClientError) {
-        this.emit('error', { source: 'beads', error: err.message });
+      this.logger.error('Failed to fetch tasks from daemon', { error: String(err) });
+      if (err instanceof DaemonClientError) {
+        this.emit('error', { source: 'daemon', error: err.message });
       }
       throw err;
     }
   }
 
   /**
-   * Sync tasks, detecting changes.
-   * Returns added, updated, and removed tasks.
+   * Sync tasks from daemon, detecting changes.
    */
   async sync(): Promise<{
     added: Task[];
@@ -123,15 +114,8 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
     removed: string[];
   }> {
     const previousIds = new Set(this.cachedTasks.keys());
-    let tasks: Task[];
-
-    if (this.useDaemon && this.daemonClient) {
-      const daemonTasks = await this.daemonClient.getTasks();
-      tasks = daemonTasks.map((dt) => this.daemonTaskToTask(dt));
-    } else {
-      const beads = await this.beadsClient.listReady();
-      tasks = beads.map((bead) => this.beadToTask(bead));
-    }
+    const daemonTasks = await this.daemonClient.getTasks();
+    const tasks = daemonTasks.map((dt) => this.daemonTaskToTask(dt));
 
     const added: Task[] = [];
     const updated: Task[] = [];
@@ -156,7 +140,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
       if (!currentIds.has(id)) {
         removed.push(id);
         this.cachedTasks.delete(id);
-        this.beadMetadata.delete(id);
       }
     }
 
@@ -168,35 +151,30 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
   }
 
   /**
-   * Start watching for changes.
-   * Uses SSE events if daemon is available, falls back to polling.
+   * Start watching for changes via SSE events.
    */
   watch(): void {
     if (this.watchInterval || this.eventHandler) {
       return; // Already watching
     }
 
-    // Use SSE events if daemon is available
-    if (this.useDaemon && this.sseClient) {
-      this.subscribeToSSEEvents();
-      this.logger.info('Started Beads watch via SSE');
-    }
+    // Subscribe to SSE events
+    this.subscribeToSSEEvents();
+    this.logger.info('Started Beads watch via SSE');
 
-    // Polling fallback (catches changes SSE might miss or when daemon unavailable)
+    // Polling as backup (catches any missed SSE events)
     this.watchInterval = setInterval(() => {
       void this.sync().catch((err) => {
         this.logger.warn('Beads sync failed', { error: String(err) });
       });
     }, this.config.syncIntervalMs);
-
-    this.logger.info('Started Beads watch', { intervalMs: this.config.syncIntervalMs });
   }
 
   /**
    * Stop watching for changes.
    */
   stopWatch(): void {
-    if (this.eventHandler && this.sseClient) {
+    if (this.eventHandler) {
       this.sseClient.off('event', this.eventHandler);
       this.eventHandler = null;
     }
@@ -211,8 +189,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    * Subscribe to SSE events for real-time task updates.
    */
   private subscribeToSSEEvents(): void {
-    if (!this.sseClient) return;
-
     this.eventHandler = (event: SSEEvent) => {
       switch (event.type) {
         case 'task.created':
@@ -232,7 +208,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    * Handle SSE task events by refreshing the affected task.
    */
   private handleTaskEvent(data: TaskEventData): void {
-    // Refresh the task from daemon
     void this.refreshTask(data.taskId).catch((err) => {
       this.logger.warn('Failed to refresh task after SSE event', {
         taskId: data.taskId,
@@ -245,11 +220,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    * Refresh a single task from the daemon.
    */
   private async refreshTask(taskId: string): Promise<void> {
-    if (!this.useDaemon || !this.daemonClient) {
-      await this.sync();
-      return;
-    }
-
     try {
       const daemonTask = await this.daemonClient.getTask(taskId);
       const task = this.daemonTaskToTask(daemonTask);
@@ -267,7 +237,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
       if (err instanceof DaemonClientError && err.code === 'task_not_found') {
         const existed = this.cachedTasks.has(taskId);
         this.cachedTasks.delete(taskId);
-        this.beadMetadata.delete(taskId);
         if (existed) {
           this.emit('sync', { added: [], updated: [], removed: [taskId] });
         }
@@ -276,6 +245,10 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
       }
     }
   }
+
+  // ============================================================================
+  // Write Operations (via CLI until daemon supports them)
+  // ============================================================================
 
   /**
    * Called when a task's status changes in Coven.
@@ -319,94 +292,17 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
       return null;
     }
 
-    // Fetch the created task
-    const bead = await this.beadsClient.getTask(result.id);
-    if (!bead) {
-      return null;
-    }
-
-    const task = this.beadToTask(bead);
-    this.cachedTasks.set(task.id, task);
-    this.beadMetadata.set(task.id, bead);
-
-    return task;
-  }
-
-  /**
-   * Get a cached task by ID.
-   */
-  getTask(id: string): Task | undefined {
-    return this.cachedTasks.get(id);
-  }
-
-  /**
-   * Fetch a single task directly.
-   */
-  async fetchTask(id: string): Promise<Task | null> {
+    // Refresh from daemon to get the task
     try {
-      if (this.useDaemon && this.daemonClient) {
-        const daemonTask = await this.daemonClient.getTask(id);
-        const task = this.daemonTaskToTask(daemonTask);
-        this.cachedTasks.set(task.id, task);
-        return task;
-      } else {
-        const bead = await this.beadsClient.getTask(id);
-        if (!bead) return null;
-        const task = this.beadToTask(bead);
-        this.cachedTasks.set(task.id, task);
-        return task;
-      }
-    } catch (err) {
-      this.logger.error('Failed to fetch task', { id, error: String(err) });
-      return null;
+      const daemonTask = await this.daemonClient.getTask(result.id);
+      const task = this.daemonTaskToTask(daemonTask);
+      this.cachedTasks.set(task.id, task);
+      return task;
+    } catch {
+      // Daemon might not have synced yet, trigger a full sync
+      await this.sync();
+      return this.cachedTasks.get(result.id) ?? null;
     }
-  }
-
-  /**
-   * Get all cached tasks.
-   */
-  getTasks(): Task[] {
-    return Array.from(this.cachedTasks.values());
-  }
-
-  /**
-   * Get tasks filtered by status.
-   */
-  getTasksByStatus(status: TaskStatus): Task[] {
-    return this.getTasks().filter((t) => t.status === status);
-  }
-
-  /**
-   * Get tasks grouped by status.
-   */
-  getTasksGroupedByStatus(): Record<TaskStatus, Task[]> {
-    return {
-      ready: this.getTasksByStatus('ready'),
-      working: this.getTasksByStatus('working'),
-      review: this.getTasksByStatus('review'),
-      done: this.getTasksByStatus('done'),
-      blocked: this.getTasksByStatus('blocked'),
-    };
-  }
-
-  /**
-   * Get the next task to work on (highest priority ready task).
-   */
-  getNextTask(): Task | undefined {
-    const priorityOrder: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
-    const readyTasks = this.getTasksByStatus('ready');
-
-    for (const priority of priorityOrder) {
-      const tasksAtPriority = readyTasks
-        .filter((t) => t.priority === priority)
-        .sort((a, b) => a.createdAt - b.createdAt);
-
-      if (tasksAtPriority.length > 0) {
-        return tasksAtPriority[0];
-      }
-    }
-
-    return undefined;
   }
 
   /**
@@ -488,12 +384,10 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    */
   closeTask(taskId: string, reason?: string): Promise<boolean> {
     const taskToRemove = this.cachedTasks.get(taskId);
-    const metadataToRemove = this.beadMetadata.get(taskId);
 
     // Optimistically remove from cache
     if (taskToRemove) {
       this.cachedTasks.delete(taskId);
-      this.beadMetadata.delete(taskId);
       this.emit('sync', { added: [], updated: [], removed: [taskId] });
     }
 
@@ -503,9 +397,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
         // Restore on failure
         if (taskToRemove) {
           this.cachedTasks.set(taskId, taskToRemove);
-          if (metadataToRemove) {
-            this.beadMetadata.set(taskId, metadataToRemove);
-          }
           this.emit('sync', { added: [taskToRemove], updated: [], removed: [] });
         }
         this.emit('error', { source: 'beads', error: `Failed to close task: ${result.error}` });
@@ -518,9 +409,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
       this.logger.error('Failed to close task in Beads', { taskId, error: String(err) });
       if (taskToRemove) {
         this.cachedTasks.set(taskId, taskToRemove);
-        if (metadataToRemove) {
-          this.beadMetadata.set(taskId, metadataToRemove);
-        }
         this.emit('sync', { added: [taskToRemove], updated: [], removed: [] });
       }
       this.emit('error', { source: 'beads', error: `Failed to close task: ${String(err)}` });
@@ -529,13 +417,85 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
     return Promise.resolve(true);
   }
 
+  // ============================================================================
+  // Read Operations (from cache)
+  // ============================================================================
+
+  /**
+   * Get a cached task by ID.
+   */
+  getTask(id: string): Task | undefined {
+    return this.cachedTasks.get(id);
+  }
+
+  /**
+   * Fetch a single task directly from daemon.
+   */
+  async fetchTask(id: string): Promise<Task | null> {
+    try {
+      const daemonTask = await this.daemonClient.getTask(id);
+      const task = this.daemonTaskToTask(daemonTask);
+      this.cachedTasks.set(task.id, task);
+      return task;
+    } catch (err) {
+      this.logger.error('Failed to fetch task from daemon', { id, error: String(err) });
+      return null;
+    }
+  }
+
+  /**
+   * Get all cached tasks.
+   */
+  getTasks(): Task[] {
+    return Array.from(this.cachedTasks.values());
+  }
+
+  /**
+   * Get tasks filtered by status.
+   */
+  getTasksByStatus(status: TaskStatus): Task[] {
+    return this.getTasks().filter((t) => t.status === status);
+  }
+
+  /**
+   * Get tasks grouped by status.
+   */
+  getTasksGroupedByStatus(): Record<TaskStatus, Task[]> {
+    return {
+      ready: this.getTasksByStatus('ready'),
+      working: this.getTasksByStatus('working'),
+      review: this.getTasksByStatus('review'),
+      done: this.getTasksByStatus('done'),
+      blocked: this.getTasksByStatus('blocked'),
+    };
+  }
+
+  /**
+   * Get the next task to work on (highest priority ready task).
+   */
+  getNextTask(): Task | undefined {
+    const priorityOrder: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
+    const readyTasks = this.getTasksByStatus('ready');
+
+    for (const priority of priorityOrder) {
+      const tasksAtPriority = readyTasks
+        .filter((t) => t.priority === priority)
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+      if (tasksAtPriority.length > 0) {
+        return tasksAtPriority[0];
+      }
+    }
+
+    return undefined;
+  }
+
   /**
    * Dispose of resources.
    */
   dispose(): void {
     this.stopWatch();
     this.cachedTasks.clear();
-    this.beadMetadata.clear();
     this.removeAllListeners();
   }
 
@@ -559,62 +519,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
       createdAt: dt.createdAt,
       updatedAt: dt.updatedAt,
     };
-  }
-
-  /**
-   * Convert a Beads bead to a Coven Task.
-   */
-  private beadToTask(bead: BeadData): Task {
-    this.beadMetadata.set(bead.id, bead);
-
-    const { description, acceptanceCriteria } = this.parseDescription(bead.description ?? '');
-    const dependencies = bead.dependencies
-      ?.filter((d) => d.dependency_type === 'blocked-by' && d.status !== 'closed')
-      .map((d) => d.id) ?? [];
-
-    const task: Task = {
-      id: bead.id,
-      title: bead.title,
-      description,
-      status: this.beadStatusToCovenStatus(bead.status, dependencies.length > 0),
-      priority: this.beadPriorityToCovenPriority(bead.priority),
-      dependencies,
-      sourceId: this.id,
-      externalId: bead.id,
-      createdAt: new Date(bead.created_at).getTime(),
-      updatedAt: new Date(bead.updated_at).getTime(),
-    };
-
-    if (acceptanceCriteria !== undefined) {
-      task.acceptanceCriteria = acceptanceCriteria;
-    }
-
-    return task;
-  }
-
-  /**
-   * Parse description to extract acceptance criteria.
-   */
-  private parseDescription(rawDescription: string): {
-    description: string;
-    acceptanceCriteria?: string;
-  } {
-    const patterns = [
-      /^##\s*Acceptance\s*Criteria\s*$/im,
-      /^##\s*AC\s*$/im,
-      /^Acceptance\s*Criteria:\s*$/im,
-    ];
-
-    for (const pattern of patterns) {
-      const match = rawDescription.match(pattern);
-      if (match && match.index !== undefined) {
-        const description = rawDescription.slice(0, match.index).trim();
-        const acceptanceCriteria = rawDescription.slice(match.index + match[0].length).trim();
-        return { description, acceptanceCriteria };
-      }
-    }
-
-    return { description: rawDescription };
   }
 
   /**
@@ -646,27 +550,7 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
   }
 
   /**
-   * Map Beads status to Coven TaskStatus.
-   */
-  private beadStatusToCovenStatus(beadStatus: string, hasBlockers: boolean): TaskStatus {
-    if (hasBlockers) {
-      return 'blocked';
-    }
-
-    switch (beadStatus) {
-      case 'open':
-        return 'ready';
-      case 'in_progress':
-        return 'working';
-      case 'closed':
-        return 'done';
-      default:
-        return 'ready';
-    }
-  }
-
-  /**
-   * Map Coven TaskStatus to Beads status.
+   * Map Coven TaskStatus to Beads status (for CLI writes).
    */
   private covenStatusToBeadStatus(
     status: TaskStatus
@@ -690,24 +574,6 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    * Map daemon priority (0-4) to Coven TaskPriority.
    */
   private daemonPriorityToCovenPriority(priority: number): TaskPriority {
-    switch (priority) {
-      case 0:
-      case 1:
-        return 'critical';
-      case 2:
-        return 'high';
-      case 3:
-        return 'medium';
-      case 4:
-      default:
-        return 'low';
-    }
-  }
-
-  /**
-   * Map Beads priority (0-4) to Coven TaskPriority.
-   */
-  private beadPriorityToCovenPriority(priority: number): TaskPriority {
     switch (priority) {
       case 0:
       case 1:

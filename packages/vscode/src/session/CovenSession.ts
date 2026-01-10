@@ -4,13 +4,8 @@ import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { BeadsTaskSource } from '../tasks/BeadsTaskSource';
 import { FamiliarManager } from '../agents/FamiliarManager';
-import { AgentOrchestrator } from '../agents/AgentOrchestrator';
-import { OrphanRecovery, OrphanState } from './OrphanRecovery';
-import { WorktreeManager } from '../git/WorktreeManager';
-import { Worktree } from '../git/types';
-import { AgentResult } from '../agents/types';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient } from '../daemon/sse';
+import { SSEClient, SSEEvent } from '../daemon/sse';
 import { getLogger } from '../shared/logger';
 import {
   CovenState,
@@ -25,12 +20,14 @@ import {
 } from '../shared/types';
 
 /**
- * Main orchestrator for Coven sessions.
- * Coordinates BeadsTaskSource and FamiliarManager, manages session lifecycle,
- * and provides the unified state interface.
+ * Main orchestrator for Coven sessions - Thin Client.
  *
- * Beads is the single source of truth for tasks - this session just orchestrates.
+ * REQUIRES daemon for all operations. Uses DaemonClient for commands
+ * and SSEClient for real-time updates.
+ *
+ * Beads is the single source of truth for tasks - daemon manages the workflow.
  */
+
 /** Maximum number of activity entries to keep in memory */
 const MAX_ACTIVITY_ENTRIES = 50;
 
@@ -38,53 +35,57 @@ export class CovenSession extends EventEmitter {
   private status: SessionStatus = 'inactive';
   private featureBranch: string | null = null;
   private config: SessionConfig;
-  private beadsTaskSource: BeadsTaskSource;
-  private familiarManager: FamiliarManager;
-  private agentOrchestrator: AgentOrchestrator;
-  private orphanRecovery: OrphanRecovery;
-  private worktreeManager: WorktreeManager;
-  private covenDir: string;
-  private sessionFilePath: string;
-  private configFilePath: string;
+  private readonly daemonClient: DaemonClient;
+  private readonly sseClient: SSEClient;
+  private readonly beadsTaskSource: BeadsTaskSource;
+  private readonly familiarManager: FamiliarManager;
+  private readonly workspaceRoot: string;
+  private readonly covenDir: string;
+  private readonly sessionFilePath: string;
+  private readonly configFilePath: string;
+  private readonly logger = getLogger();
   private configWatcher: fs.FSWatcher | null = null;
   private sessionId: string;
   private activityLog: ActivityEntry[] = [];
-  private daemonClient: DaemonClient | null = null;
-  private sseClient: SSEClient | null = null;
-  private useDaemon = false;
-  private logger = getLogger();
+  private sseEventHandler: ((event: SSEEvent) => void) | null = null;
 
-  constructor(workspaceRoot: string) {
+  /**
+   * Create a new CovenSession.
+   * @param daemonClient Required daemon client for all operations
+   * @param sseClient Required SSE client for real-time updates
+   * @param workspaceRoot Workspace root path
+   */
+  constructor(
+    daemonClient: DaemonClient,
+    sseClient: SSEClient,
+    workspaceRoot: string
+  ) {
     super();
+    this.daemonClient = daemonClient;
+    this.sseClient = sseClient;
+    this.workspaceRoot = workspaceRoot;
     this.covenDir = path.join(workspaceRoot, '.coven');
     this.sessionFilePath = path.join(this.covenDir, 'session.json');
     this.configFilePath = path.join(this.covenDir, 'config.json');
     this.config = { ...DEFAULT_SESSION_CONFIG };
     this.sessionId = randomBytes(8).toString('hex');
-    this.beadsTaskSource = new BeadsTaskSource(workspaceRoot, {
-      syncIntervalMs: this.config.beadsSyncIntervalMs,
-      autoWatch: false, // We'll start watching when session starts
-    });
+
+    // Create BeadsTaskSource with daemon (required)
+    this.beadsTaskSource = new BeadsTaskSource(
+      daemonClient,
+      sseClient,
+      workspaceRoot,
+      {
+        syncIntervalMs: this.config.beadsSyncIntervalMs,
+        autoWatch: false,
+      }
+    );
+
+    // FamiliarManager for tracking agent state (populated via SSE events)
     this.familiarManager = new FamiliarManager(workspaceRoot, this.config);
-    this.worktreeManager = new WorktreeManager(
-      workspaceRoot,
-      this.config.worktreeBasePath,
-      this.sessionId
-    );
-    this.agentOrchestrator = new AgentOrchestrator(
-      this.familiarManager,
-      this.worktreeManager,
-      undefined, // Use default ClaudeAgent
-      this.config
-    );
-    this.orphanRecovery = new OrphanRecovery(
-      workspaceRoot,
-      this.config.worktreeBasePath,
-      this.familiarManager,
-      this.beadsTaskSource
-    );
+
     this.setupEventForwarding();
-    this.setupOrchestratorEventForwarding();
+    this.setupSSEEventHandling();
   }
 
   /**
@@ -94,16 +95,14 @@ export class CovenSession extends EventEmitter {
     await this.ensureCovenDir();
     await this.loadConfig();
     await this.familiarManager.initialize();
-    await this.worktreeManager.initialize();
     await this.loadSession();
     this.watchConfigFile();
-    this.setupWorktreeEventForwarding();
 
-    // Check if Beads is available
-    const beadsAvailable = await this.beadsTaskSource.isAvailable();
-    if (!beadsAvailable) {
+    // Check if daemon is available
+    const daemonAvailable = await this.beadsTaskSource.isAvailable();
+    if (!daemonAvailable) {
       this.emit('session:error', {
-        error: new Error('Beads is not available. Please run `bd init` to initialize Beads.'),
+        error: new Error('Daemon is not available. Please start the coven daemon.'),
       } satisfies SessionEvents['session:error']);
     }
 
@@ -111,71 +110,106 @@ export class CovenSession extends EventEmitter {
     if (this.status === 'active') {
       await this.beadsTaskSource.fetchTasks();
       this.beadsTaskSource.watch();
-      await this.recoverOrphans();
     }
   }
 
   /**
-   * Perform orphan recovery for familiars from a previous session.
-   * Returns the recovery results for each orphaned familiar.
+   * Set up SSE event handling for daemon events.
    */
-  async recoverOrphans(): Promise<OrphanState[]> {
-    this.setupOrphanRecoveryEvents();
-    return this.orphanRecovery.recover();
-  }
-
-  /**
-   * Set up event forwarding from orphan recovery.
-   */
-  private setupOrphanRecoveryEvents(): void {
-    this.orphanRecovery.on('orphan:reconnecting', (event) => {
-      this.emit('orphan:reconnecting', event);
-    });
-    this.orphanRecovery.on('orphan:reconnected', (event) => {
-      this.emit('orphan:reconnected', event);
-      this.emitStateChange();
-    });
-    this.orphanRecovery.on('orphan:needsReview', (event) => {
-      this.emit('orphan:needsReview', event);
-      this.emitStateChange();
-    });
-    this.orphanRecovery.on('orphan:uncommittedChanges', (event) => {
-      this.emit('orphan:uncommittedChanges', event);
-      this.emitStateChange();
-    });
-    this.orphanRecovery.on('orphan:cleanedUp', (event) => {
-      this.emit('orphan:cleanedUp', event);
-    });
-  }
-
-  private setupWorktreeEventForwarding(): void {
-    this.worktreeManager.on('worktree:created', (event: SessionEvents['worktree:created']) => {
-      this.emit('worktree:created', event);
-      this.emitStateChange();
-    });
-    this.worktreeManager.on('worktree:deleted', (event: SessionEvents['worktree:deleted']) => {
-      this.emit('worktree:deleted', event);
-      this.emitStateChange();
-    });
-    this.worktreeManager.on('worktree:merged', (event: SessionEvents['worktree:merged']) => {
-      if (event.result.success) {
-        this.addActivity('merge_success', 'Changes merged successfully', {
-          taskId: event.taskId,
-        });
+  private setupSSEEventHandling(): void {
+    this.sseEventHandler = (event: SSEEvent) => {
+      switch (event.type) {
+        case 'agent.spawned':
+          this.handleAgentSpawned(event.data as { taskId: string; agentId: string });
+          break;
+        case 'agent.output':
+          this.handleAgentOutput(event.data as { taskId: string; output: string });
+          break;
+        case 'agent.completed':
+          this.handleAgentCompleted(event.data as { taskId: string; success: boolean });
+          break;
+        case 'agent.failed':
+          this.handleAgentFailed(event.data as { taskId: string; error: string });
+          break;
+        case 'question.asked':
+          this.handleQuestionAsked(event.data as {
+            questionId: string;
+            taskId: string;
+            question: string;
+          });
+          break;
+        case 'workflow.completed':
+          this.handleWorkflowCompleted(event.data as { workflowId: string; taskId: string });
+          break;
       }
-      this.emit('worktree:merged', event);
-      this.emitStateChange();
+    };
+
+    this.sseClient.on('event', this.sseEventHandler);
+  }
+
+  private handleAgentSpawned(data: { taskId: string; agentId: string }): void {
+    this.addActivity('task_started', `Agent spawned for task`, { taskId: data.taskId });
+    this.emit('familiar:spawned', {
+      familiar: {
+        taskId: data.taskId,
+        status: 'running',
+        pid: 0, // Daemon manages the process
+        startTime: Date.now(),
+        worktreePath: '',
+      },
     });
-    this.worktreeManager.on('worktree:conflict', (event: SessionEvents['worktree:conflict']) => {
-      this.addActivity('conflict', `Merge conflict detected`, {
-        taskId: event.taskId,
-        details: { conflictCount: event.conflicts.length },
-      });
-      this.emit('worktree:conflict', event);
+    this.emitStateChange();
+  }
+
+  private handleAgentOutput(data: { taskId: string; output: string }): void {
+    this.emit('familiar:output', {
+      taskId: data.taskId,
+      output: data.output,
     });
-    this.worktreeManager.on('worktree:orphan', (event: SessionEvents['worktree:orphan']) => {
-      this.emit('worktree:orphan', event);
+  }
+
+  private handleAgentCompleted(data: { taskId: string; success: boolean }): void {
+    if (data.success) {
+      this.addActivity('task_completed', `Task completed successfully`, { taskId: data.taskId });
+    }
+    this.emit('familiar:terminated', {
+      taskId: data.taskId,
+      reason: data.success ? 'completed' : 'failed',
+      exitCode: data.success ? 0 : 1,
     });
+    this.emitStateChange();
+  }
+
+  private handleAgentFailed(data: { taskId: string; error: string }): void {
+    this.addActivity('agent_error', `Agent failed: ${data.error}`, { taskId: data.taskId });
+    this.emit('familiar:terminated', {
+      taskId: data.taskId,
+      reason: 'failed',
+      exitCode: 1,
+    });
+    this.emitStateChange();
+  }
+
+  private handleQuestionAsked(data: { questionId: string; taskId: string; question: string }): void {
+    this.addActivity('agent_question', `Agent needs input: ${data.question.slice(0, 50)}...`, {
+      taskId: data.taskId,
+    });
+    this.emit('familiar:question', {
+      question: {
+        id: data.questionId,
+        taskId: data.taskId,
+        familiarId: data.taskId,
+        question: data.question,
+        timestamp: Date.now(),
+      },
+    });
+    this.emitStateChange();
+  }
+
+  private handleWorkflowCompleted(data: { workflowId: string; taskId: string }): void {
+    this.addActivity('workflow_completed', `Workflow ready for review`, { taskId: data.taskId });
+    this.emit('workflow:completed', { workflowId: data.workflowId, taskId: data.taskId });
+    this.emitStateChange();
   }
 
   /**
@@ -192,7 +226,10 @@ export class CovenSession extends EventEmitter {
     try {
       this.featureBranch = featureBranch;
 
-      // Initial sync from Beads
+      // Start session via daemon
+      await this.daemonClient.startSession({ branch: featureBranch });
+
+      // Initial sync from daemon
       await this.beadsTaskSource.fetchTasks();
 
       // Start watching for changes
@@ -213,7 +250,6 @@ export class CovenSession extends EventEmitter {
 
   /**
    * Pause the current session.
-   * Paused sessions don't spawn new agents but keep existing ones running.
    */
   async pause(): Promise<void> {
     if (this.status !== 'active') {
@@ -243,13 +279,6 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
-   * Check if the session is paused.
-   */
-  isPaused(): boolean {
-    return this.status === 'paused';
-  }
-
-  /**
    * Stop the current session.
    */
   async stop(): Promise<void> {
@@ -261,13 +290,15 @@ export class CovenSession extends EventEmitter {
     this.emit('session:stopping', undefined satisfies SessionEvents['session:stopping']);
 
     try {
-      // Stop watching Beads
+      // Stop session via daemon
+      await this.daemonClient.stopSession();
+
+      // Stop watching
       this.beadsTaskSource.stopWatch();
 
-      // Terminate all familiars
+      // Clear local state
       this.familiarManager.clear();
 
-      // Clear session state
       this.status = 'inactive';
       this.featureBranch = null;
       await this.persistSession();
@@ -282,7 +313,7 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
-   * Manually refresh tasks from Beads.
+   * Manually refresh tasks from daemon.
    */
   async refreshTasks(): Promise<void> {
     await this.beadsTaskSource.sync();
@@ -314,43 +345,6 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
-   * Get the recent activity log entries.
-   */
-  getActivityLog(): ActivityEntry[] {
-    return [...this.activityLog];
-  }
-
-  /**
-   * Add an entry to the activity log.
-   * @param type - The type of activity
-   * @param message - The message describing the activity
-   * @param options - Optional task/familiar IDs and details
-   */
-  private addActivity(
-    type: ActivityType,
-    message: string,
-    options?: { taskId?: string; familiarId?: string; details?: Record<string, unknown> }
-  ): void {
-    const entry: ActivityEntry = {
-      id: `${Date.now()}-${randomBytes(4).toString('hex')}`,
-      type,
-      message,
-      timestamp: Date.now(),
-      taskId: options?.taskId,
-      familiarId: options?.familiarId,
-      details: options?.details,
-    };
-
-    // Add to front (most recent first)
-    this.activityLog.unshift(entry);
-
-    // Trim to max entries
-    if (this.activityLog.length > MAX_ACTIVITY_ENTRIES) {
-      this.activityLog = this.activityLog.slice(0, MAX_ACTIVITY_ENTRIES);
-    }
-  }
-
-  /**
    * Get the current session status.
    */
   getStatus(): SessionStatus {
@@ -372,52 +366,23 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
-   * Update the configuration.
+   * Update configuration.
    */
   async updateConfig(updates: Partial<SessionConfig>): Promise<void> {
-    this.config = { ...this.config, ...updates };
-    this.familiarManager.updateConfig(this.config);
+    const newConfig = { ...this.config, ...updates };
+    // validateSessionConfig normalizes and returns a valid config with defaults
+    this.config = validateSessionConfig(newConfig);
     await this.persistConfig();
-    this.emit('config:changed', { config: this.config } satisfies SessionEvents['config:changed']);
+
+    this.emit('config:changed', { config: this.config });
     this.emitStateChange();
   }
 
   /**
-   * Create a worktree for a task.
-   * Returns the created worktree with its isolated working directory.
+   * Get the recent activity log entries.
    */
-  async createWorktreeForTask(taskId: string): Promise<Worktree> {
-    if (!this.featureBranch) {
-      throw new Error('Cannot create worktree without an active session');
-    }
-    return this.worktreeManager.createForTask(taskId, this.featureBranch);
-  }
-
-  /**
-   * Get the worktree for a task if it exists.
-   */
-  getWorktreeForTask(taskId: string): Worktree | undefined {
-    return this.worktreeManager.getWorktree(taskId);
-  }
-
-  /**
-   * Merge a task's worktree back to the feature branch and clean up.
-   */
-  async mergeAndCleanupWorktree(taskId: string): Promise<void> {
-    if (!this.featureBranch) {
-      throw new Error('Cannot merge worktree without an active session');
-    }
-    const result = await this.worktreeManager.mergeToFeature(taskId, this.featureBranch);
-    if (result.success) {
-      await this.worktreeManager.cleanupForTask(taskId);
-    }
-  }
-
-  /**
-   * Get the WorktreeManager instance.
-   */
-  getWorktreeManager(): WorktreeManager {
-    return this.worktreeManager;
+  getActivityLog(): ActivityEntry[] {
+    return [...this.activityLog];
   }
 
   /**
@@ -435,102 +400,59 @@ export class CovenSession extends EventEmitter {
   }
 
   /**
-   * Get the AgentOrchestrator instance.
+   * Get the DaemonClient instance.
    */
-  getAgentOrchestrator(): AgentOrchestrator {
-    return this.agentOrchestrator;
+  getDaemonClient(): DaemonClient {
+    return this.daemonClient;
   }
 
   /**
-   * Set daemon clients for thin-client operation.
-   * When set, the session will use daemon APIs for task management.
+   * Get the SSEClient instance.
    */
-  setDaemonClients(daemonClient: DaemonClient, sseClient: SSEClient): void {
-    this.daemonClient = daemonClient;
-    this.sseClient = sseClient;
-    this.useDaemon = true;
-
-    // Forward to BeadsTaskSource
-    this.beadsTaskSource.setDaemonClients(daemonClient, sseClient);
-
-    this.logger.info('Daemon clients set for CovenSession');
+  getSSEClient(): SSEClient {
+    return this.sseClient;
   }
 
   /**
-   * Check if daemon mode is enabled.
-   */
-  isDaemonMode(): boolean {
-    return this.useDaemon && this.daemonClient !== null;
-  }
-
-  /**
-   * Spawn an agent to work on a task.
-   * Uses daemon API when available, otherwise creates worktree isolation and starts agent directly.
+   * Spawn an agent to work on a task via daemon.
    */
   async spawnAgentForTask(taskId: string): Promise<void> {
     if (this.status !== 'active') {
       throw new Error('Cannot spawn agent: session not active');
     }
 
-    // In daemon mode, use daemon API to start task
-    if (this.useDaemon && this.daemonClient) {
-      this.logger.info('Starting task via daemon', { taskId });
-      await this.daemonClient.startTask(taskId);
-      return;
-    }
-
-    // Fall back to direct orchestration
-    if (!this.featureBranch) {
-      throw new Error('Cannot spawn agent: no feature branch set');
-    }
-
-    // Get task details - first check cache, then fetch directly
-    let task = this.beadsTaskSource.getTask(taskId);
-    if (!task) {
-      task = await this.beadsTaskSource.fetchTask(taskId);
-    }
-    if (!task) {
-      throw new Error(`Task not found: ${taskId}`);
-    }
-
-    // Spawn via orchestrator
-    await this.agentOrchestrator.spawnForTask({
-      task,
-      featureBranch: this.featureBranch,
-    });
+    this.logger.info('Starting task via daemon', { taskId });
+    await this.daemonClient.startTask(taskId);
   }
 
   /**
-   * Terminate an agent working on a task.
-   * Uses daemon API when available, otherwise terminates via orchestrator.
+   * Terminate an agent working on a task via daemon.
    */
   async terminateAgent(taskId: string, reason = 'user requested'): Promise<void> {
-    if (this.useDaemon && this.daemonClient) {
-      this.logger.info('Killing task via daemon', { taskId, reason });
-      await this.daemonClient.killTask(taskId, reason);
-      return;
-    }
-    await this.agentOrchestrator.terminateAgent(taskId, reason);
+    this.logger.info('Killing task via daemon', { taskId, reason });
+    await this.daemonClient.killTask(taskId, reason);
   }
 
   /**
-   * Respond to an agent question.
-   * Uses daemon API when available, otherwise responds via orchestrator.
+   * Respond to an agent question via daemon.
    */
-  async respondToAgentQuestion(taskId: string, response: string, questionId?: string): Promise<void> {
-    if (this.useDaemon && this.daemonClient && questionId) {
-      this.logger.info('Answering question via daemon', { questionId });
-      await this.daemonClient.answerQuestion(questionId, response);
-      return;
-    }
-    await this.agentOrchestrator.respondToQuestion(taskId, response);
+  async respondToAgentQuestion(questionId: string, response: string): Promise<void> {
+    this.logger.info('Answering question via daemon', { questionId });
+    await this.daemonClient.answerQuestion(questionId, response);
   }
 
   /**
-   * Check if agent provider (Claude) is available.
+   * Check if daemon is available.
    */
-  async isAgentAvailable(): Promise<boolean> {
-    return this.agentOrchestrator.isAvailable();
+  async isDaemonAvailable(): Promise<boolean> {
+    return this.beadsTaskSource.isAvailable();
+  }
+
+  /**
+   * Check if the session is paused.
+   */
+  isPaused(): boolean {
+    return this.status === 'paused';
   }
 
   /**
@@ -548,10 +470,12 @@ export class CovenSession extends EventEmitter {
       this.configWatcher.close();
       this.configWatcher = null;
     }
+    if (this.sseEventHandler) {
+      this.sseClient.off('event', this.sseEventHandler);
+      this.sseEventHandler = null;
+    }
     this.beadsTaskSource.dispose();
     this.familiarManager.dispose();
-    this.agentOrchestrator.dispose();
-    this.worktreeManager.dispose();
     this.removeAllListeners();
   }
 
@@ -564,12 +488,10 @@ export class CovenSession extends EventEmitter {
     this.beadsTaskSource.on(
       'sync',
       (event: { added: Task[]; updated: Task[]; removed: string[] }) => {
-        // Emit individual events for UI updates
         for (const task of event.added) {
           this.emit('task:created', { task } satisfies SessionEvents['task:created']);
         }
         for (const task of event.updated) {
-          // Log activity for significant status changes
           if (task.status === 'working') {
             this.addActivity('task_started', `Started: ${task.title}`, { taskId: task.id });
           } else if (task.status === 'done') {
@@ -595,12 +517,8 @@ export class CovenSession extends EventEmitter {
       } satisfies SessionEvents['session:error']);
     });
 
-    // Forward familiar events
+    // Forward familiar events (for UI state tracking)
     this.familiarManager.on('familiar:spawned', (event: SessionEvents['familiar:spawned']) => {
-      this.addActivity('task_started', `Agent spawned for task`, {
-        taskId: event.familiar.taskId,
-        familiarId: event.familiar.taskId,
-      });
       this.emit('familiar:spawned', event);
       this.emitStateChange();
     });
@@ -616,125 +534,96 @@ export class CovenSession extends EventEmitter {
       this.emitStateChange();
     });
     this.familiarManager.on('familiar:question', (event: SessionEvents['familiar:question']) => {
-      this.addActivity('agent_question', `Agent needs input: ${event.question.question.slice(0, 50)}...`, {
-        taskId: event.question.taskId,
-        familiarId: event.question.familiarId,
-      });
       this.emit('familiar:question', event);
       this.emitStateChange();
     });
   }
 
-  private setupOrchestratorEventForwarding(): void {
-    this.agentOrchestrator.on('agent:spawned', (event: { taskId: string; worktreePath: string }) => {
-      this.emit('agent:spawned', event);
-    });
+  private addActivity(
+    type: ActivityType,
+    message: string,
+    options?: { taskId?: string; familiarId?: string; details?: Record<string, unknown> }
+  ): void {
+    const entry: ActivityEntry = {
+      id: `${Date.now()}-${randomBytes(4).toString('hex')}`,
+      type,
+      message,
+      timestamp: Date.now(),
+      taskId: options?.taskId,
+      familiarId: options?.familiarId,
+      details: options?.details,
+    };
 
-    this.agentOrchestrator.on('agent:complete', (event: { taskId: string; result: AgentResult }) => {
-      this.emit('agent:complete', event);
-      this.emitStateChange();
-    });
+    this.activityLog.unshift(entry);
 
-    this.agentOrchestrator.on('agent:error', (event: { taskId: string; error: Error }) => {
-      this.emit('agent:error', event);
-    });
+    if (this.activityLog.length > MAX_ACTIVITY_ENTRIES) {
+      this.activityLog = this.activityLog.slice(0, MAX_ACTIVITY_ENTRIES);
+    }
+
+    this.emit('activity', { entry });
   }
 
   private emitStateChange(): void {
-    this.emit('state:changed', { state: this.getState() } satisfies SessionEvents['state:changed']);
-    this.persistSession().catch((error: unknown) => {
-      this.emit('session:error', { error: error as Error } satisfies SessionEvents['session:error']);
-    });
+    this.emit('state:changed', { state: this.getState() });
   }
 
   private async ensureCovenDir(): Promise<void> {
-    try {
-      await fs.promises.mkdir(this.covenDir, { recursive: true });
-
-      // Create default .gitignore if it doesn't exist
-      const gitignorePath = path.join(this.covenDir, '.gitignore');
-      try {
-        await fs.promises.access(gitignorePath);
-      } catch {
-        const defaultGitignore = `# Ephemeral runtime state
-familiars/
-logs/
-worktrees/
-
-# Keep config trackable if user wants
-!config.json
-`;
-        await fs.promises.writeFile(gitignorePath, defaultGitignore);
-      }
-    } catch {
-      // Directory might already exist
-    }
+    await fs.promises.mkdir(this.covenDir, { recursive: true });
   }
 
   private async loadConfig(): Promise<void> {
     try {
-      const data = await fs.promises.readFile(this.configFilePath, 'utf-8');
-      const parsed: unknown = JSON.parse(data);
-      // Validate and merge with defaults for any missing/invalid fields
-      this.config = validateSessionConfig(parsed);
+      const configData = await fs.promises.readFile(this.configFilePath, 'utf-8');
+      const loaded = JSON.parse(configData) as Partial<SessionConfig>;
+      this.config = { ...DEFAULT_SESSION_CONFIG, ...loaded };
     } catch {
-      // File doesn't exist, use defaults and create it
-      this.config = { ...DEFAULT_SESSION_CONFIG };
-      await this.persistConfig();
+      // Use default config if file doesn't exist
     }
-    this.familiarManager.updateConfig(this.config);
   }
 
   private async persistConfig(): Promise<void> {
-    try {
-      await fs.promises.writeFile(this.configFilePath, JSON.stringify(this.config, null, 2));
-    } catch (error) {
-      this.emit('session:error', { error: error as Error } satisfies SessionEvents['session:error']);
-    }
-  }
-
-  private watchConfigFile(): void {
-    try {
-      this.configWatcher = fs.watch(this.configFilePath, (eventType) => {
-        if (eventType === 'change') {
-          void this.loadConfig().then(() => {
-            this.emit('config:changed', {
-              config: this.config,
-            } satisfies SessionEvents['config:changed']);
-            this.emitStateChange();
-          });
-        }
-      });
-    } catch {
-      // File might not exist yet, which is fine
-    }
+    await fs.promises.writeFile(
+      this.configFilePath,
+      JSON.stringify(this.config, null, 2)
+    );
   }
 
   private async loadSession(): Promise<void> {
     try {
-      const data = await fs.promises.readFile(this.sessionFilePath, 'utf-8');
-      const session = JSON.parse(data) as { status?: string; featureBranch?: string };
-      if (session.status === 'active' && session.featureBranch) {
-        this.status = 'active';
-        this.featureBranch = session.featureBranch;
-      }
+      const sessionData = await fs.promises.readFile(this.sessionFilePath, 'utf-8');
+      const loaded = JSON.parse(sessionData) as {
+        status: SessionStatus;
+        featureBranch: string | null;
+        sessionId: string;
+      };
+      this.status = loaded.status;
+      this.featureBranch = loaded.featureBranch;
+      this.sessionId = loaded.sessionId;
     } catch {
       // No session to restore
-      this.status = 'inactive';
-      this.featureBranch = null;
     }
   }
 
   private async persistSession(): Promise<void> {
-    const session = {
-      status: this.status,
-      featureBranch: this.featureBranch,
-      timestamp: Date.now(),
-    };
+    await fs.promises.writeFile(
+      this.sessionFilePath,
+      JSON.stringify({
+        status: this.status,
+        featureBranch: this.featureBranch,
+        sessionId: this.sessionId,
+      }, null, 2)
+    );
+  }
+
+  private watchConfigFile(): void {
     try {
-      await fs.promises.writeFile(this.sessionFilePath, JSON.stringify(session, null, 2));
-    } catch (error) {
-      this.emit('session:error', { error: error as Error } satisfies SessionEvents['session:error']);
+      this.configWatcher = fs.watch(this.configFilePath, async () => {
+        await this.loadConfig();
+        this.emit('config:changed', { config: this.config });
+        this.emitStateChange();
+      });
+    } catch {
+      // Config file might not exist yet
     }
   }
 }

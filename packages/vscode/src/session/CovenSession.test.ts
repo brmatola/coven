@@ -6,9 +6,6 @@ import { DEFAULT_SESSION_CONFIG } from '../shared/types';
 import { DaemonClient } from '../daemon/client';
 import { SSEClient } from '../daemon/sse';
 
-vi.mock('../daemon/client');
-vi.mock('../daemon/sse');
-
 // Mock fs
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -26,64 +23,95 @@ vi.mock('fs', async () => {
   };
 });
 
-// Mock GitCLI to prevent real git commands
-vi.mock('../git/GitCLI', () => ({
-  GitCLI: vi.fn().mockImplementation(() => ({
-    listWorktrees: vi.fn().mockResolvedValue([]),
-    createWorktree: vi.fn().mockResolvedValue({
-      path: '/test/worktree',
-      branch: 'test-branch',
-      head: 'abc123',
-      isMain: false,
-      isBare: false,
-    }),
-    deleteWorktree: vi.fn().mockResolvedValue(undefined),
-    merge: vi.fn().mockResolvedValue({ success: true, conflicts: [], mergedFiles: [] }),
-    getStatus: vi.fn().mockResolvedValue({
-      staged: [],
-      modified: [],
-      untracked: [],
-      deleted: [],
-      branch: 'main',
-      ahead: 0,
-      behind: 0,
-    }),
-    isAvailable: vi.fn().mockResolvedValue(true),
-  })),
-  GitCLIError: class extends Error {
-    constructor(message: string, public cause?: unknown) {
-      super(message);
-      this.name = 'GitCLIError';
-    }
-  },
+// Mock logger
+vi.mock('../shared/logger', () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
 }));
 
-// Mock BeadsClient to return empty tasks
-vi.mock('../tasks/BeadsClient', () => ({
-  BeadsClient: vi.fn().mockImplementation(() => ({
+// Mock BeadsTaskSource since it's created internally with daemon
+vi.mock('../tasks/BeadsTaskSource', () => ({
+  BeadsTaskSource: vi.fn().mockImplementation(() => ({
     isAvailable: vi.fn().mockResolvedValue(true),
-    isInitialized: vi.fn().mockResolvedValue(true),
-    listReady: vi.fn().mockResolvedValue([]),
-    getTask: vi.fn().mockResolvedValue(null),
-    createTask: vi.fn().mockResolvedValue({ success: true, id: 'test-id' }),
-    updateStatus: vi.fn().mockResolvedValue({ success: true }),
-    closeTask: vi.fn().mockResolvedValue({ success: true }),
+    fetchTasks: vi.fn().mockResolvedValue([]),
+    sync: vi.fn().mockResolvedValue(undefined),
+    watch: vi.fn(),
+    stopWatch: vi.fn(),
+    dispose: vi.fn(),
+    getTasksGroupedByStatus: vi.fn().mockReturnValue({
+      ready: [],
+      working: [],
+      review: [],
+      done: [],
+      blocked: [],
+    }),
+    on: vi.fn(),
+    emit: vi.fn(),
+    removeAllListeners: vi.fn(),
   })),
-  BeadsClientError: class extends Error {
-    constructor(message: string) {
-      super(message);
-      this.name = 'BeadsClientError';
-    }
-  },
+}));
+
+// Mock FamiliarManager
+vi.mock('../agents/FamiliarManager', () => ({
+  FamiliarManager: vi.fn().mockImplementation(() => ({
+    initialize: vi.fn().mockResolvedValue(undefined),
+    getAllFamiliars: vi.fn().mockReturnValue([]),
+    getPendingQuestions: vi.fn().mockReturnValue([]),
+    clear: vi.fn(),
+    dispose: vi.fn(),
+    spawnFamiliar: vi.fn(),
+    on: vi.fn(),
+    emit: vi.fn(),
+    removeAllListeners: vi.fn(),
+  })),
 }));
 
 describe('CovenSession', () => {
   let session: CovenSession;
   const workspaceRoot = '/test/workspace';
+  let mockDaemonClient: {
+    getHealth: ReturnType<typeof vi.fn>;
+    startSession: ReturnType<typeof vi.fn>;
+    stopSession: ReturnType<typeof vi.fn>;
+    startTask: ReturnType<typeof vi.fn>;
+    killTask: ReturnType<typeof vi.fn>;
+    answerQuestion: ReturnType<typeof vi.fn>;
+    getTasks: ReturnType<typeof vi.fn>;
+    getTask: ReturnType<typeof vi.fn>;
+  };
+  let mockSSEClient: {
+    on: ReturnType<typeof vi.fn>;
+    off: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    session = new CovenSession(workspaceRoot);
+
+    mockDaemonClient = {
+      getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
+      startSession: vi.fn().mockResolvedValue(undefined),
+      stopSession: vi.fn().mockResolvedValue(undefined),
+      startTask: vi.fn().mockResolvedValue(undefined),
+      killTask: vi.fn().mockResolvedValue(undefined),
+      answerQuestion: vi.fn().mockResolvedValue(undefined),
+      getTasks: vi.fn().mockResolvedValue([]),
+      getTask: vi.fn().mockResolvedValue(null),
+    };
+
+    mockSSEClient = {
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+
+    session = new CovenSession(
+      mockDaemonClient as unknown as DaemonClient,
+      mockSSEClient as unknown as SSEClient,
+      workspaceRoot
+    );
     await session.initialize();
   });
 
@@ -116,7 +144,11 @@ describe('CovenSession', () => {
         .mockResolvedValueOnce(JSON.stringify(DEFAULT_SESSION_CONFIG)) // config.json
         .mockResolvedValueOnce(JSON.stringify({ status: 'active', featureBranch: 'feature/test' })); // session.json
 
-      const newSession = new CovenSession(workspaceRoot);
+      const newSession = new CovenSession(
+        mockDaemonClient as unknown as DaemonClient,
+        mockSSEClient as unknown as SSEClient,
+        workspaceRoot
+      );
       await newSession.initialize();
 
       expect(newSession.getStatus()).toBe('active');
@@ -124,12 +156,17 @@ describe('CovenSession', () => {
 
       newSession.dispose();
     });
+
+    it('should set up SSE event handler on construction', () => {
+      expect(mockSSEClient.on).toHaveBeenCalledWith('event', expect.any(Function));
+    });
   });
 
   describe('start', () => {
-    it('should start a session', async () => {
+    it('should start a session via daemon', async () => {
       await session.start('feature/test');
 
+      expect(mockDaemonClient.startSession).toHaveBeenCalledWith({ branch: 'feature/test' });
       expect(session.getStatus()).toBe('active');
       expect(session.getFeatureBranch()).toBe('feature/test');
       expect(session.isActive()).toBe(true);
@@ -161,6 +198,14 @@ describe('CovenSession', () => {
         path.join(workspaceRoot, '.coven', 'session.json'),
         expect.stringContaining('feature/test')
       );
+    });
+
+    it('should revert status if daemon start fails', async () => {
+      mockDaemonClient.startSession.mockRejectedValueOnce(new Error('Daemon error'));
+
+      await expect(session.start('feature/test')).rejects.toThrow('Daemon error');
+      expect(session.getStatus()).toBe('inactive');
+      expect(session.getFeatureBranch()).toBeNull();
     });
   });
 
@@ -231,10 +276,11 @@ describe('CovenSession', () => {
   });
 
   describe('stop', () => {
-    it('should stop an active session', async () => {
+    it('should stop an active session via daemon', async () => {
       await session.start('feature/test');
       await session.stop();
 
+      expect(mockDaemonClient.stopSession).toHaveBeenCalled();
       expect(session.getStatus()).toBe('inactive');
       expect(session.getFeatureBranch()).toBeNull();
       expect(session.isActive()).toBe(false);
@@ -245,6 +291,7 @@ describe('CovenSession', () => {
       await session.pause();
       await session.stop();
 
+      expect(mockDaemonClient.stopSession).toHaveBeenCalled();
       expect(session.getStatus()).toBe('inactive');
       expect(session.getFeatureBranch()).toBeNull();
     });
@@ -270,6 +317,7 @@ describe('CovenSession', () => {
 
       await session.stop();
 
+      expect(mockDaemonClient.stopSession).not.toHaveBeenCalled();
       expect(stoppingHandler).not.toHaveBeenCalled();
     });
   });
@@ -340,127 +388,56 @@ describe('CovenSession', () => {
       const familiarManager = session.getFamiliarManager();
       expect(familiarManager).toBeDefined();
     });
-  });
 
-  describe('event forwarding', () => {
-    it('should forward familiar:spawned event', () => {
-      const handler = vi.fn();
-      session.on('familiar:spawned', handler);
+    it('should provide access to DaemonClient', () => {
+      const daemonClient = session.getDaemonClient();
+      expect(daemonClient).toBe(mockDaemonClient);
+    });
 
-      session.getFamiliarManager().spawnFamiliar('task-1', {
-        pid: 12345,
-        startTime: Date.now(),
-        command: 'claude',
-        worktreePath: '/test',
-      });
-
-      expect(handler).toHaveBeenCalled();
+    it('should provide access to SSEClient', () => {
+      const sseClient = session.getSSEClient();
+      expect(sseClient).toBe(mockSSEClient);
     });
   });
 
-  describe('dispose', () => {
-    it('should dispose all resources', () => {
-      const beadsTaskSource = session.getBeadsTaskSource();
-      const familiarManager = session.getFamiliarManager();
-
-      session.dispose();
-
-      // Verify that event listeners are removed by checking no error when emitting
-      expect(() => beadsTaskSource.emit('test', {})).not.toThrow();
-      expect(() => familiarManager.emit('test', {})).not.toThrow();
-    });
-  });
-
-  describe('daemon integration', () => {
-    let mockDaemonClient: {
-      startTask: ReturnType<typeof vi.fn>;
-      killTask: ReturnType<typeof vi.fn>;
-      answerQuestion: ReturnType<typeof vi.fn>;
-      getTasks: ReturnType<typeof vi.fn>;
-      getTask: ReturnType<typeof vi.fn>;
-    };
-    let mockSSEClient: {
-      on: ReturnType<typeof vi.fn>;
-      off: ReturnType<typeof vi.fn>;
-    };
-
-    beforeEach(() => {
-      mockDaemonClient = {
-        startTask: vi.fn().mockResolvedValue(undefined),
-        killTask: vi.fn().mockResolvedValue(undefined),
-        answerQuestion: vi.fn().mockResolvedValue(undefined),
-        getTasks: vi.fn().mockResolvedValue([]),
-        getTask: vi.fn().mockResolvedValue(null),
-      };
-      mockSSEClient = {
-        on: vi.fn(),
-        off: vi.fn(),
-      };
-    });
-
-    it('should not be in daemon mode by default', () => {
-      expect(session.isDaemonMode()).toBe(false);
-    });
-
-    it('should enable daemon mode when clients are set', () => {
-      session.setDaemonClients(
-        mockDaemonClient as unknown as DaemonClient,
-        mockSSEClient as unknown as SSEClient
-      );
-
-      expect(session.isDaemonMode()).toBe(true);
-    });
-
-    it('should use daemon to start task when in daemon mode', async () => {
-      session.setDaemonClients(
-        mockDaemonClient as unknown as DaemonClient,
-        mockSSEClient as unknown as SSEClient
-      );
-
-      // Start session first
+  describe('daemon operations', () => {
+    it('should use daemon to start task', async () => {
       await session.start('feature/test');
-
-      // Spawn agent for task
       await session.spawnAgentForTask('task-1');
 
       expect(mockDaemonClient.startTask).toHaveBeenCalledWith('task-1');
     });
 
-    it('should use daemon to kill task when in daemon mode', async () => {
-      session.setDaemonClients(
-        mockDaemonClient as unknown as DaemonClient,
-        mockSSEClient as unknown as SSEClient
+    it('should throw if spawning agent when session not active', async () => {
+      await expect(session.spawnAgentForTask('task-1')).rejects.toThrow(
+        'Cannot spawn agent: session not active'
       );
+    });
 
+    it('should use daemon to kill task', async () => {
       await session.terminateAgent('task-1', 'test reason');
 
       expect(mockDaemonClient.killTask).toHaveBeenCalledWith('task-1', 'test reason');
     });
 
-    it('should use daemon to answer question when in daemon mode', async () => {
-      session.setDaemonClients(
-        mockDaemonClient as unknown as DaemonClient,
-        mockSSEClient as unknown as SSEClient
-      );
-
-      await session.respondToAgentQuestion('task-1', 'yes', 'question-1');
+    it('should use daemon to answer question', async () => {
+      await session.respondToAgentQuestion('question-1', 'yes');
 
       expect(mockDaemonClient.answerQuestion).toHaveBeenCalledWith('question-1', 'yes');
     });
 
-    it('should forward daemon clients to BeadsTaskSource', () => {
-      const beadsTaskSource = session.getBeadsTaskSource();
-      const setDaemonClientsSpy = vi.spyOn(beadsTaskSource, 'setDaemonClients');
+    it('should check daemon availability', async () => {
+      const available = await session.isDaemonAvailable();
+      expect(available).toBe(true);
+    });
+  });
 
-      session.setDaemonClients(
-        mockDaemonClient as unknown as DaemonClient,
-        mockSSEClient as unknown as SSEClient
-      );
+  describe('dispose', () => {
+    it('should dispose all resources', () => {
+      session.dispose();
 
-      expect(setDaemonClientsSpy).toHaveBeenCalledWith(
-        mockDaemonClient,
-        mockSSEClient
-      );
+      // Verify SSE handler is removed
+      expect(mockSSEClient.off).toHaveBeenCalledWith('event', expect.any(Function));
     });
   });
 });
