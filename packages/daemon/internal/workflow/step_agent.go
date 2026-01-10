@@ -32,7 +32,7 @@ type AgentOutput struct {
 type AgentExecutor struct {
 	runner      AgentRunner
 	spellLoader *spell.Loader
-	renderer    *spell.Renderer
+	renderer    *spell.PartialRenderer
 }
 
 // NewAgentExecutor creates a new agent executor.
@@ -40,7 +40,7 @@ func NewAgentExecutor(spellLoader *spell.Loader, runner AgentRunner) *AgentExecu
 	return &AgentExecutor{
 		runner:      runner,
 		spellLoader: spellLoader,
-		renderer:    spell.NewRenderer(),
+		renderer:    spell.NewPartialRenderer(spellLoader),
 	}
 }
 
