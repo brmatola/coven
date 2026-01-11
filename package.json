@@ -1,19 +1,25 @@
 {
-  "name": "coven",
+  "name": "coven-monorepo",
   "private": true,
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @coven/vscode",
+    "build": "cd packages/vscode && npm run build",
     "build:daemon": "cd packages/daemon && make build",
-    "test": "npm run test -w @coven/vscode",
-    "test:daemon": "cd packages/daemon && make test",
+
+    "test:vscode": "cd packages/vscode && npm test",
+    "test:vscode:e2e": "cd packages/vscode && npm run test:e2e",
+    "test:daemon": "cd packages/daemon && go test ./...",
     "test:daemon:e2e": "npm run build:daemon && go test -tags=e2e -v ./e2e/daemon/...",
-    "test:e2e": "npm run test:e2e -w @coven/vscode",
-    "test:all": "npm run test && npm run test:daemon && npm run test:daemon:e2e",
-    "lint": "npm run lint -w @coven/vscode",
-    "format": "npm run format -w @coven/vscode",
-    "dogfood": "npm run dogfood -w @coven/vscode"
+
+    "test:unit": "npm run test:vscode && npm run test:daemon",
+    "test:e2e": "npm run test:vscode:e2e && npm run test:daemon:e2e",
+    "test": "npm run test:unit",
+    "test:all": "npm run test:unit && npm run test:e2e",
+
+    "lint": "cd packages/vscode && npm run lint",
+    "format": "cd packages/vscode && npm run format",
+    "dogfood": "cd packages/vscode && npm run dogfood"
   }
 }
