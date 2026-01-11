@@ -28,8 +28,8 @@ export interface DaemonHelperOptions {
  * Find the daemon binary path from the repo root.
  */
 function findDaemonBinary(): string {
-  // Go up from e2e/vscode/helpers to repo root
-  const repoRoot = path.resolve(__dirname, '..', '..', '..');
+  // Go up from e2e/vscode/out/helpers to repo root (4 levels)
+  const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
   const daemonBin = path.join(repoRoot, 'build', 'covend');
 
   if (!fs.existsSync(daemonBin)) {
@@ -169,7 +169,7 @@ export class DaemonHelper {
   async isHealthy(): Promise<boolean> {
     try {
       const response = await this.sendRequest<{ status: string }>('GET', '/health');
-      return response.status === 'ok';
+      return response.status === 'healthy';
     } catch {
       return false;
     }

@@ -10,9 +10,10 @@ import { execSync } from 'child_process';
 
 /**
  * Get the repository root directory.
+ * From e2e/vscode/out/fixtures, we go up 4 levels to reach repo root.
  */
 function getRepoRoot(): string {
-  return path.resolve(__dirname, '..', '..', '..');
+  return path.resolve(__dirname, '..', '..', '..', '..');
 }
 
 /**
@@ -41,7 +42,8 @@ export function ensureMockAgentBuilt(): string {
   const repoRoot = getRepoRoot();
   console.log('Building mock agent...');
   try {
-    execSync('make build-mockagent', {
+    // Use 'make build' which builds both daemon and mockagent
+    execSync('make build', {
       cwd: repoRoot,
       stdio: 'pipe',
     });
@@ -267,8 +269,12 @@ export function createWorkspace(
       const covenDir = path.join(tempDir, '.coven');
       fs.mkdirSync(covenDir, { recursive: true });
 
-      // Build config content
-      let configContent = 'version: 1\nworkspace: .\n';
+      // Build config object - daemon expects JSON format
+      const daemonConfig: Record<string, unknown> = {
+        poll_interval: 1,
+        max_concurrent_agents: 1,
+        log_level: 'info',
+      };
 
       // Set up mock agent if configured
       if (config.mockAgent) {
@@ -292,10 +298,11 @@ export function createWorkspace(
           if (opts.question) agentCommand += ' -question';
         }
 
-        configContent += `agent_command: ${agentCommand}\n`;
+        daemonConfig.agent_command = agentCommand;
       }
 
-      fs.writeFileSync(path.join(covenDir, 'config.yaml'), configContent);
+      // Write config.json (daemon expects JSON, not YAML)
+      fs.writeFileSync(path.join(covenDir, 'config.json'), JSON.stringify(daemonConfig, null, 2));
 
       if (config.grimoire) {
         const grimoireDir = path.join(covenDir, 'grimoires');
@@ -304,22 +311,28 @@ export function createWorkspace(
       }
     }
 
-    // Create .beads directory
+    // Initialize beads
     if (config.beads) {
-      const beadsDir = path.join(tempDir, '.beads');
-      fs.mkdirSync(beadsDir, { recursive: true });
+      // Try to initialize beads properly using bd CLI
+      try {
+        execSync('bd init', { cwd: tempDir, stdio: 'pipe' });
 
-      // Write config
-      fs.writeFileSync(
-        path.join(beadsDir, 'config.yaml'),
-        'version: 1\nproject: test-project\n'
-      );
-
-      // Write sample beads
-      fs.writeFileSync(path.join(beadsDir, 'beads-test-pending.yaml'), sampleBeads.pending);
-      fs.writeFileSync(path.join(beadsDir, 'beads-test-active.yaml'), sampleBeads.active);
-      fs.writeFileSync(path.join(beadsDir, 'beads-test-completed.yaml'), sampleBeads.completed);
-      fs.writeFileSync(path.join(beadsDir, 'beads-test-blocked.yaml'), sampleBeads.blocked);
+        // Create sample tasks using bd create
+        execSync('bd create --title="Test pending task" --type=task --priority=2', {
+          cwd: tempDir,
+          stdio: 'pipe',
+        });
+      } catch {
+        // bd CLI not available - create minimal .beads directory
+        // Note: This won't work with daemon's beads poller, but allows basic tests
+        console.log('bd CLI not available - creating minimal beads directory');
+        const beadsDir = path.join(tempDir, '.beads');
+        fs.mkdirSync(beadsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(beadsDir, 'config.yaml'),
+          'version: 1\nproject: test-project\n'
+        );
+      }
     }
 
     // Create additional files
@@ -380,16 +393,57 @@ function cleanupWorkspace(workspacePath: string, retries = 3): void {
 }
 
 /**
- * Create a bead file in a workspace.
+ * Create a bead/task in a workspace with a specific ID.
+ *
+ * Appends directly to issues.jsonl to ensure the ID is exactly as specified.
+ * This is necessary for tests that need to reference the task by ID.
  */
 export function createBead(
   workspacePath: string,
   id: string,
   content: string
 ): void {
+  // Extract fields from YAML-like content
+  const titleMatch = content.match(/title:\s*["']?([^"'\n]+)/);
+  const descMatch = content.match(/description:\s*["']?([^"'\n]+)/);
+  const statusMatch = content.match(/status:\s*(\w+)/);
+  const priorityMatch = content.match(/priority:\s*(\d+)/);
+  const typeMatch = content.match(/type:\s*(\w+)/);
+
+  const title = titleMatch ? titleMatch[1].trim() : id;
+  const description = descMatch ? descMatch[1].trim() : '';
+  const status = statusMatch ? statusMatch[1] : 'open';
+  const priority = priorityMatch ? parseInt(priorityMatch[1], 10) : 2;
+  const issueType = typeMatch ? typeMatch[1] : 'task';
+
   const beadsDir = path.join(workspacePath, '.beads');
-  fs.mkdirSync(beadsDir, { recursive: true });
-  fs.writeFileSync(path.join(beadsDir, `${id}.yaml`), content);
+  const issuesPath = path.join(beadsDir, 'issues.jsonl');
+
+  // Create .beads directory if needed
+  if (!fs.existsSync(beadsDir)) {
+    fs.mkdirSync(beadsDir, { recursive: true });
+    // Create config.yaml if it doesn't exist
+    const configPath = path.join(beadsDir, 'config.yaml');
+    if (!fs.existsSync(configPath)) {
+      fs.writeFileSync(configPath, 'version: 1\nproject: test-project\n');
+    }
+  }
+
+  // Create the issue object matching beads JSONL format
+  const issue = {
+    id,
+    title,
+    description,
+    status,
+    priority,
+    issue_type: issueType,
+    created_at: new Date().toISOString(),
+    created_by: 'test',
+    updated_at: new Date().toISOString(),
+  };
+
+  // Append to issues.jsonl
+  fs.appendFileSync(issuesPath, JSON.stringify(issue) + '\n');
 }
 
 /**

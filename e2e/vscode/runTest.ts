@@ -91,7 +91,8 @@ function cleanupWorkspace(workspacePath: string, retries = 3): void {
 
 async function main(): Promise<void> {
   // The extension root (where package.json is)
-  const extensionDevelopmentPath = path.resolve(__dirname, '../../packages/vscode');
+  // From e2e/vscode/out/runTest.js, we need to go up to e2e/vscode, then ../../packages/vscode
+  const extensionDevelopmentPath = path.resolve(__dirname, '../../../packages/vscode');
 
   // The compiled test runner (index.js in suites)
   const extensionTestsPath = path.resolve(__dirname, './suites/index.js');
@@ -115,7 +116,10 @@ async function main(): Promise<void> {
       extensionTestsPath,
       launchArgs: [
         workspacePath,
-        '--disable-extensions',
+        // Disable workspace trust prompt
+        '--disable-workspace-trust',
+        // Skip telemetry
+        '--disable-telemetry',
       ],
       extensionTestsEnv: {
         COVEN_E2E_WORKSPACE: workspacePath,

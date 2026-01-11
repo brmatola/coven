@@ -33,6 +33,7 @@ import {
   approveWorkflow,
   rejectWorkflow,
 } from './commands/workflow';
+import { registerSetupCommands } from './setup/commands';
 
 // Global state
 let workflowProvider: WorkflowTreeProvider | null = null;
@@ -105,6 +106,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.rejectMerge', rejectMerge),
     vscode.commands.registerCommand('coven.showWorkflowDetail', showWorkflowDetail)
   );
+
+  // Register setup commands (coven.initGit, coven.initBeads, etc.)
+  registerSetupCommands(context);
 
   // Check workspace initialization status
   if (workspaceRoot) {
