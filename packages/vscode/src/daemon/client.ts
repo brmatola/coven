@@ -165,7 +165,8 @@ export class DaemonClient {
    * Get all tasks.
    */
   async getTasks(): Promise<DaemonTask[]> {
-    return this.get<DaemonTask[]>('/tasks');
+    const response = await this.get<{ tasks: DaemonTask[]; count: number }>('/tasks');
+    return response.tasks;
   }
 
   /**

@@ -202,7 +202,8 @@ describe('DaemonClient', () => {
         },
       ];
 
-      setupMockRequest(200, tasks);
+      // Daemon returns { tasks: [...], count: N }
+      setupMockRequest(200, { tasks, count: tasks.length });
 
       const client = new DaemonClient('/test.sock');
       const result = await client.getTasks();
