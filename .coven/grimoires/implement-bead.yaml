@@ -1,0 +1,93 @@
+name: implement-bead
+description: "Full implementation cycle for one bead - implement, test, review, fix, merge"
+timeout: 2h
+
+steps:
+  - name: implement
+    type: agent
+    spell: implement
+    timeout: 30m
+    output: implementation
+
+  - name: quality-loop
+    type: loop
+    max_iterations: 3
+    on_max_iterations: block
+    steps:
+      - name: run-tests
+        type: script
+        # Detect and run tests based on project type
+        command: |
+          if [ -f "go.mod" ]; then
+            go test ./...
+          elif [ -f "package.json" ]; then
+            npm test
+          elif [ -f "Cargo.toml" ]; then
+            cargo test
+          elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+            python -m pytest
+          elif [ -f "Makefile" ] && grep -q "^test:" Makefile; then
+            make test
+          else
+            echo "No test runner detected, skipping tests"
+            exit 0
+          fi
+        timeout: 10m
+        on_fail: continue
+
+      - name: fix-tests
+        type: agent
+        spell: fix-tests
+        when: '{{eq .run_tests.status "failed"}}'
+        timeout: 15m
+        input:
+          test_output: "{{.run_tests.output}}"
+        output: test_fixes
+
+      - name: review
+        type: agent
+        spell: review
+        timeout: 15m
+        output: findings
+
+      - name: check-actionable
+        type: agent
+        spell: is-actionable
+        timeout: 5m
+        input:
+          findings: "{{.findings.outputs.issues}}"
+        output: actionable
+
+      - name: apply-fixes
+        type: agent
+        spell: apply-review-fixes
+        when: '{{.actionable.outputs.needs_fixes}}'
+        timeout: 15m
+        input:
+          issues: "{{.findings.outputs.issues}}"
+        output: review_fixes
+
+      - name: final-test
+        type: script
+        # Detect and run tests based on project type
+        command: |
+          if [ -f "go.mod" ]; then
+            go test ./...
+          elif [ -f "package.json" ]; then
+            npm test
+          elif [ -f "Cargo.toml" ]; then
+            cargo test
+          elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+            python -m pytest
+          elif [ -f "Makefile" ] && grep -q "^test:" Makefile; then
+            make test
+          else
+            echo "No test runner detected"
+            exit 0
+          fi
+        timeout: 10m
+        on_success: exit_loop
+
+  - name: merge-changes
+    type: merge
+    require_review: true

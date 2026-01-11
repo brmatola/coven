@@ -14,6 +14,14 @@ REPO_ROOT="$(cd "$VSCODE_DIR/../.." && pwd)"
 SOCKET="$REPO_ROOT/.coven/covend.sock"
 VSIX="$VSCODE_DIR/coven-0.0.1.vsix"
 
+# Detect platform
+PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+if [ "$ARCH" = "x86_64" ]; then
+  ARCH="amd64"
+fi
+PLATFORM_DIR="${PLATFORM}-${ARCH}"
+
 echo "==> Building daemon..."
 cd "$REPO_ROOT" && make build
 
@@ -32,6 +40,11 @@ fi
 echo "==> Building extension..."
 cd "$VSCODE_DIR"
 npm run build
+
+echo "==> Bundling daemon binary (${PLATFORM_DIR})..."
+mkdir -p "$VSCODE_DIR/bin/${PLATFORM_DIR}"
+cp "$REPO_ROOT/packages/daemon/bin/covend" "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
+chmod +x "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
 
 echo "==> Packaging VSIX..."
 npm run package
