@@ -1,0 +1,331 @@
+:root {
+  --vscode-font-family: var(--vscode-editor-font-family, system-ui, -apple-system, sans-serif);
+  --vscode-font-size: var(--vscode-editor-font-size, 13px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background-color: var(--vscode-editor-background);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--vscode-progressBar-background);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.workflow-container {
+  padding: 16px;
+  max-width: 800px;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background-color: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+  border-radius: 4px;
+}
+
+.error-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background-color: var(--vscode-errorForeground);
+  color: var(--vscode-editor-background);
+  border-radius: 50%;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.workflow-header {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--vscode-widget-border);
+}
+
+.workflow-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.grimoire-name {
+  font-weight: 600;
+  font-size: 1.1em;
+}
+
+.workflow-id {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.workflow-time {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.status-idle {
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.status-running {
+  background-color: var(--vscode-progressBar-background);
+  color: var(--vscode-editor-background);
+}
+
+.status-paused {
+  background-color: var(--vscode-editorWarning-foreground);
+  color: var(--vscode-editor-background);
+}
+
+.status-completed {
+  background-color: var(--vscode-testing-iconPassed);
+  color: var(--vscode-editor-background);
+}
+
+.status-failed,
+.status-blocked {
+  background-color: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+}
+
+.status-pending_merge {
+  background-color: var(--vscode-editorInfo-foreground);
+  color: var(--vscode-editor-background);
+}
+
+.actions-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.no-actions {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 3px;
+  font-size: var(--vscode-font-size);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+button:active {
+  opacity: 0.8;
+}
+
+button.primary {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+button.danger {
+  background-color: var(--vscode-errorForeground);
+  color: var(--vscode-editor-background);
+}
+
+.steps-section h2,
+.output-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.no-steps {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  padding: 12px;
+}
+
+.steps-list {
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-widget-border);
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.step-item:last-child {
+  border-bottom: none;
+}
+
+.step-item:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.step-item.selected {
+  background-color: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+.step-icon {
+  width: 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.step-status-pending .step-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+.step-status-running .step-icon {
+  color: var(--vscode-progressBar-background);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.step-status-completed .step-icon {
+  color: var(--vscode-testing-iconPassed);
+}
+
+.step-status-failed .step-icon {
+  color: var(--vscode-testing-iconFailed);
+}
+
+.step-status-skipped .step-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+.step-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loop-progress {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.step-error {
+  font-size: 0.8em;
+  padding: 2px 6px;
+  background-color: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+  border-radius: 3px;
+}
+
+.view-output-btn {
+  padding: 3px 8px;
+  font-size: 0.8em;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.output-section {
+  margin-top: 20px;
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: var(--vscode-sideBarSectionHeader-background);
+  border-bottom: 1px solid var(--vscode-widget-border);
+}
+
+.output-header h3 {
+  margin: 0;
+}
+
+.streaming-indicator {
+  font-size: 0.85em;
+  color: var(--vscode-progressBar-background);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.output-content {
+  max-height: 300px;
+  overflow: auto;
+}
+
+.no-output {
+  padding: 20px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+.output-lines {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background-color: var(--vscode-editor-background);
+}

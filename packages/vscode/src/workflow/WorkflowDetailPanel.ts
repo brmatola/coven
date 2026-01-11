@@ -332,17 +332,61 @@ export class WorkflowDetailPanel extends WebviewPanel<
     });
 
     try {
-      const state = await this.client.getState();
+      // Fetch workflow details from the daemon API
+      interface WorkflowResponse {
+        workflow_id: string;
+        task_id: string;
+        grimoire_name: string;
+        status: string;
+        current_step: number;
+        worktree_path: string;
+        started_at?: string;
+        updated_at?: string;
+        error?: string;
+        available_actions?: string[];
+        completed_steps?: Record<string, unknown>;
+      }
 
-      // For now, create a basic workflow from daemon state
-      // In a full implementation, we'd have a /workflows/:id endpoint
+      const response = await this.client.get<WorkflowResponse>(
+        `/workflows/${encodeURIComponent(this.workflowId)}`
+      );
+
+      // Build steps from completed_steps if available
+      const steps: WorkflowStep[] = [];
+      if (response.completed_steps) {
+        Object.entries(response.completed_steps).forEach(([stepName, stepData]) => {
+          const data = stepData as { Success?: boolean; Error?: string };
+          steps.push({
+            id: stepName,
+            name: stepName,
+            status: data.Success ? 'completed' : data.Error ? 'failed' : 'pending',
+            depth: 0,
+            error: data.Error,
+          });
+        });
+      }
+
+      // Add current step if running
+      if (response.current_step >= 0) {
+        const currentStepName = `Step ${response.current_step + 1}`;
+        if (!steps.find((s) => s.name === currentStepName)) {
+          steps.push({
+            id: `step-${response.current_step}`,
+            name: currentStepName,
+            status: 'running',
+            depth: 0,
+          });
+        }
+      }
+
       this.currentWorkflow = {
-        id: this.workflowId,
-        grimoireName: 'Default Grimoire',
-        status: state.workflow.status as WorkflowDetail['status'],
-        startedAt: state.workflow.startedAt,
-        completedAt: state.workflow.completedAt,
-        steps: this.buildStepsFromTasks(state.tasks),
+        id: response.workflow_id,
+        taskId: response.task_id,
+        grimoireName: response.grimoire_name,
+        status: response.status as WorkflowDetail['status'],
+        startedAt: response.started_at ? new Date(response.started_at).getTime() : undefined,
+        error: response.error,
+        steps,
       };
 
       this.updatePanelTitle();

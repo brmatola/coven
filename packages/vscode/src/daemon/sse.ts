@@ -213,6 +213,7 @@ export class SSEClient extends EventEmitter {
     // Comment line (starts with :)
     if (line.startsWith(':')) {
       // Comments are ignored but reset heartbeat timer
+      this.resetHeartbeatTimer();
       return;
     }
 

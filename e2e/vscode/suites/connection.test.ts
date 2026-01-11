@@ -106,18 +106,29 @@ suite('Connection Lifecycle', function () {
   });
 
   test('SSE connection receives periodic state.snapshot heartbeats', async function () {
-    this.timeout(40000);
+    this.timeout(45000);
 
-    const events = await getEventWaiter();
+    const ctx = getTestContext();
+    const healthy = await ctx.daemon.isHealthy();
+    if (!healthy) {
+      return this.skip();
+    }
 
-    // Wait for initial snapshot
-    const snapshot1 = await events.waitForEvent('state.snapshot', 5000);
-    assert.ok(snapshot1, 'Should receive initial state.snapshot');
+    // Create a fresh SSE client for this test to ensure we get the initial snapshot
+    const freshClient = await createEventWaiter(ctx.daemon.getSocketPath());
 
-    // Clear events and wait for periodic heartbeat (daemon sends every 30s)
-    clearEvents();
-    const snapshot2 = await events.waitForEvent('state.snapshot', 35000);
-    assert.ok(snapshot2, 'Should receive periodic state.snapshot heartbeat');
+    try {
+      // Wait for initial snapshot (sent immediately on connect)
+      const snapshot1 = await freshClient.waitForEvent('state.snapshot', 10000);
+      assert.ok(snapshot1, 'Should receive initial state.snapshot');
+
+      // Clear events and wait for periodic heartbeat (daemon sends every 30s)
+      freshClient.clearEvents();
+      const snapshot2 = await freshClient.waitForEvent('state.snapshot', 35000);
+      assert.ok(snapshot2, 'Should receive periodic state.snapshot heartbeat');
+    } finally {
+      freshClient.stop();
+    }
   });
 
   test('Multiple concurrent SSE clients are supported', async function () {

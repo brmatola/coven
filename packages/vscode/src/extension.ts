@@ -779,7 +779,7 @@ async function rejectMerge(arg: unknown): Promise<void> {
  */
 async function showWorkflowDetail(arg: unknown): Promise<void> {
   const ctx = ExtensionContext.get();
-  const workflowId = extractWorkflowId(arg);
+  let workflowId = extractWorkflowId(arg);
 
   if (!workflowId || !daemonSocketPath || !sseClient) {
     await vscode.window.showErrorMessage('Coven: Invalid workflow reference or daemon not connected');
@@ -788,6 +788,20 @@ async function showWorkflowDetail(arg: unknown): Promise<void> {
 
   try {
     const client = new DaemonClient(daemonSocketPath);
+
+    // If this looks like a task ID (not a workflow ID), look up the workflow
+    if (!workflowId.startsWith('wf-')) {
+      const taskId = workflowId;
+      const response = await client.get<{ workflows: Array<{ workflow_id: string; task_id: string }> }>('/workflows');
+      const workflow = response.workflows.find((w) => w.task_id === taskId);
+      if (workflow) {
+        workflowId = workflow.workflow_id;
+      } else {
+        await vscode.window.showErrorMessage(`No active workflow found for task: ${taskId}`);
+        return;
+      }
+    }
+
     WorkflowDetailPanel.createOrShow(ctx.extensionUri, client, sseClient, workflowId);
     ctx.logger.info('Workflow detail panel opened', { workflowId });
   } catch (err) {
