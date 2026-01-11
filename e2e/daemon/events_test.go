@@ -125,3 +125,71 @@ func TestEventStreamAgentEvents(t *testing.T) {
 
 	t.Logf("Total events received: %d", len(events))
 }
+
+// TestEventStreamHeartbeat verifies that periodic heartbeat events (state.snapshot) are sent.
+// This is critical for SSE clients to detect connection health.
+func TestEventStreamHeartbeat(t *testing.T) {
+	env := helpers.NewTestEnv(t)
+	defer env.Stop()
+
+	env.MustStart()
+
+	// Connect to event stream (use SSEClient which has no timeout)
+	resp, err := env.SSEClient.Get("http://unix/events")
+	if err != nil {
+		t.Fatalf("Failed to connect to events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Unexpected status: %d", resp.StatusCode)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+
+	// We should receive:
+	// 1. Initial state.snapshot on connect
+	// 2. Another state.snapshot within 35 seconds (heartbeat interval is 30s)
+
+	snapshotCount := 0
+	start := time.Now()
+
+	// Read events in a goroutine with proper line reading
+	lineCh := make(chan string, 100)
+	errCh := make(chan error, 1)
+
+	go func() {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errCh <- err
+				return
+			}
+			lineCh <- line
+		}
+	}()
+
+	timeout := time.After(35 * time.Second)
+
+	for snapshotCount < 2 {
+		select {
+		case <-timeout:
+			t.Fatalf("Timeout: only received %d state.snapshot events in 35s (expected at least 2)", snapshotCount)
+		case err := <-errCh:
+			t.Fatalf("Read error: %v", err)
+		case line := <-lineCh:
+			if strings.HasPrefix(line, "event: state.snapshot") {
+				snapshotCount++
+				t.Logf("Received state.snapshot #%d at %v", snapshotCount, time.Since(start))
+			}
+		}
+	}
+
+	elapsed := time.Since(start)
+	t.Logf("Received 2 state.snapshot events in %v", elapsed)
+
+	// The second snapshot should arrive around 30 seconds after the first
+	if elapsed < 25*time.Second {
+		t.Logf("Note: snapshots arrived faster than expected (%v), which is fine", elapsed)
+	}
+}

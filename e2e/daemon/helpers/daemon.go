@@ -23,6 +23,7 @@ type TestEnv struct {
 	DaemonBin  string
 	Cmd        *exec.Cmd
 	Client     *http.Client
+	SSEClient  *http.Client // For long-lived SSE connections (no timeout)
 }
 
 // getDaemonBinary returns the path to the daemon binary.
@@ -67,14 +68,23 @@ func NewTestEnv(t *testing.T) *TestEnv {
 	covenDir := filepath.Join(tmpDir, ".coven")
 	socketPath := filepath.Join(covenDir, "covend.sock")
 
-	// Create HTTP client that uses Unix socket
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
+	// Create HTTP transport for Unix socket
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
 		},
-		Timeout: 5 * time.Second,
+	}
+
+	// Create HTTP client with timeout for normal requests
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
+	}
+
+	// Create SSE client without timeout for long-lived connections
+	sseClient := &http.Client{
+		Transport: transport,
+		Timeout:   0, // No timeout for SSE
 	}
 
 	return &TestEnv{
@@ -84,6 +94,7 @@ func NewTestEnv(t *testing.T) *TestEnv {
 		SocketPath: socketPath,
 		DaemonBin:  daemonBin,
 		Client:     client,
+		SSEClient:  sseClient,
 	}
 }
 

@@ -105,18 +105,19 @@ suite('Connection Lifecycle', function () {
     );
   });
 
-  test('SSE connection receives heartbeat events', async function () {
+  test('SSE connection receives periodic state.snapshot heartbeats', async function () {
     this.timeout(40000);
 
     const events = await getEventWaiter();
 
-    try {
-      await events.waitForEvent('heartbeat', 35000);
-      assert.ok(true, 'Received heartbeat');
-    } catch {
-      // Timeout is acceptable - verify connection is still active
-      assert.ok(events.isConnected(), 'SSE connection should remain stable');
-    }
+    // Wait for initial snapshot
+    const snapshot1 = await events.waitForEvent('state.snapshot', 5000);
+    assert.ok(snapshot1, 'Should receive initial state.snapshot');
+
+    // Clear events and wait for periodic heartbeat (daemon sends every 30s)
+    clearEvents();
+    const snapshot2 = await events.waitForEvent('state.snapshot', 35000);
+    assert.ok(snapshot2, 'Should receive periodic state.snapshot heartbeat');
   });
 
   test('Multiple concurrent SSE clients are supported', async function () {

@@ -218,6 +218,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.startTime = time.Now()
 	d.logger.Info("daemon started", "workspace", d.workspace, "version", d.version)
 
+	// Start event broker (sends periodic heartbeats to SSE clients)
+	d.eventBroker.Start()
+	defer d.eventBroker.Stop()
+
 	// Start beads poller
 	d.beadsPoller.Start()
 	defer d.beadsPoller.Stop()
