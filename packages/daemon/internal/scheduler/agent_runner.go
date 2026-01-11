@@ -92,12 +92,22 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string, on
 	stepNum := r.getNextStepID(taskID)
 	stepTaskID := fmt.Sprintf("%s-step-%d", taskID, stepNum)
 
+	// Check if we should close stdin (for non-interactive agents like claude -p)
+	closeStdin := false
+	for _, arg := range args {
+		if arg == "-p" || arg == "--print" {
+			closeStdin = true
+			break
+		}
+	}
+
 	// Spawn the agent
 	processInfo, spawnErr := r.processManager.Spawn(ctx, agent.SpawnConfig{
 		TaskID:     stepTaskID,
 		Command:    command,
 		Args:       args,
 		WorkingDir: workDir,
+		CloseStdin: closeStdin,
 	})
 	if spawnErr != nil {
 		return nil, spawnErr

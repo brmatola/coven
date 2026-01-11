@@ -101,7 +101,11 @@ func New(workspace, version string) (*Daemon, error) {
 	// Apply config settings
 	sched.SetMaxAgents(cfg.MaxConcurrentAgents)
 	if cfg.AgentCommand != "" {
-		sched.SetAgentCommand(cfg.AgentCommand, []string{})
+		args := cfg.AgentArgs
+		if args == nil {
+			args = []string{"-p"} // Default to print mode for claude
+		}
+		sched.SetAgentCommand(cfg.AgentCommand, args)
 	}
 
 	// Wire up event emitter for workflow events

@@ -6,27 +6,42 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/coven/e2e/daemon/helpers"
 )
 
+// lastNLines returns the last n lines of a string.
+func lastNLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// min returns the smaller of two integers.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // integrationGrimoire is a minimal grimoire for real agent testing.
 // Uses a very simple task to minimize API usage and test time.
 const integrationGrimoire = `name: integration-test
 description: Minimal test grimoire for real agent integration
-timeout: 2m
+timeout: 5m
 
 steps:
   - name: execute
     type: agent
     spell: |
-      Return a JSON block with "success": true immediately:
-      ` + "```json" + `
-      {"success": true, "summary": "Integration test passed"}
-      ` + "```" + `
-    timeout: 1m
+      Say only: done
+    timeout: 3m
 `
 
 // TestRealAgentIntegration tests the full workflow with the real Claude agent.
@@ -60,10 +75,11 @@ func TestRealAgentIntegration(t *testing.T) {
 	taskID := createTaskWithLabel(t, env, "Integration test task", "grimoire:integration-test")
 	t.Logf("Created integration test task: %s", taskID)
 
-	// Configure daemon to use real claude CLI (no mock agent)
+	// Configure daemon to use real claude CLI with -p flag for print mode
 	writeConfig(t, env, map[string]interface{}{
 		"poll_interval":         1,
 		"agent_command":         "claude",
+		"agent_args":            []string{"-p"},
 		"max_concurrent_agents": 1,
 		"log_level":             "debug",
 	})
@@ -87,8 +103,72 @@ func TestRealAgentIntegration(t *testing.T) {
 	}
 	t.Logf("Agent started with PID: %d, status: %s", agent.PID, agent.Status)
 
-	// Wait for agent to complete (real agent may take longer)
-	env.WaitForAgentStatus(t, api, taskID, "completed", 120)
+	// Poll for PID update (callback may fire after initial agent creation)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && agent.PID == 0 {
+		time.Sleep(500 * time.Millisecond)
+		agent, _ = api.GetAgent(taskID)
+		if agent != nil && agent.PID != 0 {
+			t.Logf("Agent PID updated to: %d", agent.PID)
+			break
+		}
+	}
+
+	// Check daemon logs for debugging
+	logPath := env.TmpDir + "/.coven/covend.log"
+	if logData, err := os.ReadFile(logPath); err == nil {
+		t.Logf("Daemon log (last 30 lines):\n%s", lastNLines(string(logData), 30))
+	}
+
+	// Also check agent output periodically
+	go func() {
+		for i := 0; i < 24; i++ { // Check every 5s for 2 minutes
+			time.Sleep(5 * time.Second)
+			if output, err := api.GetAgentOutput(taskID); err == nil && output != nil && output.LineCount > 0 {
+				t.Logf("Agent output update (%d lines): %v", output.LineCount, output.Lines[:min(3, len(output.Lines))])
+			}
+			// Refresh agent status
+			if a, err := api.GetAgent(taskID); err == nil && a != nil {
+				t.Logf("Agent status: %s", a.Status)
+				if a.Status == "completed" || a.Status == "failed" {
+					break
+				}
+			}
+		}
+	}()
+
+	// Wait for agent to complete or fail
+	var finalAgent *helpers.Agent
+	deadline = time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		if a, err := api.GetAgent(taskID); err == nil && a != nil {
+			if a.Status == "completed" || a.Status == "failed" {
+				finalAgent = a
+				break
+			}
+		}
+		time.Sleep(time.Second)
+	}
+
+	if finalAgent == nil {
+		t.Fatal("Agent did not reach terminal state within 120 seconds")
+	}
+
+	// Log final daemon state
+	if logData, err := os.ReadFile(logPath); err == nil {
+		t.Logf("Final daemon log (last 50 lines):\n%s", lastNLines(string(logData), 50))
+	}
+
+	if finalAgent.Status == "failed" {
+		t.Logf("Agent failed - checking for error details")
+		// Get full state to see error
+		if state, err := api.GetState(); err == nil && state != nil {
+			for id, agent := range state.State.Agents {
+				t.Logf("Agent %s: status=%s", id, agent.Status)
+			}
+		}
+		t.Fatal("Agent failed instead of completing")
+	}
 	t.Log("Agent completed")
 
 	// Verify output was captured
@@ -118,8 +198,13 @@ func TestRealAgentIntegration(t *testing.T) {
 func writeConfig(t *testing.T, env *helpers.TestEnv, config map[string]interface{}) {
 	t.Helper()
 
-	// Use bd config or write directly
-	configPath := env.TmpDir + "/.coven/config.json"
+	// Create .coven directory if it doesn't exist
+	covenDir := env.TmpDir + "/.coven"
+	if err := os.MkdirAll(covenDir, 0755); err != nil {
+		t.Fatalf("Failed to create .coven directory: %v", err)
+	}
+
+	configPath := covenDir + "/config.json"
 
 	data, err := json.Marshal(config)
 	if err != nil {

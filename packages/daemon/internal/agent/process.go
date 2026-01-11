@@ -104,6 +104,8 @@ type SpawnConfig struct {
 	WorkingDir string
 	Env        []string
 	Timeout    time.Duration
+	// CloseStdin closes stdin immediately after spawn (for non-interactive agents like claude -p)
+	CloseStdin bool
 }
 
 // Spawn starts a new agent process.
@@ -178,6 +180,12 @@ func (m *ProcessManager) Spawn(ctx context.Context, cfg SpawnConfig) (*ProcessIn
 	}
 
 	m.processes[cfg.TaskID] = proc
+
+	// Close stdin immediately if configured (for non-interactive agents like claude -p)
+	if cfg.CloseStdin {
+		stdin.Close()
+		proc.stdin = nil
+	}
 
 	// Start output capture goroutines
 	go m.captureOutput(cfg.TaskID, stdout, "stdout", proc)
