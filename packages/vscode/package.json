@@ -1,5 +1,5 @@
 {
-  "name": "@coven/vscode",
+  "name": "coven",
   "displayName": "Coven",
   "description": "Agent orchestration system for VSCode",
   "version": "0.0.1",
@@ -300,7 +300,7 @@
   "scripts": {
     "build": "npm run lint && tsx scripts/build.ts && npm run build:webviews",
     "watch": "tsx scripts/build.ts --watch",
-    "package": "vsce package",
+    "package": "vsce package --no-dependencies --allow-missing-repository",
     "dogfood": "bash scripts/dogfood.sh",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",

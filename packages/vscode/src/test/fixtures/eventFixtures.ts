@@ -1,6 +1,6 @@
 import type { SSEEvent, SSEEventType } from '../../daemon/sse';
-import type { DaemonState, DaemonTask, Agent, Question } from '../../daemon/types';
-import { emptyState, runningWorkflow, runningTask, runningAgent, textQuestion } from './stateFixtures';
+import type { DaemonState, DaemonTask } from '../../daemon/types';
+import { emptyState, runningWorkflow, runningTask, runningAgent } from './stateFixtures';
 
 // ============================================================================
 // Event Factory

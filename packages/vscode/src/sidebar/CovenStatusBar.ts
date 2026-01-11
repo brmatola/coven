@@ -60,14 +60,12 @@ export class CovenStatusBar implements vscode.Disposable {
     }
 
     // Active session - get workflow info
-    const workflows = this.stateCache?.getWorkflows() ?? [];
+    const workflow = this.stateCache?.getWorkflow();
     const questions = this.stateCache?.getQuestions() ?? [];
 
     // Count active (running) and pending (pending_merge, blocked) workflows
-    const active = workflows.filter((w) => w.status === 'running').length;
-    const pending = workflows.filter(
-      (w) => w.status === 'pending_merge' || w.status === 'blocked'
-    ).length;
+    const active = workflow?.status === 'running' ? 1 : 0;
+    const pending = (workflow?.status === 'pending_merge' || workflow?.status === 'blocked') ? 1 : 0;
     const pendingQuestions = questions.length;
 
     let text: string;

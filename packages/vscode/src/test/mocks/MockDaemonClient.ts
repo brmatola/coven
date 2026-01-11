@@ -9,7 +9,6 @@ import type {
   WorkflowChangesResponse,
   WorkflowReviewResponse,
   StartSessionRequest,
-  DaemonErrorCode,
 } from '../../daemon/types';
 import { DaemonClientError } from '../../daemon/types';
 

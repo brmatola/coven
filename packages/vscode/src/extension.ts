@@ -215,7 +215,7 @@ async function initializeDaemon(
     daemonLifecycle = lifecycle;
 
     // Show starting notification
-    const startingDisposable = await daemonNotifications?.showStarting();
+    const startingDisposable = daemonNotifications?.showStarting();
 
     try {
       // Ensure daemon is running (auto-starts if needed)

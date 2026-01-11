@@ -246,7 +246,7 @@ export class DaemonNotificationService {
   /**
    * Show daemon starting notification.
    */
-  async showStarting(): Promise<vscode.Disposable> {
+  showStarting(): vscode.Disposable {
     return vscode.window.setStatusBarMessage('$(sync~spin) Starting Coven daemon...');
   }
 

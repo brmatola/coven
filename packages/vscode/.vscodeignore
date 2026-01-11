@@ -9,7 +9,12 @@ openspec/**
 .eslintrc.json
 .prettierrc
 tsconfig.json
+tsconfig.eslint.json
 vitest.config.ts
+coverage/**
+webviews/**
 **/*.map
 **/*.ts
 !dist/**
+!dist/**/*.js
+!dist/**/*.css

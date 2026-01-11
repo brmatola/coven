@@ -252,8 +252,8 @@ describe('DaemonNotificationService', () => {
   });
 
   describe('showStarting', () => {
-    it('shows status bar message with spinner', async () => {
-      await service.showStarting();
+    it('shows status bar message with spinner', () => {
+      service.showStarting();
 
       expect(vscode.window.setStatusBarMessage).toHaveBeenCalledWith(
         expect.stringContaining('Starting Coven daemon')
@@ -336,7 +336,7 @@ describe('Notification helpers', () => {
     it('shows loading and returns result on success', async () => {
       const result = await withLoading(
         'Loading...',
-        async () => 'result'
+        () => Promise.resolve('result')
       );
 
       expect(result).toBe('result');
@@ -350,9 +350,7 @@ describe('Notification helpers', () => {
 
       const result = await withLoading(
         'Loading...',
-        async () => {
-          throw new Error('Test error');
-        },
+        () => Promise.reject(new Error('Test error')),
         errorHandler
       );
 
@@ -363,9 +361,7 @@ describe('Notification helpers', () => {
     it('returns undefined on error without handler', async () => {
       const result = await withLoading(
         'Loading...',
-        async () => {
-          throw new Error('Test error');
-        }
+        () => Promise.reject(new Error('Test error'))
       );
 
       expect(result).toBeUndefined();
