@@ -156,4 +156,54 @@ suite('Connection Lifecycle', function () {
       client2.stop();
     }
   });
+
+  test('Connection stays stable through heartbeat cycle without timeout', async function () {
+    // This test validates the fix for "connection to daemon lost" notifications.
+    // The daemon sends heartbeats every 30s, and extension timeout is 35s.
+    // We verify: 1) initial snapshot arrives, 2) heartbeat arrives within 35s.
+    // This matches the existing heartbeat test but with stricter timing validation.
+    this.timeout(45000);
+
+    const ctx = getTestContext();
+    const healthy = await ctx.daemon.isHealthy();
+    if (!healthy) {
+      return this.skip();
+    }
+
+    // Create a fresh SSE client to simulate extension behavior
+    const client = await createEventWaiter(ctx.daemon.getSocketPath());
+    const startTime = Date.now();
+
+    try {
+      // Wait for initial snapshot
+      const initial = await client.waitForEvent('state.snapshot', 10000);
+      assert.ok(initial, 'Should receive initial state.snapshot');
+      const initialTime = Date.now() - startTime;
+      console.log(`  Initial snapshot received at ${initialTime}ms`);
+
+      // Clear events and wait for heartbeat
+      client.clearEvents();
+      const heartbeat = await client.waitForEvent('state.snapshot', 35000);
+      assert.ok(heartbeat, 'Should receive heartbeat within 35s (extension timeout)');
+      const heartbeatTime = Date.now() - startTime;
+      console.log(`  Heartbeat received at ${heartbeatTime}ms`);
+
+      // Verify heartbeat arrived within expected interval (25-35 seconds)
+      const interval = heartbeatTime - initialTime;
+      assert.ok(
+        interval >= 25000 && interval <= 35000,
+        `Heartbeat should arrive ~30s after initial. Got: ${interval}ms`
+      );
+
+      // Key validation: heartbeat arrives before extension would timeout
+      assert.ok(
+        interval < 35000,
+        `Heartbeat must arrive before 35s extension timeout. Got: ${interval}ms`
+      );
+
+      console.log(`  Connection stable: heartbeat interval ${interval}ms < 35000ms timeout`);
+    } finally {
+      client.stop();
+    }
+  });
 });

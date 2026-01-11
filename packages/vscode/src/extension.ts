@@ -357,10 +357,10 @@ function setupConnectionEventHandlers(manager: ConnectionManager): void {
   });
 
   manager.on('disconnected', () => {
+    // Only update status bar - don't show notification yet.
+    // Wait for reconnection attempts to complete before notifying user.
+    // The notification will be shown in the 'error' handler after max retries.
     statusBar?.setDisconnected();
-    void daemonNotifications?.showConnectionLost({
-      retry: () => retryConnectionWithRestart(),
-    });
   });
 
   manager.on('reconnecting', (attempt: number, maxAttempts: number) => {
