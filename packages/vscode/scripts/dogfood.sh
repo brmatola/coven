@@ -46,6 +46,11 @@ mkdir -p "$VSCODE_DIR/bin/${PLATFORM_DIR}"
 cp "$REPO_ROOT/build/covend" "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
 chmod +x "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
 
+echo "==> Updating system daemon binary..."
+mkdir -p "$HOME/.coven/bin"
+cp "$REPO_ROOT/build/covend" "$HOME/.coven/bin/covend"
+chmod +x "$HOME/.coven/bin/covend"
+
 echo "==> Packaging VSIX..."
 npm run package
 
