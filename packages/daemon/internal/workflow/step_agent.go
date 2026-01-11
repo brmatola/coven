@@ -12,11 +12,19 @@ import (
 	"github.com/coven/daemon/internal/spell"
 )
 
+// AgentRunResult contains the result of running an agent.
+type AgentRunResult struct {
+	Output     string // The agent's output
+	ExitCode   int    // Process exit code
+	StepTaskID string // The task ID used to track this step's process
+}
+
 // AgentRunner executes agent commands.
 // This interface allows for mocking in tests.
 type AgentRunner interface {
-	// Run executes an agent with the given prompt and returns the output.
-	Run(ctx context.Context, workDir, prompt string) (output string, exitCode int, err error)
+	// Run executes an agent with the given prompt and returns the result.
+	// The StepTaskID in the result can be used to track/reconnect to the running process.
+	Run(ctx context.Context, workDir, prompt string) (*AgentRunResult, error)
 }
 
 // AgentOutput is the structured result expected from agent steps.
@@ -76,8 +84,16 @@ func (e *AgentExecutor) Execute(ctx context.Context, step *grimoire.Step, stepCt
 
 	// Execute the agent
 	start := time.Now()
-	output, exitCode, err := e.runner.Run(execCtx, stepCtx.WorktreePath, prompt)
+	runResult, err := e.runner.Run(execCtx, stepCtx.WorktreePath, prompt)
 	duration := time.Since(start)
+
+	// Extract values from result
+	var output string
+	var exitCode int
+	if runResult != nil {
+		output = runResult.Output
+		exitCode = runResult.ExitCode
+	}
 
 	// Check for timeout
 	if execCtx.Err() == context.DeadlineExceeded {

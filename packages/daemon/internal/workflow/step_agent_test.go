@@ -27,9 +27,11 @@ type MockAgentRunner struct {
 	Err error
 	// Delay is how long to wait before returning.
 	Delay time.Duration
+	// StepTaskID is the task ID to return (defaults to "test-step-1").
+	StepTaskID string
 }
 
-func (m *MockAgentRunner) Run(ctx context.Context, workDir, prompt string) (string, int, error) {
+func (m *MockAgentRunner) Run(ctx context.Context, workDir, prompt string) (*AgentRunResult, error) {
 	m.WorkDir = workDir
 	m.Prompt = prompt
 
@@ -37,11 +39,18 @@ func (m *MockAgentRunner) Run(ctx context.Context, workDir, prompt string) (stri
 		select {
 		case <-time.After(m.Delay):
 		case <-ctx.Done():
-			return m.Output, -1, nil
+			return &AgentRunResult{Output: m.Output, ExitCode: -1, StepTaskID: m.stepTaskID()}, nil
 		}
 	}
 
-	return m.Output, m.ExitCode, m.Err
+	return &AgentRunResult{Output: m.Output, ExitCode: m.ExitCode, StepTaskID: m.stepTaskID()}, m.Err
+}
+
+func (m *MockAgentRunner) stepTaskID() string {
+	if m.StepTaskID == "" {
+		return "test-step-1"
+	}
+	return m.StepTaskID
 }
 
 func setupTestSpellLoader(t *testing.T, spells map[string]string) (*spell.Loader, string) {

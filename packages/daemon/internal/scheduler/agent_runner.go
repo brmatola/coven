@@ -45,7 +45,7 @@ func (r *ProcessAgentRunner) SetCommand(cmd string, args []string) {
 
 // Run implements workflow.AgentRunner.
 // It spawns an agent process with the given prompt and waits for completion.
-func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string) (output string, exitCode int, err error) {
+func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string) (*workflow.AgentRunResult, error) {
 	// Build args with prompt
 	args := append([]string{}, r.args...)
 	args = append(args, prompt)
@@ -67,7 +67,7 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string) (o
 		WorkingDir: workDir,
 	})
 	if spawnErr != nil {
-		return "", -1, spawnErr
+		return nil, spawnErr
 	}
 
 	// Use a goroutine to handle context cancellation
@@ -88,29 +88,31 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string) (o
 	case <-ctx.Done():
 		// Context cancelled - kill the agent
 		r.processManager.Kill(stepTaskID)
-		return "", -1, ctx.Err()
+		return &workflow.AgentRunResult{StepTaskID: stepTaskID, ExitCode: -1}, ctx.Err()
 
 	case waitErr := <-errCh:
-		return "", -1, waitErr
+		return &workflow.AgentRunResult{StepTaskID: stepTaskID, ExitCode: -1}, waitErr
 
 	case result := <-resultCh:
 		// Get all output
 		outputLines, outputErr := r.processManager.GetOutput(stepTaskID)
-		if outputErr != nil {
-			// Process completed but we can't get output - still return the exit code
-			return "", result.ExitCode, nil
+		var output string
+		if outputErr == nil {
+			var lines []string
+			for _, line := range outputLines {
+				lines = append(lines, line.Data)
+			}
+			output = strings.Join(lines, "\n")
 		}
-
-		var lines []string
-		for _, line := range outputLines {
-			lines = append(lines, line.Data)
-		}
-		output = strings.Join(lines, "\n")
 
 		// Clean up the process record
 		r.processManager.Cleanup(stepTaskID)
 
-		return output, result.ExitCode, nil
+		return &workflow.AgentRunResult{
+			Output:     output,
+			ExitCode:   result.ExitCode,
+			StepTaskID: stepTaskID,
+		}, nil
 	}
 }
 

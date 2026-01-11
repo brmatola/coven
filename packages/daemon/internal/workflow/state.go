@@ -42,6 +42,10 @@ type WorkflowState struct {
 
 	// Error contains any error message if the workflow failed.
 	Error string `json:"error,omitempty"`
+
+	// ActiveStepTaskID is the task ID of the currently running step (for agent steps).
+	// This allows reconnecting to running agents after daemon restart.
+	ActiveStepTaskID string `json:"active_step_task_id,omitempty"`
 }
 
 // StatePersister handles saving and loading workflow state.

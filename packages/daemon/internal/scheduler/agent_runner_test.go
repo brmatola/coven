@@ -9,6 +9,7 @@ import (
 
 	"github.com/coven/daemon/internal/agent"
 	"github.com/coven/daemon/internal/logging"
+	"github.com/coven/daemon/internal/workflow"
 )
 
 func newTestProcessManager(t *testing.T) *agent.ProcessManager {
@@ -106,16 +107,19 @@ func TestProcessAgentRunner_Run_Success(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	output, exitCode, err := runner.Run(ctx, workDir, "hello world")
+	result, err := runner.Run(ctx, workDir, "hello world")
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
-	if exitCode != 0 {
-		t.Errorf("exitCode = %d, want 0", exitCode)
+	if result.ExitCode != 0 {
+		t.Errorf("exitCode = %d, want 0", result.ExitCode)
 	}
-	if !strings.Contains(output, "hello world") {
-		t.Errorf("output = %q, should contain %q", output, "hello world")
+	if !strings.Contains(result.Output, "hello world") {
+		t.Errorf("output = %q, should contain %q", result.Output, "hello world")
+	}
+	if result.StepTaskID == "" {
+		t.Error("StepTaskID should not be empty")
 	}
 }
 
@@ -128,17 +132,17 @@ func TestProcessAgentRunner_Run_WithArgs(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	output, exitCode, err := runner.Run(ctx, workDir, "test")
+	result, err := runner.Run(ctx, workDir, "test")
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
-	if exitCode != 0 {
-		t.Errorf("exitCode = %d, want 0", exitCode)
+	if result.ExitCode != 0 {
+		t.Errorf("exitCode = %d, want 0", result.ExitCode)
 	}
 	// With -n, output should be "test" without newline
-	if output != "test" {
-		t.Errorf("output = %q, want %q", output, "test")
+	if result.Output != "test" {
+		t.Errorf("output = %q, want %q", result.Output, "test")
 	}
 }
 
@@ -152,7 +156,7 @@ func TestProcessAgentRunner_Run_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, _, err := runner.Run(ctx, workDir, "10") // sleep 10 seconds
+	_, err := runner.Run(ctx, workDir, "10") // sleep 10 seconds
 
 	if err == nil {
 		t.Error("Expected error from cancelled context")
@@ -171,12 +175,12 @@ func TestProcessAgentRunner_Run_CommandFailure(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	_, exitCode, err := runner.Run(ctx, workDir, "")
+	result, err := runner.Run(ctx, workDir, "")
 
 	if err != nil {
 		t.Fatalf("Run() error: %v (expected nil error with non-zero exit)", err)
 	}
-	if exitCode == 0 {
+	if result.ExitCode == 0 {
 		t.Error("Expected non-zero exit code from 'false' command")
 	}
 }
@@ -191,7 +195,7 @@ func TestProcessAgentRunner_Run_IncrementingStepCounter(t *testing.T) {
 
 	// Run multiple times and verify step counter increments
 	for i := 1; i <= 3; i++ {
-		_, _, err := runner.Run(ctx, workDir, "step")
+		_, err := runner.Run(ctx, workDir, "step")
 		if err != nil {
 			t.Fatalf("Run() iteration %d error: %v", i, err)
 		}
@@ -210,16 +214,16 @@ func TestProcessAgentRunner_Run_NoTaskID(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	output, exitCode, err := runner.Run(ctx, workDir, "no-task-id")
+	result, err := runner.Run(ctx, workDir, "no-task-id")
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
-	if exitCode != 0 {
-		t.Errorf("exitCode = %d, want 0", exitCode)
+	if result.ExitCode != 0 {
+		t.Errorf("exitCode = %d, want 0", result.ExitCode)
 	}
-	if !strings.Contains(output, "no-task-id") {
-		t.Errorf("output = %q, should contain %q", output, "no-task-id")
+	if !strings.Contains(result.Output, "no-task-id") {
+		t.Errorf("output = %q, should contain %q", result.Output, "no-task-id")
 	}
 }
 
@@ -231,7 +235,7 @@ func TestProcessAgentRunner_Run_NonexistentCommand(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	_, _, err := runner.Run(ctx, workDir, "test")
+	_, err := runner.Run(ctx, workDir, "test")
 
 	if err == nil {
 		t.Error("Expected error for nonexistent command")
@@ -246,7 +250,7 @@ func TestProcessAgentRunner_InterfaceCompliance(t *testing.T) {
 	var runner any = NewProcessAgentRunner(pm, "echo", nil)
 
 	if _, ok := runner.(interface {
-		Run(ctx context.Context, workDir, prompt string) (output string, exitCode int, err error)
+		Run(ctx context.Context, workDir, prompt string) (*workflow.AgentRunResult, error)
 	}); !ok {
 		t.Error("ProcessAgentRunner does not implement expected Run method")
 	}
