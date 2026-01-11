@@ -20,6 +20,6 @@
 
     "lint": "cd packages/vscode && npm run lint",
     "format": "cd packages/vscode && npm run format",
-    "dogfood": "cd packages/vscode && npm run dogfood"
+    "dogfood": "make build && cd packages/vscode && npm run dogfood"
   }
 }

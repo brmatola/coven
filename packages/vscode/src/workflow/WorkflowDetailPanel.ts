@@ -344,6 +344,16 @@ export class WorkflowDetailPanel extends WebviewPanel<
         updated_at?: string;
         error?: string;
         available_actions?: string[];
+        steps?: Array<{
+          id: string;
+          name: string;
+          type: string;
+          status: string;
+          depth: number;
+          is_loop?: boolean;
+          max_iterations?: number;
+          error?: string;
+        }>;
         completed_steps?: Record<string, unknown>;
       }
 
@@ -351,33 +361,16 @@ export class WorkflowDetailPanel extends WebviewPanel<
         `/workflows/${encodeURIComponent(this.workflowId)}`
       );
 
-      // Build steps from completed_steps if available
-      const steps: WorkflowStep[] = [];
-      if (response.completed_steps) {
-        Object.entries(response.completed_steps).forEach(([stepName, stepData]) => {
-          const data = stepData as { Success?: boolean; Error?: string };
-          steps.push({
-            id: stepName,
-            name: stepName,
-            status: data.Success ? 'completed' : data.Error ? 'failed' : 'pending',
-            depth: 0,
-            error: data.Error,
-          });
-        });
-      }
-
-      // Add current step if running
-      if (response.current_step >= 0) {
-        const currentStepName = `Step ${response.current_step + 1}`;
-        if (!steps.find((s) => s.name === currentStepName)) {
-          steps.push({
-            id: `step-${response.current_step}`,
-            name: currentStepName,
-            status: 'running',
-            depth: 0,
-          });
-        }
-      }
+      // Use steps from API response (includes grimoire step definitions with status)
+      const steps: WorkflowStep[] = (response.steps ?? []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        status: s.status as WorkflowStep['status'],
+        depth: s.depth,
+        isLoop: s.is_loop,
+        loopProgress: s.max_iterations ? { current: 0, total: s.max_iterations } : undefined,
+        error: s.error,
+      }));
 
       this.currentWorkflow = {
         id: response.workflow_id,

@@ -9,25 +9,28 @@ import (
 	"time"
 
 	"github.com/coven/daemon/internal/api"
+	"github.com/coven/daemon/internal/grimoire"
 	"github.com/coven/daemon/internal/state"
 	"github.com/coven/daemon/internal/workflow"
 )
 
 // WorkflowHandlers provides HTTP handlers for workflow operations.
 type WorkflowHandlers struct {
-	store          *state.Store
-	scheduler      *Scheduler
-	statePersister *workflow.StatePersister
-	covenDir       string
+	store           *state.Store
+	scheduler       *Scheduler
+	statePersister  *workflow.StatePersister
+	grimoireLoader  *grimoire.Loader
+	covenDir        string
 }
 
 // NewWorkflowHandlers creates new workflow handlers.
 func NewWorkflowHandlers(store *state.Store, scheduler *Scheduler, covenDir string) *WorkflowHandlers {
 	return &WorkflowHandlers{
-		store:          store,
-		scheduler:      scheduler,
-		statePersister: workflow.NewStatePersister(covenDir),
-		covenDir:       covenDir,
+		store:           store,
+		scheduler:       scheduler,
+		statePersister:  workflow.NewStatePersister(covenDir),
+		grimoireLoader:  grimoire.NewLoader(covenDir),
+		covenDir:        covenDir,
 	}
 }
 
@@ -110,6 +113,19 @@ func (h *WorkflowHandlers) handleWorkflowsList(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// StepInfo represents a step in a workflow for the API response.
+type StepInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Status      string `json:"status"` // pending, running, completed, failed, skipped
+	Depth       int    `json:"depth"`  // 0 = top level, 1+ = nested in loop
+	IsLoop      bool   `json:"is_loop,omitempty"`
+	MaxIter     int    `json:"max_iterations,omitempty"`
+	CurrentIter int    `json:"current_iteration,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
 // WorkflowDetailResponse is the response for GET /workflows/:id.
 type WorkflowDetailResponse struct {
 	WorkflowID     string                          `json:"workflow_id"`
@@ -121,6 +137,7 @@ type WorkflowDetailResponse struct {
 	StartedAt      time.Time                       `json:"started_at"`
 	UpdatedAt      time.Time                       `json:"updated_at"`
 	Error          string                          `json:"error,omitempty"`
+	Steps          []StepInfo                      `json:"steps"`
 	CompletedSteps map[string]*workflow.StepResult `json:"completed_steps,omitempty"`
 	StepOutputs    map[string]string               `json:"step_outputs,omitempty"`
 	MergeReview    *workflow.MergeReview           `json:"merge_review,omitempty"`
@@ -202,10 +219,11 @@ func (h *WorkflowHandlers) handleGetWorkflow(w http.ResponseWriter, r *http.Requ
 	// Load merge review if pending merge
 	var mergeReview *workflow.MergeReview
 	if state.Status == workflow.WorkflowPendingMerge {
-		// The merge review might be stored in step outputs or a separate file
-		// For now, we can reconstruct it or load from context
 		mergeReview = h.getMergeReview(state)
 	}
+
+	// Load grimoire to get step definitions
+	steps := h.buildStepInfo(state)
 
 	api.WriteJSON(w, http.StatusOK, WorkflowDetailResponse{
 		WorkflowID:     state.WorkflowID,
@@ -217,11 +235,75 @@ func (h *WorkflowHandlers) handleGetWorkflow(w http.ResponseWriter, r *http.Requ
 		StartedAt:      state.StartedAt,
 		UpdatedAt:      state.UpdatedAt,
 		Error:          state.Error,
+		Steps:          steps,
 		CompletedSteps: state.CompletedSteps,
 		StepOutputs:    state.StepOutputs,
 		MergeReview:    mergeReview,
 		Actions:        actions,
 	})
+}
+
+// buildStepInfo loads the grimoire and builds step info with status.
+func (h *WorkflowHandlers) buildStepInfo(state *workflow.WorkflowState) []StepInfo {
+	if state.GrimoireName == "" {
+		return []StepInfo{}
+	}
+
+	g, err := h.grimoireLoader.Load(state.GrimoireName)
+	if err != nil {
+		// Can't load grimoire, return empty steps
+		return []StepInfo{}
+	}
+
+	var steps []StepInfo
+	h.flattenSteps(g.Steps, state, 0, &steps)
+	return steps
+}
+
+// flattenSteps recursively flattens grimoire steps with status info.
+func (h *WorkflowHandlers) flattenSteps(grimoireSteps []grimoire.Step, state *workflow.WorkflowState, depth int, out *[]StepInfo) {
+	for i, step := range grimoireSteps {
+		stepID := step.Name
+		status := "pending"
+
+		// Check if this step is completed
+		if result, ok := state.CompletedSteps[stepID]; ok {
+			if result.Success {
+				status = "completed"
+			} else {
+				status = "failed"
+			}
+		} else if depth == 0 {
+			// Determine running step for top-level steps
+			// CurrentStep is -1 initially, then incremented as steps complete
+			// So if workflow is running and CurrentStep is -1, step 0 is running
+			// If CurrentStep is N, step N+1 is running (the next incomplete step)
+			runningStepIdx := state.CurrentStep + 1
+			if state.Status == workflow.WorkflowRunning && i == runningStepIdx {
+				status = "running"
+			}
+		}
+
+		info := StepInfo{
+			ID:     stepID,
+			Name:   step.Name,
+			Type:   string(step.Type),
+			Status: status,
+			Depth:  depth,
+			IsLoop: step.Type == grimoire.StepTypeLoop,
+		}
+
+		if step.Type == grimoire.StepTypeLoop {
+			info.MaxIter = step.MaxIterations
+		}
+
+		*out = append(*out, info)
+
+		// Recurse into loop steps
+		if step.Type == grimoire.StepTypeLoop && len(step.Steps) > 0 {
+			h.flattenSteps(step.Steps, state, depth+1, out)
+		}
+	}
 }
 
 // handleGetWorkflowLog handles GET /workflows/:id/log.

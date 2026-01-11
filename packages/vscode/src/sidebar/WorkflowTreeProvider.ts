@@ -273,14 +273,13 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     }
 
     const items: WorkflowTreeItem[] = [];
-    const workflow = this.cache.getWorkflow();
     const tasks = this.cache.getTasks();
     const questions = this.cache.getQuestions();
     const agents = this.cache.getAgents();
 
-    // 1. Active Workflows section - show running workflows with spinner icons
+    // 1. Active Workflows section - show running agents with spinner icons
     const activeAgents = agents.filter(a => a.status === 'running');
-    if (activeAgents.length > 0 || (workflow && workflow.status === 'running')) {
+    if (activeAgents.length > 0) {
       items.push(new SectionHeaderItem('active', activeAgents.length, this.expandedSections.has('active')));
     }
 
@@ -338,14 +337,8 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     if (!this.cache) return [];
 
     const items: WorkflowTreeItem[] = [];
-    const workflow = this.cache.getWorkflow();
     const agents = this.cache.getAgents();
     const tasks = this.cache.getTasks();
-
-    // Show workflow if running
-    if (workflow && workflow.status === 'running') {
-      items.push(new WorkflowItem(workflow));
-    }
 
     // Show running agents with their tasks
     for (const agent of agents) {
