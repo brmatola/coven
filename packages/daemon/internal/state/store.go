@@ -171,6 +171,28 @@ func (s *Store) SetAgentError(taskID string, errMsg string) {
 	}
 }
 
+// SetAgentStepTaskID sets the current step's task ID for process tracking.
+func (s *Store) SetAgentStepTaskID(taskID, stepTaskID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if agent, ok := s.state.Agents[taskID]; ok {
+		agent.StepTaskID = stepTaskID
+		s.dirty = true
+	}
+}
+
+// SetAgentPID sets the PID for an agent.
+func (s *Store) SetAgentPID(taskID string, pid int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if agent, ok := s.state.Agents[taskID]; ok {
+		agent.PID = pid
+		s.dirty = true
+	}
+}
+
 // RemoveAgent removes an agent from state.
 func (s *Store) RemoveAgent(taskID string) {
 	s.mu.Lock()

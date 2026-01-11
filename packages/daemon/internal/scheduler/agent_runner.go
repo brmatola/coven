@@ -22,6 +22,9 @@ type ProcessAgentRunner struct {
 	// Per-task step counters for concurrent workflow support
 	mu           sync.Mutex
 	stepCounters map[string]uint64
+
+	// onProcessSpawn is called when a process is spawned with its step task ID and PID.
+	onProcessSpawn func(mainTaskID, stepTaskID string, pid int)
 }
 
 // NewProcessAgentRunner creates a new ProcessAgentRunner.
@@ -49,6 +52,15 @@ func (r *ProcessAgentRunner) SetCommand(cmd string, args []string) {
 	r.args = args
 }
 
+// OnProcessSpawn sets a callback that's invoked when a process is spawned.
+// The callback receives the main task ID (e.g., "coven-7ub"), the step task ID
+// (e.g., "coven-7ub-step-1"), and the process PID.
+func (r *ProcessAgentRunner) OnProcessSpawn(fn func(mainTaskID, stepTaskID string, pid int)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onProcessSpawn = fn
+}
+
 // getNextStepID atomically increments and returns the next step number for a task.
 func (r *ProcessAgentRunner) getNextStepID(taskID string) uint64 {
 	r.mu.Lock()
@@ -65,6 +77,7 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string, on
 	r.mu.Lock()
 	args := append([]string{}, r.args...)
 	command := r.command
+	onProcessSpawn := r.onProcessSpawn
 	r.mu.Unlock()
 	args = append(args, prompt)
 
@@ -80,7 +93,7 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string, on
 	stepTaskID := fmt.Sprintf("%s-step-%d", taskID, stepNum)
 
 	// Spawn the agent
-	_, spawnErr := r.processManager.Spawn(ctx, agent.SpawnConfig{
+	processInfo, spawnErr := r.processManager.Spawn(ctx, agent.SpawnConfig{
 		TaskID:     stepTaskID,
 		Command:    command,
 		Args:       args,
@@ -88,6 +101,11 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string, on
 	})
 	if spawnErr != nil {
 		return nil, spawnErr
+	}
+
+	// Notify about process spawn with PID
+	if onProcessSpawn != nil {
+		onProcessSpawn(taskID, stepTaskID, processInfo.PID)
 	}
 
 	// Call onSpawn callback immediately after spawn so caller can save state

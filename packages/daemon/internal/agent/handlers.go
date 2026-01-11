@@ -119,8 +119,14 @@ func (h *Handlers) handleAgentOutput(w http.ResponseWriter, r *http.Request, tas
 		return
 	}
 
+	// Use StepTaskID if available, otherwise fall back to taskID
+	processTaskID := taskID
+	if agent.StepTaskID != "" {
+		processTaskID = agent.StepTaskID
+	}
+
 	// Get output from process manager
-	output, err := h.processManager.GetOutput(taskID)
+	output, err := h.processManager.GetOutput(processTaskID)
 	if err != nil {
 		// Agent may have been cleaned up, return empty output
 		output = []OutputLine{}
@@ -133,7 +139,7 @@ func (h *Handlers) handleAgentOutput(w http.ResponseWriter, r *http.Request, tas
 		if _, err := json.Marshal(sinceStr); err == nil {
 			// Try to parse since as number
 			json.Unmarshal([]byte(sinceStr), &since)
-			if filteredOutput, err := h.processManager.GetOutputSince(taskID, since); err == nil {
+			if filteredOutput, err := h.processManager.GetOutputSince(processTaskID, since); err == nil {
 				output = filteredOutput
 			}
 		}
@@ -172,8 +178,14 @@ func (h *Handlers) handleAgentKill(w http.ResponseWriter, r *http.Request, taskI
 		return
 	}
 
+	// Use StepTaskID if available, otherwise fall back to taskID
+	processTaskID := taskID
+	if agent.StepTaskID != "" {
+		processTaskID = agent.StepTaskID
+	}
+
 	// Kill the process
-	if err := h.processManager.Kill(taskID); err != nil {
+	if err := h.processManager.Kill(processTaskID); err != nil {
 		// Agent might already be dead, just update state
 		h.store.UpdateAgentStatus(taskID, types.AgentStatusKilled)
 	} else {
@@ -222,8 +234,14 @@ func (h *Handlers) handleAgentRespond(w http.ResponseWriter, r *http.Request, ta
 		return
 	}
 
+	// Use StepTaskID if available, otherwise fall back to taskID
+	processTaskID := taskID
+	if agent.StepTaskID != "" {
+		processTaskID = agent.StepTaskID
+	}
+
 	// Send input to agent stdin
-	if err := h.processManager.WriteToStdin(taskID, req.Response); err != nil {
+	if err := h.processManager.WriteToStdin(processTaskID, req.Response); err != nil {
 		http.Error(w, "Failed to send response: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

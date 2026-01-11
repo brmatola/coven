@@ -52,6 +52,10 @@ type WorkflowConfig struct {
 
 	// ResumeState contains saved state for resuming an interrupted workflow.
 	ResumeState *workflow.WorkflowState
+
+	// OnProcessSpawn is called when an agent process is spawned.
+	// It provides the step task ID and PID for tracking.
+	OnProcessSpawn func(stepTaskID string, pid int)
 }
 
 // WorkflowResult represents the result of a workflow execution.

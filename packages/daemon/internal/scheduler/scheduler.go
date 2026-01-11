@@ -61,6 +61,17 @@ func NewScheduler(
 	// Create the agent runner adapter
 	agentRunner := NewProcessAgentRunner(processManager, agentCommand, agentArgs)
 
+	// Set up callback to update agent state when process spawns
+	agentRunner.OnProcessSpawn(func(mainTaskID, stepTaskID string, pid int) {
+		store.SetAgentStepTaskID(mainTaskID, stepTaskID)
+		store.SetAgentPID(mainTaskID, pid)
+		logger.Debug("agent process spawned",
+			"task_id", mainTaskID,
+			"step_task_id", stepTaskID,
+			"pid", pid,
+		)
+	})
+
 	// Create the workflow runner
 	workflowRunner := NewWorkflowRunner(covenDir, logger)
 

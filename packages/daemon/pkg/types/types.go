@@ -42,15 +42,16 @@ type Task struct {
 
 // Agent represents a running or completed agent process.
 type Agent struct {
-	TaskID    string      `json:"task_id"`
-	PID       int         `json:"pid"`
-	Status    AgentStatus `json:"status"`
-	Worktree  string      `json:"worktree"`
-	Branch    string      `json:"branch"`
-	StartedAt time.Time   `json:"started_at"`
-	EndedAt   *time.Time  `json:"ended_at,omitempty"`
-	ExitCode  *int        `json:"exit_code,omitempty"`
-	Error     string      `json:"error,omitempty"`
+	TaskID     string      `json:"task_id"`
+	StepTaskID string      `json:"step_task_id,omitempty"` // The current step's process ID (e.g., "task-1-step-1")
+	PID        int         `json:"pid"`
+	Status     AgentStatus `json:"status"`
+	Worktree   string      `json:"worktree"`
+	Branch     string      `json:"branch"`
+	StartedAt  time.Time   `json:"started_at"`
+	EndedAt    *time.Time  `json:"ended_at,omitempty"`
+	ExitCode   *int        `json:"exit_code,omitempty"`
+	Error      string      `json:"error,omitempty"`
 }
 
 // DaemonState represents the complete state of the daemon.
