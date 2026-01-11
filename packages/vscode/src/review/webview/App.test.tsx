@@ -30,8 +30,8 @@ describe('Review App', () => {
     description: 'Test description',
     acceptanceCriteria: '- Criterion 1\n- Criterion 2',
     stepOutputs: [
-      { stepId: 'step-1', stepName: 'implement', summary: 'Task completed successfully', exitCode: 0 },
-      { stepId: 'step-2', stepName: 'test', summary: 'All tests passed', exitCode: 0 },
+      { step_id: 'step-1', step_name: 'implement', summary: 'Task completed successfully', exit_code: 0 },
+      { step_id: 'step-2', step_name: 'test', summary: 'All tests passed', exit_code: 0 },
     ],
     completedAt: Date.now(),
     durationMs: 60000,

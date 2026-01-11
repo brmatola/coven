@@ -107,14 +107,12 @@ describe('ReviewPanel', () => {
 
     mockDaemonClient = {
       getWorkflowReview: vi.fn().mockResolvedValue({
-        workflowId: 'workflow-1',
+        workflow_id: 'workflow-1',
         task_id: 'task-1',
         task_title: 'Implement feature X',
         task_description: 'Add new functionality',
         acceptance_criteria: 'Feature works correctly',
         changes: {
-          workflowId: 'workflow-1',
-          task_id: 'task-1',
           base_branch: 'main',
           head_branch: 'feature/x',
           worktree_path: '/tmp/worktree-1',
@@ -746,22 +744,20 @@ describe('ReviewPanel', () => {
 
       // Mock getWorkflowReview to return worktree path
       mockDaemonClient.getWorkflowReview.mockResolvedValue({
-        workflowId: 'workflow-1',
-        taskId: 'task-1',
-        taskTitle: 'Test Task',
-        taskDescription: 'Description',
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        task_title: 'Test Task',
+        task_description: 'Description',
         changes: {
-          workflowId: 'workflow-1',
-          taskId: 'task-1',
-          baseBranch: 'main',
-          headBranch: 'feature/x',
-          worktreePath: '/tmp/worktree-1',
+          base_branch: 'main',
+          head_branch: 'feature/x',
+          worktree_path: '/tmp/worktree-1',
           files: [],
-          totalLinesAdded: 0,
-          totalLinesDeleted: 0,
-          commitCount: 1,
+          total_lines_added: 0,
+          total_lines_deleted: 0,
+          commit_count: 1,
         },
-        stepOutputs: [],
+        step_outputs: [],
       });
 
       mockDaemonClient.approveWorkflow.mockRejectedValue(conflictError);
