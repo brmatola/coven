@@ -111,7 +111,13 @@ func (l *Logger) log(level Level, msg string, keyvals ...any) {
 			if !ok {
 				key = fmt.Sprintf("%v", keyvals[i])
 			}
-			entry.Fields[key] = keyvals[i+1]
+			// Handle error types specially - convert to string
+			// (errors don't serialize to JSON properly, they become {})
+			if err, ok := keyvals[i+1].(error); ok {
+				entry.Fields[key] = err.Error()
+			} else {
+				entry.Fields[key] = keyvals[i+1]
+			}
 		}
 		// Handle odd number of keyvals
 		if len(keyvals)%2 != 0 {
