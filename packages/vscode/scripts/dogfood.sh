@@ -43,7 +43,7 @@ npm run build
 
 echo "==> Bundling daemon binary (${PLATFORM_DIR})..."
 mkdir -p "$VSCODE_DIR/bin/${PLATFORM_DIR}"
-cp "$REPO_ROOT/packages/daemon/bin/covend" "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
+cp "$REPO_ROOT/build/covend" "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
 chmod +x "$VSCODE_DIR/bin/${PLATFORM_DIR}/covend"
 
 echo "==> Packaging VSIX..."
