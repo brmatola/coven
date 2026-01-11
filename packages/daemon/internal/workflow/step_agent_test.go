@@ -31,9 +31,14 @@ type MockAgentRunner struct {
 	StepTaskID string
 }
 
-func (m *MockAgentRunner) Run(ctx context.Context, workDir, prompt string) (*AgentRunResult, error) {
+func (m *MockAgentRunner) Run(ctx context.Context, workDir, prompt string, onSpawn func(stepTaskID string)) (*AgentRunResult, error) {
 	m.WorkDir = workDir
 	m.Prompt = prompt
+
+	// Call onSpawn callback if provided
+	if onSpawn != nil {
+		onSpawn(m.stepTaskID())
+	}
 
 	if m.Delay > 0 {
 		select {
@@ -44,6 +49,16 @@ func (m *MockAgentRunner) Run(ctx context.Context, workDir, prompt string) (*Age
 	}
 
 	return &AgentRunResult{Output: m.Output, ExitCode: m.ExitCode, StepTaskID: m.stepTaskID()}, m.Err
+}
+
+func (m *MockAgentRunner) WaitForExisting(ctx context.Context, stepTaskID string) (*AgentRunResult, error) {
+	// Mock implementation - not used in current tests
+	return nil, nil
+}
+
+func (m *MockAgentRunner) IsRunning(stepTaskID string) bool {
+	// Mock implementation - not used in current tests
+	return false
 }
 
 func (m *MockAgentRunner) stepTaskID() string {

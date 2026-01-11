@@ -67,6 +67,14 @@ type StepContext struct {
 
 	// LoopIteration is the current loop iteration (0-indexed) if InLoop is true.
 	LoopIteration int
+
+	// ActiveStepTaskID is the task ID of a currently running agent step.
+	// This is used to reconnect to agent processes after daemon restart.
+	ActiveStepTaskID string
+
+	// OnActiveStepTaskIDChange is called when ActiveStepTaskID changes.
+	// This allows the engine to persist state when an agent step starts.
+	OnActiveStepTaskIDChange func(stepTaskID string)
 }
 
 // NewStepContext creates a new step context.
@@ -96,6 +104,24 @@ func (c *StepContext) SetPrevious(result *StepResult) {
 		"success": result.Success,
 		"failed":  !result.Success,
 		"output":  result.Output,
+	}
+}
+
+// SetActiveStepTaskID sets the active step task ID and calls the callback.
+// This should be called when an agent step starts to track the running process.
+func (c *StepContext) SetActiveStepTaskID(stepTaskID string) {
+	c.ActiveStepTaskID = stepTaskID
+	if c.OnActiveStepTaskIDChange != nil {
+		c.OnActiveStepTaskIDChange(stepTaskID)
+	}
+}
+
+// ClearActiveStepTaskID clears the active step task ID.
+// This should be called when an agent step completes.
+func (c *StepContext) ClearActiveStepTaskID() {
+	c.ActiveStepTaskID = ""
+	if c.OnActiveStepTaskIDChange != nil {
+		c.OnActiveStepTaskIDChange("")
 	}
 }
 

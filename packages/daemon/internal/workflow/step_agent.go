@@ -24,7 +24,17 @@ type AgentRunResult struct {
 type AgentRunner interface {
 	// Run executes an agent with the given prompt and returns the result.
 	// The StepTaskID in the result can be used to track/reconnect to the running process.
-	Run(ctx context.Context, workDir, prompt string) (*AgentRunResult, error)
+	// If onSpawn is provided, it's called immediately after the process spawns
+	// with the StepTaskID, allowing callers to save state before blocking.
+	Run(ctx context.Context, workDir, prompt string, onSpawn func(stepTaskID string)) (*AgentRunResult, error)
+
+	// WaitForExisting waits for an existing agent process to complete.
+	// Used when resuming a workflow where an agent step was already running.
+	// Returns nil result if the process doesn't exist or already completed.
+	WaitForExisting(ctx context.Context, stepTaskID string) (*AgentRunResult, error)
+
+	// IsRunning checks if a process with the given task ID is currently running.
+	IsRunning(stepTaskID string) bool
 }
 
 // AgentOutput is the structured result expected from agent steps.
@@ -82,9 +92,24 @@ func (e *AgentExecutor) Execute(ctx context.Context, step *grimoire.Step, stepCt
 		return nil, fmt.Errorf("failed to prepare prompt: %w", err)
 	}
 
-	// Execute the agent
+	// Check if we're resuming an existing process
+	var runResult *AgentRunResult
 	start := time.Now()
-	runResult, err := e.runner.Run(execCtx, stepCtx.WorktreePath, prompt)
+
+	if stepCtx.ActiveStepTaskID != "" && e.runner.IsRunning(stepCtx.ActiveStepTaskID) {
+		// Resume: wait for the existing process instead of spawning new
+		runResult, err = e.runner.WaitForExisting(execCtx, stepCtx.ActiveStepTaskID)
+	} else {
+		// Fresh start: spawn new agent with callback to track process
+		onSpawn := func(stepTaskID string) {
+			stepCtx.SetActiveStepTaskID(stepTaskID)
+		}
+		runResult, err = e.runner.Run(execCtx, stepCtx.WorktreePath, prompt, onSpawn)
+	}
+
+	// Clear active step since we're done (whether success or failure)
+	stepCtx.ClearActiveStepTaskID()
+
 	duration := time.Since(start)
 
 	// Extract values from result

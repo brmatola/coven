@@ -45,7 +45,8 @@ func (r *ProcessAgentRunner) SetCommand(cmd string, args []string) {
 
 // Run implements workflow.AgentRunner.
 // It spawns an agent process with the given prompt and waits for completion.
-func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string) (*workflow.AgentRunResult, error) {
+// If onSpawn is provided, it's called immediately after spawn with the stepTaskID.
+func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string, onSpawn func(stepTaskID string)) (*workflow.AgentRunResult, error) {
 	// Build args with prompt
 	args := append([]string{}, r.args...)
 	args = append(args, prompt)
@@ -70,6 +71,33 @@ func (r *ProcessAgentRunner) Run(ctx context.Context, workDir, prompt string) (*
 		return nil, spawnErr
 	}
 
+	// Call onSpawn callback immediately after spawn so caller can save state
+	if onSpawn != nil {
+		onSpawn(stepTaskID)
+	}
+
+	// Wait for completion
+	return r.waitForProcess(ctx, stepTaskID)
+}
+
+// WaitForExisting waits for an existing agent process to complete.
+// Used when resuming a workflow where an agent step was already running.
+func (r *ProcessAgentRunner) WaitForExisting(ctx context.Context, stepTaskID string) (*workflow.AgentRunResult, error) {
+	// Check if the process exists
+	if !r.processManager.IsRunning(stepTaskID) {
+		return nil, nil // Process doesn't exist or already completed
+	}
+
+	return r.waitForProcess(ctx, stepTaskID)
+}
+
+// IsRunning checks if a process with the given task ID is currently running.
+func (r *ProcessAgentRunner) IsRunning(stepTaskID string) bool {
+	return r.processManager.IsRunning(stepTaskID)
+}
+
+// waitForProcess waits for a process to complete and returns the result.
+func (r *ProcessAgentRunner) waitForProcess(ctx context.Context, stepTaskID string) (*workflow.AgentRunResult, error) {
 	// Use a goroutine to handle context cancellation
 	resultCh := make(chan *agent.ProcessResult, 1)
 	errCh := make(chan error, 1)

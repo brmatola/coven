@@ -107,7 +107,7 @@ func TestProcessAgentRunner_Run_Success(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	result, err := runner.Run(ctx, workDir, "hello world")
+	result, err := runner.Run(ctx, workDir, "hello world", nil)
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -132,7 +132,7 @@ func TestProcessAgentRunner_Run_WithArgs(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	result, err := runner.Run(ctx, workDir, "test")
+	result, err := runner.Run(ctx, workDir, "test", nil)
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -156,7 +156,7 @@ func TestProcessAgentRunner_Run_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := runner.Run(ctx, workDir, "10") // sleep 10 seconds
+	_, err := runner.Run(ctx, workDir, "10", nil) // sleep 10 seconds
 
 	if err == nil {
 		t.Error("Expected error from cancelled context")
@@ -175,7 +175,7 @@ func TestProcessAgentRunner_Run_CommandFailure(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	result, err := runner.Run(ctx, workDir, "")
+	result, err := runner.Run(ctx, workDir, "", nil)
 
 	if err != nil {
 		t.Fatalf("Run() error: %v (expected nil error with non-zero exit)", err)
@@ -195,7 +195,7 @@ func TestProcessAgentRunner_Run_IncrementingStepCounter(t *testing.T) {
 
 	// Run multiple times and verify step counter increments
 	for i := 1; i <= 3; i++ {
-		_, err := runner.Run(ctx, workDir, "step")
+		_, err := runner.Run(ctx, workDir, "step", nil)
 		if err != nil {
 			t.Fatalf("Run() iteration %d error: %v", i, err)
 		}
@@ -214,7 +214,7 @@ func TestProcessAgentRunner_Run_NoTaskID(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	result, err := runner.Run(ctx, workDir, "no-task-id")
+	result, err := runner.Run(ctx, workDir, "no-task-id", nil)
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -235,7 +235,7 @@ func TestProcessAgentRunner_Run_NonexistentCommand(t *testing.T) {
 	workDir := t.TempDir()
 	ctx := context.Background()
 
-	_, err := runner.Run(ctx, workDir, "test")
+	_, err := runner.Run(ctx, workDir, "test", nil)
 
 	if err == nil {
 		t.Error("Expected error for nonexistent command")
@@ -249,9 +249,7 @@ func TestProcessAgentRunner_InterfaceCompliance(t *testing.T) {
 	pm := newTestProcessManager(t)
 	var runner any = NewProcessAgentRunner(pm, "echo", nil)
 
-	if _, ok := runner.(interface {
-		Run(ctx context.Context, workDir, prompt string) (*workflow.AgentRunResult, error)
-	}); !ok {
-		t.Error("ProcessAgentRunner does not implement expected Run method")
+	if _, ok := runner.(workflow.AgentRunner); !ok {
+		t.Error("ProcessAgentRunner does not implement workflow.AgentRunner")
 	}
 }

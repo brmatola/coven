@@ -128,11 +128,19 @@ func (e *Engine) Execute(ctx context.Context, g *grimoire.Grimoire) *ExecutionRe
 func (e *Engine) ExecuteFromState(ctx context.Context, g *grimoire.Grimoire, state *WorkflowState) *ExecutionResult {
 	// Start from the next step after the last completed one
 	startStep := state.CurrentStep + 1
-	return e.executeFromStep(ctx, g, startStep, state.StepOutputs)
+
+	// Pass active step task ID for agent process resumption
+	return e.executeFromStepWithActiveProcess(ctx, g, startStep, state.StepOutputs, state.ActiveStepTaskID)
 }
 
 // executeFromStep runs a grimoire starting from a specific step.
 func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, startStep int, savedOutputs map[string]string) *ExecutionResult {
+	return e.executeFromStepWithActiveProcess(ctx, g, startStep, savedOutputs, "")
+}
+
+// executeFromStepWithActiveProcess runs a grimoire starting from a specific step,
+// with optional active process resumption.
+func (e *Engine) executeFromStepWithActiveProcess(ctx context.Context, g *grimoire.Grimoire, startStep int, savedOutputs map[string]string, activeStepTaskID string) *ExecutionResult {
 	start := time.Now()
 
 	result := &ExecutionResult{
@@ -151,6 +159,11 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 
 	// Create step context
 	stepCtx := NewStepContext(e.config.WorktreePath, e.config.BeadID, e.config.WorkflowID)
+
+	// Set active step task ID for agent process resumption
+	if activeStepTaskID != "" {
+		stepCtx.ActiveStepTaskID = activeStepTaskID
+	}
 
 	// Set bead data in context if provided
 	if e.config.Bead != nil {
@@ -175,6 +188,15 @@ func (e *Engine) executeFromStep(ctx context.Context, g *grimoire.Grimoire, star
 		CompletedSteps: make(map[string]*StepResult),
 		StepOutputs:    make(map[string]string),
 		StartedAt:      start,
+	}
+
+	// Set up callback to save workflow state when active step task ID changes
+	// This ensures we can reconnect to running agent processes after daemon restart
+	stepCtx.OnActiveStepTaskIDChange = func(stepTaskID string) {
+		workflowState.ActiveStepTaskID = stepTaskID
+		if e.statePersister != nil {
+			e.statePersister.Save(workflowState)
+		}
 	}
 
 	// Copy any saved outputs to the new state
