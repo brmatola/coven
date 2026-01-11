@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,33 +51,15 @@ func TestProcessAgentRunner_SetTaskID(t *testing.T) {
 	pm := newTestProcessManager(t)
 	runner := NewProcessAgentRunner(pm, "echo", nil)
 
-	// Initially empty
-	if runner.currentTaskID != "" {
-		t.Errorf("initial currentTaskID = %q, want empty", runner.currentTaskID)
-	}
-	if runner.stepCounter != 0 {
-		t.Errorf("initial stepCounter = %d, want 0", runner.stepCounter)
-	}
-
-	// Set task ID
+	// SetTaskID is now a no-op (deprecated).
+	// Task IDs are derived from workDir in Run().
+	// This test just verifies SetTaskID doesn't panic.
 	runner.SetTaskID("task-123")
-	if runner.currentTaskID != "task-123" {
-		t.Errorf("currentTaskID = %q, want %q", runner.currentTaskID, "task-123")
-	}
-	if runner.stepCounter != 0 {
-		t.Errorf("stepCounter = %d, want 0 (should reset)", runner.stepCounter)
-	}
-
-	// Simulate incrementing step counter (manually since we'd need to run)
-	runner.stepCounter = 5
-
-	// Set new task ID - should reset counter
 	runner.SetTaskID("task-456")
-	if runner.currentTaskID != "task-456" {
-		t.Errorf("currentTaskID = %q, want %q", runner.currentTaskID, "task-456")
-	}
-	if runner.stepCounter != 0 {
-		t.Errorf("stepCounter = %d, want 0 after SetTaskID", runner.stepCounter)
+
+	// Verify step counters start empty
+	if len(runner.stepCounters) != 0 {
+		t.Errorf("initial stepCounters should be empty, got %d entries", len(runner.stepCounters))
 	}
 }
 
@@ -102,9 +85,13 @@ func TestProcessAgentRunner_SetCommand(t *testing.T) {
 func TestProcessAgentRunner_Run_Success(t *testing.T) {
 	pm := newTestProcessManager(t)
 	runner := NewProcessAgentRunner(pm, "echo", nil)
-	runner.SetTaskID("run-success-test")
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "run-success-test")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx := context.Background()
 
 	result, err := runner.Run(ctx, workDir, "hello world", nil)
@@ -127,9 +114,13 @@ func TestProcessAgentRunner_Run_WithArgs(t *testing.T) {
 	pm := newTestProcessManager(t)
 	// Use -n flag to suppress newline
 	runner := NewProcessAgentRunner(pm, "echo", []string{"-n"})
-	runner.SetTaskID("run-args-test")
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "run-args-test")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx := context.Background()
 
 	result, err := runner.Run(ctx, workDir, "test", nil)
@@ -150,9 +141,13 @@ func TestProcessAgentRunner_Run_ContextCancellation(t *testing.T) {
 	pm := newTestProcessManager(t)
 	// Use sleep to create a long-running process
 	runner := NewProcessAgentRunner(pm, "sleep", nil)
-	runner.SetTaskID("cancel-test")
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "cancel-test")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -170,9 +165,13 @@ func TestProcessAgentRunner_Run_CommandFailure(t *testing.T) {
 	pm := newTestProcessManager(t)
 	// Use false command which always exits with code 1
 	runner := NewProcessAgentRunner(pm, "false", nil)
-	runner.SetTaskID("fail-test")
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "fail-test")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx := context.Background()
 
 	result, err := runner.Run(ctx, workDir, "", nil)
@@ -188,33 +187,51 @@ func TestProcessAgentRunner_Run_CommandFailure(t *testing.T) {
 func TestProcessAgentRunner_Run_IncrementingStepCounter(t *testing.T) {
 	pm := newTestProcessManager(t)
 	runner := NewProcessAgentRunner(pm, "echo", nil)
-	runner.SetTaskID("step-counter-test")
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "step-counter-test")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx := context.Background()
 
-	// Run multiple times and verify step counter increments
+	// Run multiple times and verify step counter increments per task
 	for i := 1; i <= 3; i++ {
-		_, err := runner.Run(ctx, workDir, "step", nil)
+		result, err := runner.Run(ctx, workDir, "step", nil)
 		if err != nil {
 			t.Fatalf("Run() iteration %d error: %v", i, err)
 		}
 
-		if runner.stepCounter != uint64(i) {
-			t.Errorf("After %d runs, stepCounter = %d, want %d", i, runner.stepCounter, i)
+		// Verify step task ID contains the expected step number
+		expectedSuffix := "-step-" + string(rune('0'+i))
+		if !strings.HasSuffix(result.StepTaskID, expectedSuffix) {
+			t.Errorf("After %d runs, StepTaskID = %q, want suffix %q", i, result.StepTaskID, expectedSuffix)
 		}
+	}
+
+	// Verify the step counter was tracked for this task
+	runner.mu.Lock()
+	count := runner.stepCounters["step-counter-test"]
+	runner.mu.Unlock()
+	if count != 3 {
+		t.Errorf("stepCounters[\"step-counter-test\"] = %d, want 3", count)
 	}
 }
 
-func TestProcessAgentRunner_Run_NoTaskID(t *testing.T) {
+func TestProcessAgentRunner_Run_ExtractsTaskIDFromPath(t *testing.T) {
 	pm := newTestProcessManager(t)
 	runner := NewProcessAgentRunner(pm, "echo", nil)
-	// Don't set task ID - should generate one
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "path-task-id")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx := context.Background()
 
-	result, err := runner.Run(ctx, workDir, "no-task-id", nil)
+	result, err := runner.Run(ctx, workDir, "test", nil)
 
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -222,23 +239,95 @@ func TestProcessAgentRunner_Run_NoTaskID(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Errorf("exitCode = %d, want 0", result.ExitCode)
 	}
-	if !strings.Contains(result.Output, "no-task-id") {
-		t.Errorf("output = %q, should contain %q", result.Output, "no-task-id")
+	// Verify the step task ID contains the task ID from the path
+	if !strings.HasPrefix(result.StepTaskID, "path-task-id-step-") {
+		t.Errorf("StepTaskID = %q, should start with %q", result.StepTaskID, "path-task-id-step-")
 	}
 }
 
 func TestProcessAgentRunner_Run_NonexistentCommand(t *testing.T) {
 	pm := newTestProcessManager(t)
 	runner := NewProcessAgentRunner(pm, "this-command-does-not-exist-12345", nil)
-	runner.SetTaskID("nonexistent-test")
 
-	workDir := t.TempDir()
+	// Create a workDir with a known task ID suffix
+	baseDir := t.TempDir()
+	workDir := filepath.Join(baseDir, "nonexistent-test")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatalf("Failed to create workDir: %v", err)
+	}
 	ctx := context.Background()
 
 	_, err := runner.Run(ctx, workDir, "test", nil)
 
 	if err == nil {
 		t.Error("Expected error for nonexistent command")
+	}
+}
+
+func TestProcessAgentRunner_ConcurrentWorkflows(t *testing.T) {
+	pm := newTestProcessManager(t)
+	runner := NewProcessAgentRunner(pm, "echo", nil)
+
+	// Create multiple workDirs for concurrent workflows
+	baseDir := t.TempDir()
+	var workDirs []string
+	for i := 0; i < 3; i++ {
+		workDir := filepath.Join(baseDir, "workflow-"+string(rune('a'+i)))
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			t.Fatalf("Failed to create workDir: %v", err)
+		}
+		workDirs = append(workDirs, workDir)
+	}
+
+	ctx := context.Background()
+
+	// Run steps in each workflow concurrently
+	type result struct {
+		workDir    string
+		stepTaskID string
+		err        error
+	}
+	results := make(chan result, 9) // 3 workflows x 3 steps
+
+	for _, workDir := range workDirs {
+		workDir := workDir // capture
+		for step := 0; step < 3; step++ {
+			go func() {
+				res, err := runner.Run(ctx, workDir, "test", nil)
+				stepTaskID := ""
+				if res != nil {
+					stepTaskID = res.StepTaskID
+				}
+				results <- result{workDir: workDir, stepTaskID: stepTaskID, err: err}
+			}()
+		}
+	}
+
+	// Collect results
+	stepsByWorkflow := make(map[string][]string)
+	for i := 0; i < 9; i++ {
+		res := <-results
+		if res.err != nil {
+			t.Errorf("Run() error for %s: %v", res.workDir, res.err)
+			continue
+		}
+		// Extract workflow name from workDir
+		workflowName := filepath.Base(res.workDir)
+		stepsByWorkflow[workflowName] = append(stepsByWorkflow[workflowName], res.stepTaskID)
+	}
+
+	// Verify each workflow has its own step sequence
+	for workflow, steps := range stepsByWorkflow {
+		if len(steps) != 3 {
+			t.Errorf("Workflow %s has %d steps, want 3", workflow, len(steps))
+			continue
+		}
+		// All step task IDs should start with the workflow name
+		for _, stepTaskID := range steps {
+			if !strings.HasPrefix(stepTaskID, workflow+"-step-") {
+				t.Errorf("StepTaskID %q doesn't have prefix %q", stepTaskID, workflow+"-step-")
+			}
+		}
 	}
 }
 
