@@ -89,9 +89,53 @@ export class DaemonClient {
 
   /**
    * Get current daemon state including workflow, tasks, agents, and questions.
+   * Transforms the daemon's raw state format to the expected DaemonState interface.
    */
   async getState(): Promise<DaemonState> {
-    return this.get<DaemonState>('/state');
+    // Raw response type from daemon (different structure than DaemonState)
+    interface RawState {
+      agents?: Record<string, Agent> | Agent[];
+      tasks?: DaemonTask[];
+      last_task_sync?: string;
+    }
+    interface RawResponse {
+      state?: RawState;
+      timestamp?: string;
+    }
+
+    const raw = await this.get<RawResponse>('/state');
+
+    // Transform raw daemon response to expected DaemonState format
+    // Handle case where 'state' is nested or at top level
+    const rawState: RawState | undefined = raw?.state ?? (raw as unknown as RawState);
+
+    // Convert agents from object format to array if needed
+    let agents: Agent[] = [];
+    if (rawState?.agents) {
+      if (Array.isArray(rawState.agents)) {
+        agents = rawState.agents;
+      } else {
+        // Object format: { taskId: Agent }
+        agents = Object.entries(rawState.agents).map(([taskId, agent]) => ({
+          ...agent,
+          taskId,
+        }));
+      }
+    }
+
+    // Ensure tasks is always an array
+    const tasks = Array.isArray(rawState?.tasks) ? rawState.tasks : [];
+
+    return {
+      workflow: {
+        id: '',
+        status: 'idle',
+      },
+      tasks,
+      agents,
+      questions: [],
+      timestamp: raw?.timestamp ? new Date(raw.timestamp).getTime() : Date.now(),
+    };
   }
 
   // ============================================================================

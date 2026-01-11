@@ -97,6 +97,9 @@ export class ConnectionManager extends EventEmitter {
       return;
     }
 
+    // Cancel any pending reconnection attempts to avoid race conditions
+    this.cancelReconnect();
+
     this.isDisconnecting = false;
     this._state = 'connecting';
     this.reconnectAttempt = 0;

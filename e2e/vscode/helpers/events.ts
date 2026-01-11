@@ -213,6 +213,13 @@ export class EventWaiter {
   }
 
   /**
+   * Check if connected to SSE endpoint.
+   */
+  isConnected(): boolean {
+    return this.client.isConnected();
+  }
+
+  /**
    * Wait for a specific event type.
    *
    * @param eventType The event type to wait for

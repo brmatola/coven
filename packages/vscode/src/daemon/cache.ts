@@ -136,24 +136,42 @@ export class StateCache extends EventEmitter {
    */
   handleSnapshot(state: DaemonState): void {
     // Replace all cached state
-    this.workflow = state.workflow;
+    this.workflow = state.workflow ?? null;
 
     this.tasksById.clear();
-    for (const task of state.tasks) {
-      this.tasksById.set(task.id, task);
+    // Ensure tasks is an array (defensive against unexpected formats)
+    const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+    for (const task of tasks) {
+      if (task && task.id) {
+        this.tasksById.set(task.id, task);
+      }
     }
 
+    // Daemon sends agents as object {taskId: Agent}, convert to array
     this.agentsByTaskId.clear();
-    for (const agent of state.agents) {
-      this.agentsByTaskId.set(agent.taskId, agent);
+    const agents = state.agents ?? {};
+    if (Array.isArray(agents)) {
+      for (const agent of agents) {
+        this.agentsByTaskId.set(agent.taskId, agent);
+      }
+    } else {
+      // Object format from daemon: {taskId: Agent}
+      for (const [taskId, agent] of Object.entries(agents)) {
+        const agentData = agent as Agent;
+        this.agentsByTaskId.set(taskId, { ...agentData, taskId });
+      }
     }
 
     this.questionsById.clear();
-    for (const question of state.questions) {
-      this.questionsById.set(question.id, question);
+    // Ensure questions is an array (defensive against unexpected formats)
+    const questions = Array.isArray(state.questions) ? state.questions : [];
+    for (const question of questions) {
+      if (question && question.id) {
+        this.questionsById.set(question.id, question);
+      }
     }
 
-    this.lastTimestamp = state.timestamp;
+    this.lastTimestamp = state.timestamp ?? Date.now();
 
     // Emit change events for all collections
     this.emit('workflows.changed', this.workflow);
@@ -169,7 +187,13 @@ export class StateCache extends EventEmitter {
    */
   handleEvent(event: SSEEvent): void {
     const eventType = event.type;
-    const data = event.data as Record<string, unknown>;
+    let data = event.data as Record<string, unknown>;
+
+    // Daemon wraps event data in {"type": "...", "data": {...}}
+    // Unwrap if present
+    if (data && typeof data === 'object' && 'data' in data) {
+      data = data.data as Record<string, unknown>;
+    }
 
     switch (eventType) {
       case 'state.snapshot':

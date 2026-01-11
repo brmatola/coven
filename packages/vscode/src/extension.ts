@@ -6,6 +6,7 @@ import { SetupPanel } from './setup/SetupPanel';
 import { SetupTreeProvider } from './setup/SetupTreeProvider';
 import { TaskDetailPanel } from './tasks/TaskDetailPanel';
 import { ReviewPanel } from './review/ReviewPanel';
+import { WorkflowDetailPanel } from './workflow/WorkflowDetailPanel';
 import { ExtensionContext } from './shared/extensionContext';
 import { FamiliarOutputChannel } from './agents/FamiliarOutputChannel';
 import { QuestionHandler } from './agents/QuestionHandler';
@@ -101,7 +102,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.cancelWorkflow', cancelWorkflow),
     vscode.commands.registerCommand('coven.retryWorkflow', retryWorkflow),
     vscode.commands.registerCommand('coven.approveMerge', approveMerge),
-    vscode.commands.registerCommand('coven.rejectMerge', rejectMerge)
+    vscode.commands.registerCommand('coven.rejectMerge', rejectMerge),
+    vscode.commands.registerCommand('coven.showWorkflowDetail', showWorkflowDetail)
   );
 
   // Check workspace initialization status
@@ -293,6 +295,53 @@ async function initializeDaemon(
 }
 
 /**
+ * Retry connection to daemon, restarting it if necessary.
+ * This is used for both auto-reconnect failures and manual "Retry" button.
+ */
+async function retryConnectionWithRestart(): Promise<void> {
+  const ctx = ExtensionContext.get();
+  ctx.logger.info('Retrying daemon connection');
+
+  if (!daemonLifecycle) {
+    ctx.logger.error('No daemon lifecycle manager available');
+    await vscode.window.showErrorMessage('Coven: Unable to restart daemon - please reload the window');
+    return;
+  }
+
+  try {
+    // Show starting status
+    const startingDisposable = daemonNotifications?.showStarting();
+
+    // Ensure daemon is running (will start if not running)
+    await daemonLifecycle.ensureRunning();
+    startingDisposable?.dispose();
+    daemonNotifications?.showStarted();
+
+    // Update socket path in case it changed
+    daemonSocketPath = daemonLifecycle.getSocketPath();
+
+    // Now try to connect
+    if (connectionManager) {
+      await connectionManager.connect();
+    } else {
+      ctx.logger.error('No connection manager available after daemon restart');
+    }
+  } catch (err) {
+    ctx.logger.error('Failed to restart daemon and reconnect', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    // Show error with option to view logs
+    if (err instanceof Error && daemonNotifications) {
+      await daemonNotifications.showError(err, {
+        viewLogs: () => daemonNotifications?.viewLogs(),
+        startDaemon: () => retryConnectionWithRestart(),
+      });
+    }
+  }
+}
+
+/**
  * Set up event handlers for connection manager events.
  */
 function setupConnectionEventHandlers(manager: ConnectionManager): void {
@@ -306,7 +355,7 @@ function setupConnectionEventHandlers(manager: ConnectionManager): void {
   manager.on('disconnected', () => {
     statusBar?.setDisconnected();
     void daemonNotifications?.showConnectionLost({
-      retry: () => connectionManager?.connect(),
+      retry: () => retryConnectionWithRestart(),
     });
   });
 
@@ -322,10 +371,18 @@ function setupConnectionEventHandlers(manager: ConnectionManager): void {
       error: error.message,
     });
 
-    // Only show notification for fatal errors, not transient ones
+    // When max reconnection attempts reached, automatically try to restart daemon
     if (error.message.includes('Max reconnection attempts')) {
-      void daemonNotifications?.showReconnectionFailed({
-        retry: () => connectionManager?.connect(),
+      ctx.logger.info('Auto-reconnection failed, attempting to restart daemon');
+      // Automatically attempt daemon restart
+      void retryConnectionWithRestart().catch((restartError) => {
+        ctx.logger.error('Auto-restart failed', {
+          error: restartError instanceof Error ? restartError.message : String(restartError),
+        });
+        // If auto-restart fails, show notification with retry button
+        void daemonNotifications?.showReconnectionFailed({
+          retry: () => retryConnectionWithRestart(),
+        });
       });
     }
   });
@@ -711,4 +768,31 @@ async function rejectMerge(arg: unknown): Promise<void> {
 
   const client = new DaemonClient(daemonSocketPath);
   await rejectWorkflow(client, arg);
+}
+
+/**
+ * Show workflow detail panel.
+ */
+async function showWorkflowDetail(arg: unknown): Promise<void> {
+  const ctx = ExtensionContext.get();
+  const workflowId = extractWorkflowId(arg);
+
+  if (!workflowId || !daemonSocketPath || !sseClient) {
+    await vscode.window.showErrorMessage('Coven: Invalid workflow reference or daemon not connected');
+    return;
+  }
+
+  try {
+    const client = new DaemonClient(daemonSocketPath);
+    WorkflowDetailPanel.createOrShow(ctx.extensionUri, client, sseClient, workflowId);
+    ctx.logger.info('Workflow detail panel opened', { workflowId });
+  } catch (err) {
+    ctx.logger.error('Failed to open workflow detail panel', {
+      workflowId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await vscode.window.showErrorMessage(
+      `Failed to open workflow details: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
