@@ -92,10 +92,13 @@ func TestWorktreeCreate(t *testing.T) {
 		t.Error("Worktree path does not exist")
 	}
 
-	// Creating again should fail
-	_, err = manager.Create(ctx, "task-1")
-	if err == nil {
-		t.Error("Create() should fail for existing worktree")
+	// Creating again should be idempotent (return existing worktree)
+	info2, err := manager.Create(ctx, "task-1")
+	if err != nil {
+		t.Errorf("Create() should be idempotent: %v", err)
+	}
+	if info2.Path != info.Path {
+		t.Errorf("Idempotent Create() should return same path: got %q, want %q", info2.Path, info.Path)
 	}
 }
 

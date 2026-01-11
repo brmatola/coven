@@ -35,7 +35,8 @@ func NewWorktreeManager(repoPath string, logger *logging.Logger) *WorktreeManage
 	}
 }
 
-// Create creates a new worktree for a task.
+// Create creates a new worktree for a task, or returns the existing one if already created.
+// This is idempotent - calling it multiple times for the same task is safe.
 func (m *WorktreeManager) Create(ctx context.Context, taskID string) (*WorktreeInfo, error) {
 	// Ensure worktrees directory exists
 	if err := os.MkdirAll(m.worktreesDir, 0755); err != nil {
@@ -48,7 +49,23 @@ func (m *WorktreeManager) Create(ctx context.Context, taskID string) (*WorktreeI
 
 	// Check if worktree already exists
 	if _, err := os.Stat(worktreePath); err == nil {
-		return nil, fmt.Errorf("worktree already exists for task %s", taskID)
+		// Verify it's a valid git worktree by checking for .git file
+		gitPath := filepath.Join(worktreePath, ".git")
+		if _, err := os.Stat(gitPath); err == nil {
+			m.logger.Debug("reusing existing worktree", "task_id", taskID, "path", worktreePath)
+			return &WorktreeInfo{
+				Path:   worktreePath,
+				Branch: branchName,
+				TaskID: taskID,
+			}, nil
+		}
+		// Directory exists but not a valid worktree - clean it up
+		m.logger.Warn("cleaning up invalid worktree directory", "task_id", taskID, "path", worktreePath)
+		if err := os.RemoveAll(worktreePath); err != nil {
+			return nil, fmt.Errorf("failed to clean up invalid worktree: %w", err)
+		}
+		// Also prune the git worktree list
+		_ = m.runGit(ctx, "worktree", "prune")
 	}
 
 	// Get current branch to base off
@@ -57,8 +74,19 @@ func (m *WorktreeManager) Create(ctx context.Context, taskID string) (*WorktreeI
 		return nil, fmt.Errorf("failed to get current branch: %w", err)
 	}
 
-	// Create the worktree with a new branch
-	args := []string{"worktree", "add", "-b", branchName, worktreePath, baseBranch}
+	// Check if branch already exists (from a previous partial creation)
+	branchExists := m.branchExists(ctx, branchName)
+
+	// Create the worktree
+	var args []string
+	if branchExists {
+		// Branch exists, attach worktree to existing branch
+		args = []string{"worktree", "add", worktreePath, branchName}
+	} else {
+		// Create new branch
+		args = []string{"worktree", "add", "-b", branchName, worktreePath, baseBranch}
+	}
+
 	if err := m.runGit(ctx, args...); err != nil {
 		return nil, fmt.Errorf("failed to create worktree: %w", err)
 	}
@@ -70,6 +98,13 @@ func (m *WorktreeManager) Create(ctx context.Context, taskID string) (*WorktreeI
 		Branch: branchName,
 		TaskID: taskID,
 	}, nil
+}
+
+// branchExists checks if a branch exists in the repository.
+func (m *WorktreeManager) branchExists(ctx context.Context, branchName string) bool {
+	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	cmd.Dir = m.repoPath
+	return cmd.Run() == nil
 }
 
 // Remove removes a worktree for a task.
