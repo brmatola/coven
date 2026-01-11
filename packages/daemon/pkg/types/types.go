@@ -54,8 +54,30 @@ type Agent struct {
 	Error      string      `json:"error,omitempty"`
 }
 
+// WorkflowStatus represents the status of a workflow.
+type WorkflowStatus string
+
+const (
+	WorkflowStatusIdle      WorkflowStatus = "idle"
+	WorkflowStatusRunning   WorkflowStatus = "running"
+	WorkflowStatusPaused    WorkflowStatus = "paused"
+	WorkflowStatusCompleted WorkflowStatus = "completed"
+	WorkflowStatusError     WorkflowStatus = "error"
+)
+
+// WorkflowState represents the current workflow state for the UI.
+type WorkflowState struct {
+	ID          string         `json:"id"`
+	Status      WorkflowStatus `json:"status"`
+	StartedAt   *time.Time     `json:"started_at,omitempty"`
+	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+}
+
 // DaemonState represents the complete state of the daemon.
 type DaemonState struct {
+	// Workflow is the current workflow state.
+	Workflow *WorkflowState `json:"workflow,omitempty"`
+
 	// Agents maps task IDs to their agent state.
 	Agents map[string]*Agent `json:"agents"`
 

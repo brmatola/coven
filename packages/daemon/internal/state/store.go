@@ -95,7 +95,50 @@ func (s *Store) GetState() *types.DaemonState {
 
 	copy(stateCopy.Tasks, s.state.Tasks)
 
+	// Derive workflow state from agents
+	stateCopy.Workflow = s.deriveWorkflowState()
+
 	return stateCopy
+}
+
+// deriveWorkflowState computes the workflow state from agents.
+// Called with lock held.
+func (s *Store) deriveWorkflowState() *types.WorkflowState {
+	var runningAgent *types.Agent
+	var mostRecentAgent *types.Agent
+
+	for _, agent := range s.state.Agents {
+		// Track running agent
+		if agent.Status == types.AgentStatusRunning || agent.Status == types.AgentStatusStarting {
+			runningAgent = agent
+			break
+		}
+		// Track most recent agent for ID
+		if mostRecentAgent == nil || agent.StartedAt.After(mostRecentAgent.StartedAt) {
+			mostRecentAgent = agent
+		}
+	}
+
+	// If there's a running agent, workflow is running
+	if runningAgent != nil {
+		return &types.WorkflowState{
+			ID:        runningAgent.TaskID,
+			Status:    types.WorkflowStatusRunning,
+			StartedAt: &runningAgent.StartedAt,
+		}
+	}
+
+	// No running agent - workflow is idle
+	// Use most recent agent ID if available, otherwise empty
+	workflowID := ""
+	if mostRecentAgent != nil {
+		workflowID = mostRecentAgent.TaskID
+	}
+
+	return &types.WorkflowState{
+		ID:     workflowID,
+		Status: types.WorkflowStatusIdle,
+	}
 }
 
 // Agent operations
