@@ -1,5 +1,4 @@
-import type { SSEEvent, SSEEventType } from '../../daemon/sse';
-import type { DaemonState, DaemonTask } from '../../daemon/types';
+import type { SSEEvent, SSEEventType, DaemonState, Task } from '@coven/client-ts';
 import { emptyState, runningWorkflow, runningTask, runningAgent } from './stateFixtures';
 
 // ============================================================================
@@ -51,7 +50,7 @@ export const activeStateSnapshot: SSEEvent = createEvent('state.snapshot', {
   ...emptyState,
   workflow: runningWorkflow,
   tasks: [runningTask],
-  agents: [runningAgent],
+  agents: { 'task-running': runningAgent },
 });
 
 /**
@@ -122,9 +121,9 @@ export function workflowEvent(
 // ============================================================================
 
 export interface AgentEventData {
-  taskId: string;
+  task_id: string;
   pid?: number;
-  exitCode?: number;
+  exit_code?: number;
   error?: string;
   line?: string;
 }
@@ -133,7 +132,7 @@ export interface AgentEventData {
  * Agent spawned event.
  */
 export const agentSpawnedEvent: SSEEvent = createEvent('agent.spawned', {
-  taskId: 'task-1',
+  task_id: 'task-1',
   pid: 12345,
 });
 
@@ -141,7 +140,7 @@ export const agentSpawnedEvent: SSEEvent = createEvent('agent.spawned', {
  * Agent output event (single line).
  */
 export const agentOutputEvent: SSEEvent = createEvent('agent.output', {
-  taskId: 'task-1',
+  task_id: 'task-1',
   line: 'Processing file src/index.ts...',
 });
 
@@ -149,16 +148,16 @@ export const agentOutputEvent: SSEEvent = createEvent('agent.output', {
  * Agent completed event.
  */
 export const agentCompletedEvent: SSEEvent = createEvent('agent.completed', {
-  taskId: 'task-1',
-  exitCode: 0,
+  task_id: 'task-1',
+  exit_code: 0,
 });
 
 /**
  * Agent failed event.
  */
 export const agentFailedEvent: SSEEvent = createEvent('agent.failed', {
-  taskId: 'task-1',
-  exitCode: 1,
+  task_id: 'task-1',
+  exit_code: 1,
   error: 'Agent process crashed',
 });
 
@@ -166,8 +165,8 @@ export const agentFailedEvent: SSEEvent = createEvent('agent.failed', {
  * Agent killed event.
  */
 export const agentKilledEvent: SSEEvent = createEvent('agent.killed', {
-  taskId: 'task-1',
-  exitCode: -9,
+  task_id: 'task-1',
+  exit_code: -9,
   error: 'Killed by user',
 });
 
@@ -175,14 +174,14 @@ export const agentKilledEvent: SSEEvent = createEvent('agent.killed', {
  * Create agent spawned event.
  */
 export function agentSpawned(taskId: string, pid?: number): SSEEvent {
-  return createEvent('agent.spawned', { taskId, pid });
+  return createEvent('agent.spawned', { task_id: taskId, pid });
 }
 
 /**
  * Create agent output event.
  */
 export function agentOutput(taskId: string, line: string): SSEEvent {
-  return createEvent('agent.output', { taskId, line });
+  return createEvent('agent.output', { task_id: taskId, line });
 }
 
 /**
@@ -196,14 +195,14 @@ export function agentOutputLines(taskId: string, lines: string[]): SSEEvent[] {
  * Create agent completed event.
  */
 export function agentCompleted(taskId: string, exitCode: number = 0): SSEEvent {
-  return createEvent('agent.completed', { taskId, exitCode });
+  return createEvent('agent.completed', { task_id: taskId, exit_code: exitCode });
 }
 
 /**
  * Create agent failed event.
  */
 export function agentFailed(taskId: string, error: string, exitCode: number = 1): SSEEvent {
-  return createEvent('agent.failed', { taskId, error, exitCode });
+  return createEvent('agent.failed', { task_id: taskId, error, exit_code: exitCode });
 }
 
 /**
@@ -211,8 +210,8 @@ export function agentFailed(taskId: string, error: string, exitCode: number = 1)
  */
 export function agentKilled(taskId: string, reason?: string): SSEEvent {
   return createEvent('agent.killed', {
-    taskId,
-    exitCode: -9,
+    task_id: taskId,
+    exit_code: -9,
     error: reason ?? 'Killed by user',
   });
 }
@@ -222,8 +221,8 @@ export function agentKilled(taskId: string, reason?: string): SSEEvent {
 // ============================================================================
 
 export interface TaskEventData {
-  taskId: string;
-  task?: DaemonTask;
+  task_id: string;
+  task?: Task;
   error?: string;
 }
 
@@ -238,7 +237,7 @@ export const tasksUpdatedEvent: SSEEvent = createEvent('tasks.updated', {
  * Task started event.
  */
 export const taskStartedEvent: SSEEvent = createEvent('task.started', {
-  taskId: 'task-1',
+  task_id: 'task-1',
   task: runningTask,
 });
 
@@ -246,14 +245,14 @@ export const taskStartedEvent: SSEEvent = createEvent('task.started', {
  * Task completed event.
  */
 export const taskCompletedEvent: SSEEvent = createEvent('task.completed', {
-  taskId: 'task-1',
+  task_id: 'task-1',
 });
 
 /**
  * Task failed event.
  */
 export const taskFailedEvent: SSEEvent = createEvent('task.failed', {
-  taskId: 'task-1',
+  task_id: 'task-1',
   error: 'Task execution failed',
 });
 
@@ -263,15 +262,15 @@ export const taskFailedEvent: SSEEvent = createEvent('task.failed', {
 export function taskEvent(
   type: 'task.started' | 'task.completed' | 'task.failed',
   taskId: string,
-  extras?: { task?: DaemonTask; error?: string }
+  extras?: { task?: Task; error?: string }
 ): SSEEvent {
-  return createEvent(type, { taskId, ...extras });
+  return createEvent(type, { task_id: taskId, ...extras });
 }
 
 /**
  * Create tasks updated event.
  */
-export function tasksUpdated(tasks: DaemonTask[]): SSEEvent {
+export function tasksUpdated(tasks: Task[]): SSEEvent {
   return createEvent('tasks.updated', { tasks });
 }
 
@@ -281,8 +280,8 @@ export function tasksUpdated(tasks: DaemonTask[]): SSEEvent {
 
 export interface QuestionEventData {
   id: string;
-  taskId: string;
-  agentId?: string;
+  task_id: string;
+  agent_id?: string;
   text?: string;
   options?: string[];
   answer?: string;
@@ -293,8 +292,8 @@ export interface QuestionEventData {
  */
 export const questionAskedEvent: SSEEvent = createEvent('questions.asked', {
   id: 'q-1',
-  taskId: 'task-1',
-  agentId: 'agent-1',
+  task_id: 'task-1',
+  agent_id: 'agent-1',
   text: 'What should I do next?',
 });
 
@@ -303,7 +302,7 @@ export const questionAskedEvent: SSEEvent = createEvent('questions.asked', {
  */
 export const questionAnsweredEvent: SSEEvent = createEvent('questions.answered', {
   id: 'q-1',
-  taskId: 'task-1',
+  task_id: 'task-1',
   answer: 'Proceed with option A',
 });
 
@@ -318,7 +317,7 @@ export function questionAsked(
 ): SSEEvent {
   return createEvent('questions.asked', {
     id: questionId,
-    taskId,
+    task_id: taskId,
     text,
     options,
   });
@@ -330,7 +329,7 @@ export function questionAsked(
 export function questionAnswered(questionId: string, taskId: string, answer: string): SSEEvent {
   return createEvent('questions.answered', {
     id: questionId,
-    taskId,
+    task_id: taskId,
     answer,
   });
 }

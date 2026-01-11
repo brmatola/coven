@@ -1,0 +1,107 @@
+openapi: 3.2.0
+info:
+  title: Coven Daemon API
+  version: 1.0.0
+  description: |
+    API for the Coven daemon that orchestrates AI agents and workflows.
+    
+    This API provides endpoints for:
+    - Health and version information
+    - Task management (from beads)
+    - Agent lifecycle and control
+    - Question handling
+    - Workflow orchestration
+    
+    The daemon communicates over Unix sockets. All endpoints use HTTP over Unix domain sockets.
+  contact:
+    name: API Support
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: http://localhost
+    description: Local daemon (Unix socket)
+    variables: {}
+
+security:
+  - {}  # No authentication required for local Unix socket
+
+tags:
+  - name: health
+    description: Health and status endpoints
+  - name: version
+    description: Version information
+  - name: state
+    description: Daemon state queries
+  - name: tasks
+    description: Task management from beads
+  - name: agents
+    description: Agent lifecycle and control
+  - name: questions
+    description: Question handling
+  - name: workflows
+    description: Workflow orchestration
+  - name: events
+    description: Server-Sent Events stream
+
+paths:
+  /health:
+    $ref: './paths/health.yaml'
+  /version:
+    $ref: './paths/version.yaml'
+  /state:
+    $ref: './paths/state.yaml'
+  /shutdown:
+    $ref: './paths/shutdown.yaml'
+  /tasks:
+    $ref: './paths/tasks.yaml'
+  /tasks/{id}/start:
+    $ref: './paths/task-start.yaml'
+  /tasks/{id}/stop:
+    $ref: './paths/task-stop.yaml'
+  /agents:
+    $ref: './paths/agents.yaml'
+  /agents/{id}:
+    $ref: './paths/agent-by-id.yaml'
+  /agents/{id}/output:
+    $ref: './paths/agent-output.yaml'
+  /agents/{id}/kill:
+    $ref: './paths/agent-kill.yaml'
+  /agents/{id}/respond:
+    $ref: './paths/agent-respond.yaml'
+  /questions:
+    $ref: './paths/questions.yaml'
+  /questions/{id}:
+    $ref: './paths/question-by-id.yaml'
+  /questions/{id}/answer:
+    $ref: './paths/question-answer.yaml'
+  /workflows:
+    $ref: './paths/workflows.yaml'
+  /workflows/{id}:
+    $ref: './paths/workflow-by-id.yaml'
+  /workflows/{id}/log:
+    $ref: './paths/workflow-log.yaml'
+  /workflows/{id}/cancel:
+    $ref: './paths/workflow-cancel.yaml'
+  /workflows/{id}/retry:
+    $ref: './paths/workflow-retry.yaml'
+  /workflows/{id}/approve-merge:
+    $ref: './paths/workflow-approve-merge.yaml'
+  /workflows/{id}/reject-merge:
+    $ref: './paths/workflow-reject-merge.yaml'
+  /events:
+    $ref: './paths/events.yaml'
+
+components:
+  schemas: {}
+  responses: {}
+  parameters:
+    TaskId:
+      $ref: './components/parameters.yaml#/components/parameters/TaskId'
+    AgentId:
+      $ref: './components/parameters.yaml#/components/parameters/AgentId'
+    QuestionId:
+      $ref: './components/parameters.yaml#/components/parameters/QuestionId'
+    WorkflowId:
+      $ref: './components/parameters.yaml#/components/parameters/WorkflowId'

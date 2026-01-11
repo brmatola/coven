@@ -5,8 +5,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "cd packages/vscode && npm run build",
+    "build": "cd packages/api-spec && npm run build && cd ../client-ts && npm run build && cd ../vscode && npm run build",
     "build:daemon": "cd packages/daemon && make build",
+    "build:api-spec": "cd packages/api-spec && npm run build",
+    "build:client-ts": "cd packages/client-ts && npm run build",
 
     "test:vscode": "cd packages/vscode && npm test",
     "test:vscode:e2e": "cd packages/vscode && npm run test:e2e",
@@ -20,6 +22,8 @@
 
     "lint": "cd packages/vscode && npm run lint",
     "format": "cd packages/vscode && npm run format",
-    "dogfood": "make build && cd packages/vscode && npm run dogfood"
+    "dogfood": "make build && cd packages/vscode && npm run dogfood",
+    "spec:validate": "cd packages/api-spec && npm run validate",
+    "spec:lint": "cd packages/api-spec && npm run lint"
   }
 }

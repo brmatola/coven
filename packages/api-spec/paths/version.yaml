@@ -1,0 +1,19 @@
+get:
+  operationId: get_version
+  summary: Get daemon version information
+  description: Returns version, git commit, build time, and Go version information
+  tags:
+    - version
+  responses:
+    '200':
+      description: Version information
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/VersionInfo'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

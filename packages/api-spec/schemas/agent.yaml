@@ -1,0 +1,140 @@
+components:
+  schemas:
+    AgentStatus:
+      type: string
+      enum:
+        - starting
+        - running
+        - completed
+        - failed
+        - killed
+      description: Current state of an agent
+
+    Agent:
+      type: object
+      required:
+        - task_id
+        - status
+        - pid
+        - worktree
+        - branch
+        - started_at
+      properties:
+        task_id:
+          type: string
+          description: Task ID this agent is working on
+        step_task_id:
+          type: string
+          description: Current step's process ID (for workflows)
+        pid:
+          type: integer
+          description: Process ID
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        worktree:
+          type: string
+          description: Worktree path
+        branch:
+          type: string
+          description: Git branch name
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: [string, 'null']
+          format: date-time
+        exit_code:
+          type: [integer, 'null']
+        error:
+          type: string
+          description: Error message if failed
+
+    AgentsResponse:
+      type: object
+      required:
+        - agents
+        - count
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+        count:
+          type: integer
+          description: Number of agents
+
+    AgentOutputLine:
+      type: object
+      required:
+        - sequence
+        - line
+        - timestamp
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          description: Line sequence number
+        line:
+          type: string
+          description: Output line content
+        timestamp:
+          type: string
+          format: date-time
+
+    AgentOutputResponse:
+      type: object
+      required:
+        - task_id
+        - lines
+        - line_count
+      properties:
+        task_id:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentOutputLine'
+        line_count:
+          type: integer
+        last_seq:
+          type: integer
+          format: int64
+          description: Last sequence number
+
+    AgentKillResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - message
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [killed]
+        message:
+          type: [string, 'null']
+    AgentRespondRequest:
+      type: object
+      required:
+        - response
+      properties:
+        response:
+          type: string
+          description: Response text to send to agent stdin
+
+    AgentRespondResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - message
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [sent]
+        message:
+          type: string

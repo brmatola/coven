@@ -1,0 +1,23 @@
+{
+  "name": "@coven/api-spec",
+  "version": "1.0.0",
+  "description": "OpenAPI 3.2 specification for the Coven daemon API",
+  "private": true,
+  "main": "generated/ts/index.ts",
+  "types": "generated/ts/index.ts",
+  "exports": {
+    "./generated/ts/*": "./generated/ts/*",
+    "./generated/ts": "./generated/ts/index.ts"
+  },
+  "scripts": {
+    "validate": "npx @redocly/cli bundle openapi.yaml -o /tmp/openapi-bundled.yaml",
+    "bundle": "npx @redocly/cli bundle openapi.yaml -o openapi.bundled.yaml",
+    "lint": "npx @redocly/cli lint openapi.yaml --config .redocly.yaml",
+    "generate:ts": "bash scripts/generate-ts-client.sh",
+    "prebuild": "npm run generate:ts",
+    "build": "npm run validate && npm run lint"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.14.4"
+  }
+}

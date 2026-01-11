@@ -1,0 +1,27 @@
+post:
+  operationId: update_agent_kill
+  summary: Kill an agent
+  description: Terminates a running agent process
+  tags:
+    - agents
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/AgentId'
+  responses:
+    '200':
+      description: Kill response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/agent.yaml#/components/schemas/AgentKillResponse'
+    '404':
+      description: Agent not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

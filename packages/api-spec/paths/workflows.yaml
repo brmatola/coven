@@ -1,0 +1,19 @@
+get:
+  operationId: get_workflows
+  summary: List all workflows
+  description: Returns a list of all workflows with their current status and metadata
+  tags:
+    - workflows
+  responses:
+    '200':
+      description: Workflows list response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/workflow.yaml#/components/schemas/WorkflowListResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

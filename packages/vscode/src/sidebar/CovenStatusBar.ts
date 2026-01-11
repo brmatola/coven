@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { StateCache, SessionState } from '../daemon/cache';
-import { WorkflowState } from '../daemon/types';
+import { WorkflowStatus } from '@coven/client-ts';
+import { StateCache, SessionState, WorkflowState } from '../daemon/cache';
 
 /**
  * Manages the Coven status bar item.
@@ -64,8 +64,8 @@ export class CovenStatusBar implements vscode.Disposable {
     const questions = this.stateCache?.getQuestions() ?? [];
 
     // Count active (running) and pending (pending_merge, blocked) workflows
-    const active = workflow?.status === 'running' ? 1 : 0;
-    const pending = (workflow?.status === 'pending_merge' || workflow?.status === 'blocked') ? 1 : 0;
+    const active = workflow?.status === WorkflowStatus.RUNNING ? 1 : 0;
+    const pending = (workflow?.status === WorkflowStatus.PENDING_MERGE || workflow?.status === WorkflowStatus.BLOCKED) ? 1 : 0;
     const pendingQuestions = questions.length;
 
     let text: string;

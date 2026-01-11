@@ -69,7 +69,7 @@ export async function stopDaemon(deps: DaemonCommandDependencies): Promise<void>
     }
 
     // Send shutdown request
-    await deps.client.post('/shutdown', {});
+    await deps.client.post<unknown>('/shutdown', {});
     void vscode.window.showInformationMessage('Daemon stopped.');
   } catch (error) {
     if (error instanceof DaemonClientError) {
@@ -97,7 +97,7 @@ export async function restartDaemon(deps: DaemonCommandDependencies): Promise<vo
       async () => {
         // Stop daemon if running
         try {
-          await deps.client.post('/shutdown', {});
+          await deps.client.post<unknown>('/shutdown', {});
           // Wait a bit for shutdown to complete
           await delay(500);
         } catch (error) {

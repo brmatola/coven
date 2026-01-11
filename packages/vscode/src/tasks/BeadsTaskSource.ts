@@ -2,8 +2,9 @@ import { EventEmitter } from 'events';
 import { Task, TaskSource, TaskStatus, TaskPriority } from '../shared/types';
 import { BeadsClient } from './BeadsClient';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
-import { DaemonTask, DaemonClientError } from '../daemon/types';
+import { SSEClient, TaskStatus as DaemonTaskStatus } from '@coven/client-ts';
+import type { SSEEvent, Task as DaemonTask } from '@coven/client-ts';
+import { DaemonClientError } from '../daemon/types';
 import { getLogger } from '../shared/logger';
 
 /**
@@ -25,7 +26,7 @@ const DEFAULT_CONFIG: Required<BeadsTaskSourceConfig> = {
  * SSE event data for task updates
  */
 interface TaskEventData {
-  taskId: string;
+  task_id: string;
   status?: string;
   error?: string;
 }
@@ -208,9 +209,9 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    * Handle SSE task events by refreshing the affected task.
    */
   private handleTaskEvent(data: TaskEventData): void {
-    void this.refreshTask(data.taskId).catch((err) => {
+    void this.refreshTask(data.task_id).catch((err) => {
       this.logger.warn('Failed to refresh task after SSE event', {
-        taskId: data.taskId,
+        taskId: data.task_id,
         error: String(err),
       });
     });
@@ -480,7 +481,7 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
     for (const priority of priorityOrder) {
       const tasksAtPriority = readyTasks
         .filter((t) => t.priority === priority)
-        .sort((a, b) => a.createdAt - b.createdAt);
+        .sort((a, b) => a.created_at - b.created_at);
 
       if (tasksAtPriority.length > 0) {
         return tasksAtPriority[0];
@@ -507,17 +508,18 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
    * Convert a daemon task to a Coven Task.
    */
   private daemonTaskToTask(dt: DaemonTask): Task {
+    const hasDeps = (dt.depends_on?.length ?? 0) > 0;
     return {
       id: dt.id,
       title: dt.title,
-      description: dt.description,
-      status: this.daemonStatusToCovenStatus(dt.status, dt.dependencies.length > 0),
+      description: dt.description ?? '',
+      status: this.daemonStatusToCovenStatus(dt.status, hasDeps),
       priority: this.daemonPriorityToCovenPriority(dt.priority),
-      dependencies: dt.dependencies,
+      dependencies: dt.depends_on ?? [],
       sourceId: this.id,
       externalId: dt.id,
-      createdAt: dt.createdAt,
-      updatedAt: dt.updatedAt,
+      createdAt: dt.created_at ? new Date(dt.created_at).getTime() : Date.now(),
+      updatedAt: dt.updated_at ? new Date(dt.updated_at).getTime() : Date.now(),
     };
   }
 
@@ -533,17 +535,16 @@ export class BeadsTaskSource extends EventEmitter implements TaskSource {
     }
 
     switch (daemonStatus) {
-      case 'pending':
-      case 'ready':
+      case DaemonTaskStatus.OPEN:
         return 'ready';
-      case 'running':
+      case DaemonTaskStatus.IN_PROGRESS:
         return 'working';
-      case 'complete':
+      case DaemonTaskStatus.CLOSED:
         return 'done';
-      case 'failed':
+      case DaemonTaskStatus.BLOCKED:
         return 'blocked';
-      case 'blocked':
-        return 'blocked';
+      case DaemonTaskStatus.PENDING_MERGE:
+        return 'review';
       default:
         return 'ready';
     }

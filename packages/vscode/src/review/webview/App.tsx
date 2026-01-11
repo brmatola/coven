@@ -6,8 +6,8 @@ import {
   CheckResult,
   CheckStatus,
   MergeConflictInfo,
+  StepOutputSummary,
 } from '../types';
-import { StepOutputSummary } from '../../daemon/types';
 
 // VS Code API type
 export interface VsCodeApi {
@@ -419,7 +419,7 @@ function StepOutputsSection({ stepOutputs }: StepOutputsSectionProps): React.Rea
       <h2>Step Outputs</h2>
       <div className="step-outputs-list">
         {stepOutputs.map((step) => (
-          <StepOutputItem key={step.stepId} step={step} />
+          <StepOutputItem key={step.step_id} step={step} />
         ))}
       </div>
     </section>
@@ -432,21 +432,21 @@ interface StepOutputItemProps {
 
 function StepOutputItem({ step }: StepOutputItemProps): React.ReactElement {
   const [expanded, setExpanded] = useState(false);
-  const isFailed = step.exitCode !== undefined && step.exitCode !== 0;
+  const isFailed = step.exit_code !== undefined && step.exit_code !== 0;
   const isLong = step.summary.length > TRUNCATE_LENGTH;
 
   const getStatusIcon = (): string => {
-    if (step.exitCode === undefined) {
+    if (step.exit_code === undefined) {
       return '•'; // In progress or unknown
     }
-    return step.exitCode === 0 ? '✓' : '✗';
+    return step.exit_code === 0 ? '✓' : '✗';
   };
 
   const getStatusClass = (): string => {
-    if (step.exitCode === undefined) {
+    if (step.exit_code === undefined) {
       return 'step-status pending';
     }
-    return step.exitCode === 0 ? 'step-status passed' : 'step-status failed';
+    return step.exit_code === 0 ? 'step-status passed' : 'step-status failed';
   };
 
   const displayText = expanded || !isLong ? step.summary : step.summary.substring(0, TRUNCATE_LENGTH) + '...';
@@ -455,7 +455,7 @@ function StepOutputItem({ step }: StepOutputItemProps): React.ReactElement {
     <div className={`step-output-item ${isFailed ? 'failed' : ''}`}>
       <div className="step-output-header">
         <span className={getStatusClass()}>{getStatusIcon()}</span>
-        <span className="step-name">{step.stepName}</span>
+        <span className="step-name">{step.step_name}</span>
       </div>
       <div className="step-output-content">
         <p className="step-summary">{displayText}</p>

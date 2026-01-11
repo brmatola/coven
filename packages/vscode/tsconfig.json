@@ -20,7 +20,11 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@coven/client-ts": ["../client-ts/dist"],
+      "@coven/client-ts/*": ["../client-ts/dist/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/test/e2e", "src/setup/webview", "src/**/*.test.ts", "src/**/*.test.tsx", "src/__mocks__"]

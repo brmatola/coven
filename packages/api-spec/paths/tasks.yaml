@@ -1,0 +1,19 @@
+get:
+  operationId: get_tasks
+  summary: Get all tasks
+  description: Returns a list of all tasks from beads with their current status
+  tags:
+    - tasks
+  responses:
+    '200':
+      description: Tasks response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task.yaml#/components/schemas/TasksResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

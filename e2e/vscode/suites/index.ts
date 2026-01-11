@@ -29,6 +29,7 @@ export async function run(): Promise<void> {
     'data-format',
     'commands',
     'api',
+    'generated-client', // Test generated client after basic API tests
     'session',
     'tasks',
     'ui',

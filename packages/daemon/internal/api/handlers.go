@@ -32,6 +32,14 @@ func NewHandlers(store *state.Store, version, gitCommit, buildTime, workspace st
 }
 
 // HandleHealth returns the daemon health status.
+// @Summary      Get daemon health status
+// @Description  Returns the current health status, version, uptime, and workspace of the daemon
+// @Tags         health
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  types.HealthStatus  "Health status response"
+// @Failure      405  {object}  map[string]string    "Method not allowed"
+// @Router       /health [get]
 func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -49,6 +57,14 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleVersion returns version information.
+// @Summary      Get daemon version information
+// @Description  Returns version, git commit, build time, and Go version information
+// @Tags         version
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  types.VersionInfo     "Version information"
+// @Failure      405  {object}  map[string]string    "Method not allowed"
+// @Router       /version [get]
 func (h *Handlers) HandleVersion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -66,6 +82,14 @@ func (h *Handlers) HandleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleState returns the current daemon state.
+// @Summary      Get daemon state
+// @Description  Returns the complete current state of the daemon including workflows, tasks, agents, and questions
+// @Tags         state
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  types.StateResponse   "Daemon state response"
+// @Failure      405  {object}  map[string]string     "Method not allowed"
+// @Router       /state [get]
 func (h *Handlers) HandleState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		WriteError(w, http.StatusMethodNotAllowed, "method not allowed")

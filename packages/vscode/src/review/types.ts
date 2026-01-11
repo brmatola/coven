@@ -3,10 +3,27 @@
  */
 
 import { WebviewMessage } from '../shared/webview/WebviewPanel';
-import {
-  WorkflowChangedFile,
-  StepOutputSummary,
-} from '../daemon/types';
+
+/**
+ * A file changed in the workflow
+ */
+export interface WorkflowChangedFile {
+  path: string;
+  lines_added: number;
+  lines_deleted: number;
+  change_type: 'added' | 'modified' | 'deleted' | 'renamed';
+  old_path?: string;
+}
+
+/**
+ * Step output summary for review
+ */
+export interface StepOutputSummary {
+  step_id: string;
+  step_name: string;
+  summary: string;
+  exit_code?: number;
+}
 
 /**
  * Status of a review.
@@ -52,10 +69,10 @@ export interface ChangedFile {
 export function toChangedFile(file: WorkflowChangedFile): ChangedFile {
   return {
     path: file.path,
-    linesAdded: file.linesAdded,
-    linesDeleted: file.linesDeleted,
-    changeType: file.changeType,
-    oldPath: file.oldPath,
+    linesAdded: file.lines_added,
+    linesDeleted: file.lines_deleted,
+    changeType: file.change_type,
+    oldPath: file.old_path,
   };
 }
 

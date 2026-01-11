@@ -706,7 +706,7 @@ async function cancelWorkflow(arg: unknown): Promise<void> {
 
   try {
     const client = new DaemonClient(daemonSocketPath);
-    await client.post(`/workflows/${encodeURIComponent(workflowId)}/cancel`, {});
+    await client.post<unknown>(`/workflows/${encodeURIComponent(workflowId)}/cancel`, {});
     ctx.logger.info('Workflow cancelled', { workflowId });
     void vscode.window.showInformationMessage('Workflow cancelled');
   } catch (err) {
@@ -734,7 +734,7 @@ async function retryWorkflow(arg: unknown): Promise<void> {
 
   try {
     const client = new DaemonClient(daemonSocketPath);
-    await client.post(`/workflows/${encodeURIComponent(workflowId)}/retry`, {});
+    await client.post<unknown>(`/workflows/${encodeURIComponent(workflowId)}/retry`, {});
     ctx.logger.info('Workflow retried', { workflowId });
     void vscode.window.showInformationMessage('Workflow restarted');
   } catch (err) {

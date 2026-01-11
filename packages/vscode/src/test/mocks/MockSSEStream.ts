@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { vi } from 'vitest';
-import type { SSEEvent, SSEEventType, SSEConnectionState } from '../../daemon/sse';
+import type { SSEEvent, SSEEventType, SSEConnectionState } from '@coven/client-ts';
 import { DaemonClientError } from '../../daemon/types';
 
 /**
@@ -325,9 +325,9 @@ export const SSESequences = {
     const now = Date.now();
     return [
       { type: 'workflow.started', data: { id: workflowId }, timestamp: now },
-      { type: 'agent.spawned', data: { taskId }, timestamp: now + 10 },
-      { type: 'agent.completed', data: { taskId, exitCode: 0 }, timestamp: now + 100 },
-      { type: 'task.completed', data: { taskId }, timestamp: now + 110 },
+      { type: 'agent.spawned', data: { task_id: taskId }, timestamp: now + 10 },
+      { type: 'agent.completed', data: { task_id: taskId, exit_code: 0 }, timestamp: now + 100 },
+      { type: 'task.completed', data: { task_id: taskId }, timestamp: now + 110 },
       { type: 'workflow.completed', data: { id: workflowId }, timestamp: now + 120 },
     ];
   },
@@ -339,9 +339,9 @@ export const SSESequences = {
     const now = Date.now();
     return [
       { type: 'workflow.started', data: { id: workflowId }, timestamp: now },
-      { type: 'agent.spawned', data: { taskId }, timestamp: now + 10 },
-      { type: 'agent.failed', data: { taskId, error }, timestamp: now + 100 },
-      { type: 'task.failed', data: { taskId, error }, timestamp: now + 110 },
+      { type: 'agent.spawned', data: { task_id: taskId }, timestamp: now + 10 },
+      { type: 'agent.failed', data: { task_id: taskId, error }, timestamp: now + 100 },
+      { type: 'task.failed', data: { task_id: taskId, error }, timestamp: now + 110 },
       { type: 'workflow.failed', data: { id: workflowId, error }, timestamp: now + 120 },
     ];
   },
@@ -352,7 +352,7 @@ export const SSESequences = {
   agentOutput(taskId: string, lines: string[]): SSEEvent[] {
     return lines.map((line, i) => ({
       type: 'agent.output' as SSEEventType,
-      data: { taskId, line },
+      data: { task_id: taskId, line },
       timestamp: Date.now() + i,
     }));
   },
@@ -363,7 +363,7 @@ export const SSESequences = {
   questionAsked(questionId: string, taskId: string, text: string, options?: string[]): SSEEvent {
     return {
       type: 'questions.asked',
-      data: { id: questionId, taskId, text, options },
+      data: { id: questionId, task_id: taskId, text, options },
       timestamp: Date.now(),
     };
   },

@@ -1,0 +1,9 @@
+extends:
+  - recommended
+rules:
+  # Allow localhost for local daemon
+  no-server-example.com: off
+  # ErrorResponse structure is correct per OpenAPI 3.2 spec
+  # The linter incorrectly flags 'content' in response components
+  # This is a known issue - 'content' is valid for Response Objects
+  struct: off

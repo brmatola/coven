@@ -1,43 +1,75 @@
-import * as http from 'http';
-import {
-  DaemonState,
-  HealthResponse,
-  DaemonTask,
-  Agent,
-  AgentOutputResponse,
-  Question,
-  StartSessionRequest,
-  StopSessionRequest,
-  AnswerQuestionRequest,
-  ApproveWorkflowRequest,
-  RejectWorkflowRequest,
-  WorkflowChangesResponse,
-  WorkflowReviewResponse,
-  DaemonClientError,
-  DaemonErrorCode,
-} from './types';
-
 /**
- * HTTP request options for Unix socket
+ * DaemonClient - High-level client for communicating with the Coven daemon.
+ * 
+ * This client wraps @coven/client-ts (which uses generated code from the API spec)
+ * and provides a convenient interface for the extension.
  */
-interface RequestOptions {
-  method: 'GET' | 'POST' | 'DELETE';
-  path: string;
-  body?: unknown;
-  timeout?: number;
+
+import { CovenClient, ApiError, HealthStatus, HealthService, StateService, TasksService, AgentsService, QuestionsService, WorkflowsService, WorkflowStatus } from '@coven/client-ts';
+import type { CancelablePromise, StateResponse, TasksResponse, AgentsResponse, QuestionsResponse, AgentOutputResponse, Agent, Task, Question, ApproveMergeResponse, RejectMergeResponse } from '@coven/client-ts';
+import type { AxiosError, AxiosResponse } from 'axios';
+import { DaemonClientError } from './types';
+import type { DaemonErrorCode } from './types';
+import type { DaemonState } from './cache';
+
+// Extension-specific types not in API spec
+export interface HealthResponse {
+  status: 'ok' | 'degraded' | 'error';
+  version: string;
+  uptime: number;
+  timestamp: number;
 }
 
-/**
- * Default timeout for requests in milliseconds
- */
-const DEFAULT_TIMEOUT_MS = 30000;
+export interface StartSessionRequest {
+  feature_branch?: string;
+}
+
+export interface WorkflowChangesResponse {
+  workflow_id: string;
+  task_id: string;
+  base_branch: string;
+  head_branch: string;
+  worktree_path: string;
+  files: Array<{
+    path: string;
+    lines_added: number;
+    lines_deleted: number;
+    change_type: 'added' | 'modified' | 'deleted' | 'renamed';
+    old_path?: string;
+  }>;
+  total_lines_added: number;
+  total_lines_deleted: number;
+  commit_count: number;
+}
+
+export interface WorkflowReviewResponse {
+  workflow_id: string;
+  task_id: string;
+  task_title: string;
+  task_description: string;
+  acceptance_criteria?: string;
+  changes: WorkflowChangesResponse;
+  step_outputs: Array<{
+    step_id: string;
+    step_name: string;
+    summary: string;
+    exit_code?: number;
+  }>;
+  started_at?: string;
+  completed_at?: string;
+  duration_ms?: number;
+}
 
 /**
  * Client for communicating with the coven daemon over Unix socket.
  * Provides typed methods for all daemon API endpoints.
+ * 
+ * This client uses the generated client from @coven/client-ts internally,
+ * ensuring it stays in sync with the API specification.
  */
 export class DaemonClient {
   private readonly socketPath: string;
+  private readonly client: CovenClient;
 
   /**
    * Create a new DaemonClient.
@@ -45,31 +77,7 @@ export class DaemonClient {
    */
   constructor(socketPath: string) {
     this.socketPath = socketPath;
-  }
-
-  // ============================================================================
-  // Core HTTP Methods
-  // ============================================================================
-
-  /**
-   * Make a GET request to the daemon.
-   */
-  async get<T>(path: string): Promise<T> {
-    return this.request<T>({ method: 'GET', path });
-  }
-
-  /**
-   * Make a POST request to the daemon.
-   */
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>({ method: 'POST', path, body });
-  }
-
-  /**
-   * Make a DELETE request to the daemon.
-   */
-  async delete<T>(path: string): Promise<T> {
-    return this.request<T>({ method: 'DELETE', path });
+    this.client = new CovenClient(socketPath);
   }
 
   // ============================================================================
@@ -80,7 +88,25 @@ export class DaemonClient {
    * Check daemon health status.
    */
   async getHealth(): Promise<HealthResponse> {
-    return this.get<HealthResponse>('/health');
+    try {
+      const healthResult: CancelablePromise<HealthStatus> = HealthService.getHealth();
+      const health = await healthResult;
+      let status: 'ok' | 'degraded' | 'error' = 'error';
+      const healthStatusValue = health.status;
+      if (healthStatusValue === HealthStatus.status.OK) {
+        status = 'ok';
+      } else if (healthStatusValue === HealthStatus.status.DEGRADED) {
+        status = 'degraded';
+      }
+      return {
+        status,
+        version: health.version,
+        uptime: health.uptime,
+        timestamp: Date.now(),
+      };
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   // ============================================================================
@@ -92,50 +118,43 @@ export class DaemonClient {
    * Transforms the daemon's raw state format to the expected DaemonState interface.
    */
   async getState(): Promise<DaemonState> {
-    // Raw response type from daemon (different structure than DaemonState)
-    interface RawState {
-      agents?: Record<string, Agent> | Agent[];
-      tasks?: DaemonTask[];
-      last_task_sync?: string;
-    }
-    interface RawResponse {
-      state?: RawState;
-      timestamp?: string;
-    }
-
-    const raw = await this.get<RawResponse>('/state');
-
-    // Transform raw daemon response to expected DaemonState format
-    // Handle case where 'state' is nested or at top level
-    const rawState: RawState | undefined = raw?.state ?? (raw as unknown as RawState);
-
-    // Convert agents from object format to array if needed
-    let agents: Agent[] = [];
-    if (rawState?.agents) {
-      if (Array.isArray(rawState.agents)) {
-        agents = rawState.agents;
-      } else {
-        // Object format: { taskId: Agent }
-        agents = Object.entries(rawState.agents).map(([taskId, agent]) => ({
-          ...agent,
-          taskId,
-        }));
+    try {
+      const stateResult: CancelablePromise<StateResponse> = StateService.getState();
+      const state = await stateResult;
+      
+      // Transform state response to DaemonState format
+      const rawState = state.state;
+      
+      // Convert agents from object format to array if needed
+      let agents: Agent[] = [];
+      if (rawState?.agents) {
+        if (Array.isArray(rawState.agents)) {
+          agents = rawState.agents as unknown as Agent[];
+        } else {
+          // Object format: { taskId: Agent }
+          agents = Object.entries(rawState.agents as Record<string, unknown>).map(([taskId, agent]) => ({
+            ...(agent as Agent),
+            taskId,
+          }));
+        }
       }
+
+      // Ensure tasks is always an array
+      const tasks = Array.isArray(rawState?.tasks) ? (rawState.tasks as unknown as Task[]) : [];
+
+      return {
+        workflow: {
+          id: (rawState?.workflow && typeof rawState.workflow === 'object' && 'id' in rawState.workflow ? String(rawState.workflow.id) : '') || '',
+          status: (rawState?.workflow && typeof rawState.workflow === 'object' && 'status' in rawState.workflow ? (rawState.workflow.status as WorkflowStatus) : undefined) || ('idle' as WorkflowStatus),
+        },
+        tasks,
+        agents,
+        questions: [], // Questions come from separate endpoint
+        timestamp: state.timestamp ? new Date(state.timestamp).getTime() : Date.now(),
+      };
+    } catch (error) {
+      throw this.mapError(error);
     }
-
-    // Ensure tasks is always an array
-    const tasks = Array.isArray(rawState?.tasks) ? rawState.tasks : [];
-
-    return {
-      workflow: {
-        id: '',
-        status: 'idle',
-      },
-      tasks,
-      agents,
-      questions: [],
-      timestamp: raw?.timestamp ? new Date(raw.timestamp).getTime() : Date.now(),
-    };
   }
 
   // ============================================================================
@@ -144,17 +163,19 @@ export class DaemonClient {
 
   /**
    * Start a new session.
+   * Note: Session endpoints may not be in the generated client yet
    */
-  async startSession(options?: StartSessionRequest): Promise<void> {
-    await this.post<void>('/session/start', options);
+  startSession(_options?: StartSessionRequest): Promise<void> {
+    // TODO: Add session endpoints to API spec and use generated client
+    return Promise.reject(new DaemonClientError('request_failed', 'Session API not yet in generated client'));
   }
 
   /**
    * Stop the current session.
    */
-  async stopSession(force?: boolean): Promise<void> {
-    const request: StopSessionRequest = force ? { force: true } : {};
-    await this.post<void>('/session/stop', request);
+  stopSession(_force?: boolean): Promise<void> {
+    // TODO: Add session endpoints to API spec and use generated client
+    return Promise.reject(new DaemonClientError('request_failed', 'Session API not yet in generated client'));
   }
 
   // ============================================================================
@@ -164,30 +185,52 @@ export class DaemonClient {
   /**
    * Get all tasks.
    */
-  async getTasks(): Promise<DaemonTask[]> {
-    const response = await this.get<{ tasks: DaemonTask[]; count: number }>('/tasks');
-    return response?.tasks ?? [];
+  async getTasks(): Promise<Task[]> {
+    try {
+      const responseResult: CancelablePromise<TasksResponse> = TasksService.getTasks();
+      const response = await responseResult;
+      // Map generated Task type to Task
+      return (response.tasks as unknown as Task[]) || [];
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Get a specific task by ID.
    */
-  async getTask(id: string): Promise<DaemonTask> {
-    return this.get<DaemonTask>(`/tasks/${encodeURIComponent(id)}`);
+  async getTask(id: string): Promise<Task> {
+    // TODO: Add getTaskById to API spec if needed
+    const tasks = await this.getTasks();
+    const task = tasks.find(t => t.id === id);
+    if (!task) {
+      throw new DaemonClientError('task_not_found', `Task not found: ${id}`);
+    }
+    return task;
   }
 
   /**
    * Start a task (spawn an agent to work on it).
    */
   async startTask(id: string): Promise<void> {
-    await this.post<void>(`/tasks/${encodeURIComponent(id)}/start`);
+    try {
+      const result: CancelablePromise<unknown> = TasksService.startTask({ id });
+      await result;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Kill an agent working on a task.
    */
-  async killTask(id: string, reason?: string): Promise<void> {
-    await this.post<void>(`/tasks/${encodeURIComponent(id)}/kill`, reason ? { reason } : undefined);
+  async killTask(id: string, _reason?: string): Promise<void> {
+    try {
+      const result: CancelablePromise<unknown> = TasksService.stopTask({ id });
+      await result;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   // ============================================================================
@@ -198,22 +241,39 @@ export class DaemonClient {
    * Get all active agents.
    */
   async getAgents(): Promise<Agent[]> {
-    return this.get<Agent[]>('/agents');
+    try {
+      const responseResult: CancelablePromise<AgentsResponse> = AgentsService.getAgents();
+      const response = await responseResult;
+      return (response.agents as unknown as Agent[]) || [];
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Get agent for a specific task.
    */
   async getAgent(taskId: string): Promise<Agent> {
-    return this.get<Agent>(`/agents/${encodeURIComponent(taskId)}`);
+    try {
+      const agentResult: CancelablePromise<Agent> = AgentsService.getAgentById({ id: taskId });
+      return await agentResult;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Get output from an agent.
    */
-  async getAgentOutput(taskId: string, lines?: number): Promise<AgentOutputResponse> {
-    const query = lines !== undefined ? `?lines=${lines}` : '';
-    return this.get<AgentOutputResponse>(`/agents/${encodeURIComponent(taskId)}/output${query}`);
+  async getAgentOutput(taskId: string, since?: number): Promise<AgentOutputResponse> {
+    try {
+      const responseResult: CancelablePromise<AgentOutputResponse> = AgentsService.getAgentOutput(
+        since !== undefined ? { id: taskId, since } : { id: taskId }
+      );
+      return await responseResult;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   // ============================================================================
@@ -224,15 +284,28 @@ export class DaemonClient {
    * Get all pending questions.
    */
   async getQuestions(): Promise<Question[]> {
-    return this.get<Question[]>('/questions');
+    try {
+      const responseResult: CancelablePromise<QuestionsResponse> = QuestionsService.getQuestions({});
+      const response = await responseResult;
+      return response.questions || [];
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Answer a pending question.
    */
   async answerQuestion(questionId: string, answer: string): Promise<void> {
-    const request: AnswerQuestionRequest = { answer };
-    await this.post<void>(`/questions/${encodeURIComponent(questionId)}/answer`, request);
+    try {
+      const result: CancelablePromise<unknown> = QuestionsService.createQuestionAnswer({
+        id: questionId,
+        requestBody: { answer },
+      });
+      await result;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   // ============================================================================
@@ -242,52 +315,56 @@ export class DaemonClient {
   /**
    * Get workflow changes for review.
    */
-  async getWorkflowChanges(workflowId: string): Promise<WorkflowChangesResponse> {
-    return this.get<WorkflowChangesResponse>(
-      `/workflows/${encodeURIComponent(workflowId)}/changes`
-    );
+  getWorkflowChanges(_workflowId: string): Promise<WorkflowChangesResponse> {
+    // TODO: Map from generated client when available
+    return Promise.reject(new DaemonClientError('request_failed', 'Workflow changes API not yet in generated client'));
   }
 
   /**
    * Get full workflow review data including changes and step outputs.
    */
-  async getWorkflowReview(workflowId: string): Promise<WorkflowReviewResponse> {
-    return this.get<WorkflowReviewResponse>(
-      `/workflows/${encodeURIComponent(workflowId)}/review`
-    );
+  getWorkflowReview(_workflowId: string): Promise<WorkflowReviewResponse> {
+    // TODO: Map from generated client when available
+    return Promise.reject(new DaemonClientError('not_implemented', 'Workflow review API not yet in generated client'));
   }
 
   /**
    * Approve a workflow and merge changes.
    */
   async approveWorkflow(workflowId: string, feedback?: string): Promise<void> {
-    const request: ApproveWorkflowRequest = feedback ? { feedback } : {};
-    await this.post<void>(
-      `/workflows/${encodeURIComponent(workflowId)}/approve`,
-      request
-    );
+    try {
+      const result: CancelablePromise<ApproveMergeResponse> = WorkflowsService.createWorkflowApproveMerge({
+        id: workflowId,
+        requestBody: feedback ? { feedback } : {},
+      });
+      await result;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Reject a workflow and discard changes.
    */
   async rejectWorkflow(workflowId: string, reason?: string): Promise<void> {
-    const request: RejectWorkflowRequest = reason ? { reason } : {};
-    await this.post<void>(
-      `/workflows/${encodeURIComponent(workflowId)}/reject`,
-      request
-    );
+    try {
+      const result: CancelablePromise<RejectMergeResponse> = WorkflowsService.updateWorkflowRejectMerge({
+        id: workflowId,
+        requestBody: reason ? { reason } : {},
+      });
+      await result;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Get file diff between workflow branches.
    * Returns the diff content as a string.
    */
-  async getWorkflowFileDiff(workflowId: string, filePath: string): Promise<string> {
-    const response = await this.get<{ diff: string }>(
-      `/workflows/${encodeURIComponent(workflowId)}/diff/${encodeURIComponent(filePath)}`
-    );
-    return response.diff;
+  getWorkflowFileDiff(_workflowId: string, _filePath: string): Promise<string> {
+    // TODO: Add to API spec if needed
+    return Promise.reject(new DaemonClientError('request_failed', 'Workflow file diff API not yet in generated client'));
   }
 
   // ============================================================================
@@ -295,120 +372,109 @@ export class DaemonClient {
   // ============================================================================
 
   /**
-   * Make an HTTP request to the daemon over Unix socket.
+   * Map errors from the generated client to DaemonClientError
    */
-  private async request<T>(options: RequestOptions): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
-      const bodyString = options.body !== undefined ? JSON.stringify(options.body) : undefined;
+  private mapError(error: unknown): DaemonClientError {
+    if (error instanceof DaemonClientError) {
+      return error;
+    }
 
-      const requestOptions: http.RequestOptions = {
-        socketPath: this.socketPath,
-        path: options.path,
-        method: options.method,
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...(bodyString !== undefined && { 'Content-Length': Buffer.byteLength(bodyString) }),
-        },
-        timeout,
-      };
-
-      const req = http.request(requestOptions, (res) => {
-        let data = '';
-
-        res.on('data', (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-
-        res.on('end', () => {
-          if (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300) {
-            // Success
-            if (data.length === 0) {
-              // Empty response (void return)
-              resolve(undefined as T);
-              return;
-            }
-
-            try {
-              const parsed = JSON.parse(data) as T;
-              resolve(parsed);
-            } catch {
-              reject(
-                new DaemonClientError(
-                  'parse_error',
-                  `Failed to parse response: ${data.substring(0, 100)}`
-                )
-              );
-            }
-          } else {
-            // Error response
-            let errorCode: DaemonErrorCode = 'request_failed';
-            let errorMessage = `Request failed with status ${res.statusCode}`;
-
-            if (res.statusCode === 404) {
-              // Determine specific not found error
-              if (options.path.startsWith('/tasks/')) {
-                errorCode = 'task_not_found';
-                errorMessage = 'Task not found';
-              } else if (options.path.startsWith('/agents/')) {
-                errorCode = 'agent_not_found';
-                errorMessage = 'Agent not found';
-              } else if (options.path.startsWith('/questions/')) {
-                errorCode = 'question_not_found';
-                errorMessage = 'Question not found';
-              } else if (options.path.startsWith('/workflows/')) {
-                errorCode = 'workflow_not_found';
-                errorMessage = 'Workflow not found';
-              }
-            }
-
-            // Try to parse error response
-            if (data.length > 0) {
-              try {
-                const errorBody = JSON.parse(data) as { code?: string; message?: string };
-                if (errorBody.message) {
-                  errorMessage = errorBody.message;
-                }
-                if (errorBody.code) {
-                  errorCode = errorBody.code as DaemonErrorCode;
-                }
-              } catch {
-                // Ignore parse errors for error responses
-              }
-            }
-
-            reject(new DaemonClientError(errorCode, errorMessage));
-          }
-        });
-      });
-
-      req.on('error', (error: NodeJS.ErrnoException) => {
-        if (error.code === 'ECONNREFUSED') {
-          reject(new DaemonClientError('connection_refused', 'Daemon connection refused'));
-        } else if (error.code === 'ENOENT') {
-          reject(new DaemonClientError('socket_not_found', `Socket not found: ${this.socketPath}`));
-        } else if (error.code === 'ETIMEDOUT' || error.message.includes('timeout')) {
-          reject(new DaemonClientError('connection_timeout', 'Connection timed out'));
-        } else {
-          reject(
-            new DaemonClientError('request_failed', `Request failed: ${error.message}`, {
-              code: error.code,
-            })
-          );
-        }
-      });
-
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new DaemonClientError('connection_timeout', 'Request timed out'));
-      });
-
-      if (bodyString !== undefined) {
-        req.write(bodyString);
+    // Handle ApiError from generated client
+    if (error instanceof ApiError) {
+      let errorCode: DaemonErrorCode = 'request_failed';
+      if (error.status === 404) {
+        errorCode = 'request_failed'; // Could be more specific based on path
+      } else if (error.status === 500) {
+        errorCode = 'internal_error';
       }
 
-      req.end();
-    });
+      return new DaemonClientError(
+        errorCode,
+        error.message || `Request failed with status ${error.status}`
+      );
+    }
+
+    // Handle Axios errors
+    if (error && typeof error === 'object' && 'isAxiosError' in error) {
+      const axiosError = error as AxiosError;
+      if (axiosError.code === 'ECONNREFUSED') {
+        return new DaemonClientError('connection_refused', 'Daemon connection refused');
+      }
+      if (axiosError.code === 'ENOENT') {
+        return new DaemonClientError('socket_not_found', `Socket not found: ${this.socketPath}`);
+      }
+      if (axiosError.code === 'ETIMEDOUT' || (axiosError.message && axiosError.message.includes('timeout'))) {
+        return new DaemonClientError('connection_timeout', 'Connection timed out');
+      }
+      return new DaemonClientError(
+        'request_failed',
+        axiosError.message || 'Request failed'
+      );
+    }
+
+    // Handle generic Error objects
+    if (error && typeof error === 'object' && error instanceof Error) {
+      if (error.message.includes('ECONNREFUSED')) {
+        return new DaemonClientError('connection_refused', 'Daemon connection refused');
+      }
+      if (error.message.includes('ENOENT') || error.message.includes('socket')) {
+        return new DaemonClientError('socket_not_found', `Socket not found: ${this.socketPath}`);
+      }
+      if (error.message.includes('timeout')) {
+        return new DaemonClientError('connection_timeout', 'Connection timed out');
+      }
+      return new DaemonClientError('request_failed', error.message);
+    }
+
+    return new DaemonClientError('request_failed', String(error));
+  }
+
+  // ============================================================================
+  // Generic HTTP Methods (for endpoints not yet in generated client)
+  // ============================================================================
+
+  /**
+   * Make a POST request to the daemon.
+   * Use this for endpoints not yet in the generated client.
+   */
+  async post<T>(path: string, body?: unknown): Promise<T> {
+    try {
+      // Use axios instance directly for generic requests
+      const axiosInstance = this.client.getAxiosInstance();
+      const response: AxiosResponse<T> = await axiosInstance.post<T>(path, body);
+      return response.data;
+    } catch (error) {
+      throw this.mapError(error);
+    }
+  }
+
+  /**
+   * Make a GET request to the daemon.
+   * Use this for endpoints not yet in the generated client.
+   */
+  async get<T>(path: string): Promise<T> {
+    try {
+      // Use axios instance directly for generic requests
+      const axiosInstance = this.client.getAxiosInstance();
+      const response: AxiosResponse<T> = await axiosInstance.get<T>(path);
+      return response.data;
+    } catch (error) {
+      throw this.mapError(error);
+    }
+  }
+
+  /**
+   * Make a DELETE request to the daemon.
+   * Use this for endpoints not yet in the generated client.
+   */
+  async delete<T>(path: string): Promise<T> {
+    try {
+      // Use axios instance directly for generic requests
+      const axiosInstance = this.client.getAxiosInstance();
+      const response: AxiosResponse<T> = await axiosInstance.delete<T>(path);
+      return response.data;
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 }

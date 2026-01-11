@@ -18,6 +18,14 @@ func NewHandlers(store *state.Store) *Handlers {
 }
 
 // HandleTasks handles GET /tasks.
+// @Summary      Get all tasks
+// @Description  Returns a list of all tasks from beads with their current status
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "Tasks response with tasks array, count, and last sync time"
+// @Failure      405  {object}  map[string]string         "Method not allowed"
+// @Router       /tasks [get]
 func (h *Handlers) HandleTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")

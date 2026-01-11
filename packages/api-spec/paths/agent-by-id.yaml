@@ -1,0 +1,27 @@
+get:
+  operationId: get_agent_by_id
+  summary: Get agent by task ID
+  description: Returns the agent information for a specific task
+  tags:
+    - agents
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/AgentId'
+  responses:
+    '200':
+      description: Agent information
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/agent.yaml#/components/schemas/Agent'
+    '404':
+      description: Agent not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

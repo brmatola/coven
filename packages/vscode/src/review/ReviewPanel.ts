@@ -8,7 +8,8 @@ import { WebviewPanel } from '../shared/webview/WebviewPanel';
 import { MessageRouter } from '../shared/messageRouter';
 import { getLogger } from '../shared/logger';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
+import { SSEClient } from '@coven/client-ts';
+import type { SSEEvent } from '@coven/client-ts';
 import {
   ReviewState,
   ReviewMessageToExtension,
@@ -21,7 +22,7 @@ import { DaemonClientError } from '../daemon/types';
  * SSE event data for workflow review updates
  */
 interface WorkflowReviewEventData {
-  workflowId: string;
+  workflow_id: string;
   status?: string;
   error?: string;
 }
@@ -171,7 +172,7 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
   }
 
   private handleWorkflowEvent(data: WorkflowReviewEventData): void {
-    if (data.workflowId !== this.workflowId) {
+    if (data.workflow_id !== this.workflowId) {
       return;
     }
 
@@ -206,29 +207,29 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
       const review = await this.client.getWorkflowReview(this.workflowId);
 
       this.currentState = {
-        workflowId: review.workflowId,
-        taskId: review.taskId,
-        title: review.taskTitle,
-        description: review.taskDescription,
-        acceptanceCriteria: review.acceptanceCriteria,
-        stepOutputs: review.stepOutputs,
-        startedAt: review.startedAt,
-        completedAt: review.completedAt,
-        durationMs: review.durationMs,
+        workflowId: review.workflow_id,
+        taskId: review.task_id,
+        title: review.task_title,
+        description: review.task_description,
+        acceptanceCriteria: review.acceptance_criteria,
+        stepOutputs: review.step_outputs,
+        startedAt: review.started_at,
+        completedAt: review.completed_at,
+        durationMs: review.duration_ms,
         changedFiles: review.changes.files.map(toChangedFile),
-        totalLinesAdded: review.changes.totalLinesAdded,
-        totalLinesDeleted: review.changes.totalLinesDeleted,
-        baseBranch: review.changes.baseBranch,
-        headBranch: review.changes.headBranch,
-        worktreePath: review.changes.worktreePath,
-        commitCount: review.changes.commitCount,
+        totalLinesAdded: review.changes.total_lines_added,
+        totalLinesDeleted: review.changes.total_lines_deleted,
+        baseBranch: review.changes.base_branch,
+        headBranch: review.changes.head_branch,
+        worktreePath: review.changes.worktree_path,
+        commitCount: review.changes.commit_count,
       };
 
       // Update panel title
-      this.panel.title = `Review: ${review.taskTitle.substring(0, 25)}${review.taskTitle.length > 25 ? '...' : ''}`;
+      this.panel.title = `Review: ${review.task_title.substring(0, 25)}${review.task_title.length > 25 ? '...' : ''}`;
 
       // Build agent summary from step outputs
-      const agentSummary = this.buildAgentSummary(review.stepOutputs);
+      const agentSummary = this.buildAgentSummary(review.step_outputs);
 
       this.sendState({
         ...this.currentState,
@@ -270,7 +271,7 @@ export class ReviewPanel extends WebviewPanel<ReviewState, ReviewMessageToExtens
 
     return stepOutputs
       .map((step) => {
-        const status = step.exitCode === 0 ? '✓' : step.exitCode !== undefined ? '✗' : '•';
+        const status = step.exit_code === 0 ? '✓' : step.exit_code !== undefined ? '✗' : '•';
         return `${status} ${step.stepName}: ${step.summary}`;
       })
       .join('\n');

@@ -1,0 +1,19 @@
+get:
+  operationId: get_state
+  summary: Get daemon state
+  description: Returns the complete current state of the daemon including workflows, tasks, agents, and questions
+  tags:
+    - state
+  responses:
+    '200':
+      description: Daemon state response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/StateResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

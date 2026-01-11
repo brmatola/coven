@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { DaemonClient } from './client';
-import { SSEClient, SSEEvent } from './sse';
+import { SSEClient } from '@coven/client-ts';
+import type { SSEEvent } from '@coven/client-ts';
 import { StateCache } from './cache';
 import { DaemonClientError } from './types';
 

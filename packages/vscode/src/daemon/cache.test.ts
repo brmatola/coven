@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { StateCache } from './cache';
-import type { DaemonState, DaemonTask, Agent, Question, WorkflowState } from './types';
-import type { SSEEvent } from './sse';
+import { StateCache, DaemonState, WorkflowState } from './cache';
+import type { Task, Agent, Question, SSEEvent } from '@coven/client-ts';
+import { WorkflowStatus, AgentStatus, TaskStatus, QuestionType, Task as TaskClass } from '@coven/client-ts';
 
 // Helper to create a mock daemon state
 function createMockState(overrides: Partial<DaemonState> = {}): DaemonState {
   return {
     workflow: {
       id: 'workflow-1',
-      status: 'idle',
+      status: WorkflowStatus.IDLE,
     },
     tasks: [],
-    agents: [],
+    agents: {},
     questions: [],
     timestamp: Date.now(),
     ...overrides,
@@ -19,16 +19,17 @@ function createMockState(overrides: Partial<DaemonState> = {}): DaemonState {
 }
 
 // Helper to create a mock task
-function createMockTask(overrides: Partial<DaemonTask> = {}): DaemonTask {
+function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
     id: 'task-1',
     title: 'Test Task',
     description: 'A test task',
-    status: 'pending',
+    status: TaskStatus.OPEN,
     priority: 2,
-    dependencies: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    type: TaskClass.type.TASK,
+    depends_on: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -36,10 +37,12 @@ function createMockTask(overrides: Partial<DaemonTask> = {}): DaemonTask {
 // Helper to create a mock agent
 function createMockAgent(overrides: Partial<Agent> = {}): Agent {
   return {
-    taskId: 'task-1',
-    status: 'running',
+    task_id: 'task-1',
+    status: AgentStatus.RUNNING,
     pid: 12345,
-    startedAt: Date.now(),
+    worktree: '/tmp/worktrees/task-1',
+    branch: 'coven/task-1',
+    started_at: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -48,10 +51,11 @@ function createMockAgent(overrides: Partial<Agent> = {}): Agent {
 function createMockQuestion(overrides: Partial<Question> = {}): Question {
   return {
     id: 'question-1',
-    taskId: 'task-1',
-    agentId: 'agent-1',
+    task_id: 'task-1',
+    agent_id: 'agent-1',
     text: 'What is the answer?',
-    askedAt: Date.now(),
+    type: QuestionType.TEXT,
+    asked_at: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -93,15 +97,15 @@ describe('StateCache', () => {
   describe('handleSnapshot()', () => {
     it('populates all state from snapshot', () => {
       const task = createMockTask({ id: 'task-1' });
-      const agent = createMockAgent({ taskId: 'task-1' });
+      const agent = createMockAgent({ task_id: 'task-1' });
       const question = createMockQuestion({ id: 'q-1' });
-      const workflow: WorkflowState = { id: 'wf-1', status: 'running' };
+      const workflow: WorkflowState = { id: 'wf-1', status: WorkflowStatus.RUNNING };
       const timestamp = Date.now();
 
       const state = createMockState({
         workflow,
         tasks: [task],
-        agents: [agent],
+        agents: { 'task-1': agent },
         questions: [question],
         timestamp,
       });
@@ -147,9 +151,9 @@ describe('StateCache', () => {
       cache.on('state.reset', stateResetHandler);
 
       const state = createMockState({
-        workflow: { id: 'wf-1', status: 'running' },
+        workflow: { id: 'wf-1', status: WorkflowStatus.RUNNING },
         tasks: [createMockTask()],
-        agents: [createMockAgent()],
+        agents: { 'task-1': createMockAgent() },
         questions: [createMockQuestion()],
       });
 
@@ -157,7 +161,7 @@ describe('StateCache', () => {
 
       expect(workflowHandler).toHaveBeenCalledWith(state.workflow);
       expect(tasksHandler).toHaveBeenCalledWith([state.tasks[0]]);
-      expect(agentsHandler).toHaveBeenCalledWith([state.agents[0]]);
+      expect(agentsHandler).toHaveBeenCalledWith([Object.values(state.agents)[0]]);
       expect(questionsHandler).toHaveBeenCalledWith([state.questions[0]]);
       expect(stateResetHandler).toHaveBeenCalled();
     });
@@ -171,13 +175,13 @@ describe('StateCache', () => {
             createMockTask({ id: 't-1', title: 'Task 1' }),
             createMockTask({ id: 't-2', title: 'Task 2' }),
           ],
-          agents: [
-            createMockAgent({ taskId: 't-1' }),
-            createMockAgent({ taskId: 't-2', status: 'complete' }),
-          ],
+          agents: {
+            't-1': createMockAgent({ task_id: 't-1' }),
+            't-2': createMockAgent({ task_id: 't-2', status: AgentStatus.COMPLETED }),
+          },
           questions: [
-            createMockQuestion({ id: 'q-1', taskId: 't-1' }),
-            createMockQuestion({ id: 'q-2', taskId: 't-2' }),
+            createMockQuestion({ id: 'q-1', task_id: 't-1' }),
+            createMockQuestion({ id: 'q-2', task_id: 't-2' }),
           ],
         })
       );
@@ -194,7 +198,7 @@ describe('StateCache', () => {
 
     it('getAgent returns specific agent by task ID', () => {
       const agent = cache.getAgent('t-2');
-      expect(agent?.status).toBe('complete');
+      expect(agent?.status).toBe(AgentStatus.COMPLETED);
     });
 
     it('getAgent returns undefined for unknown task ID', () => {
@@ -203,7 +207,7 @@ describe('StateCache', () => {
 
     it('getQuestion returns specific question by ID', () => {
       const question = cache.getQuestion('q-1');
-      expect(question?.taskId).toBe('t-1');
+      expect(question?.task_id).toBe('t-1');
     });
 
     it('getQuestion returns undefined for unknown ID', () => {
@@ -215,7 +219,7 @@ describe('StateCache', () => {
     it('returns inactive when workflow is idle', () => {
       cache.handleSnapshot(
         createMockState({
-          workflow: { id: 'wf-1', status: 'idle' },
+          workflow: { id: 'wf-1', status: WorkflowStatus.IDLE },
         })
       );
 
@@ -226,20 +230,20 @@ describe('StateCache', () => {
     it('returns active with workflow info when running', () => {
       cache.handleSnapshot(
         createMockState({
-          workflow: { id: 'wf-1', status: 'running' },
+          workflow: { id: 'wf-1', status: WorkflowStatus.RUNNING },
         })
       );
 
       const session = cache.getSessionState();
       expect(session.active).toBe(true);
       expect(session.workflowId).toBe('wf-1');
-      expect(session.workflowStatus).toBe('running');
+      expect(session.workflowStatus).toBe(WorkflowStatus.RUNNING);
     });
 
     it('returns active for paused workflow', () => {
       cache.handleSnapshot(
         createMockState({
-          workflow: { id: 'wf-1', status: 'paused' },
+          workflow: { id: 'wf-1', status: WorkflowStatus.PAUSED },
         })
       );
 
@@ -256,44 +260,43 @@ describe('StateCache', () => {
       const handler = vi.fn();
       cache.on('workflows.changed', handler);
 
-      cache.handleEvent(createSSEEvent('workflow.started', { workflowId: 'wf-2', startedAt: 1234 }));
+      cache.handleEvent(createSSEEvent('workflow.started', { workflow_id: 'wf-2', started_at: '2025-01-01T00:00:00Z' }));
 
       const workflow = cache.getWorkflow();
       expect(workflow?.id).toBe('wf-2');
-      expect(workflow?.status).toBe('running');
-      expect(workflow?.startedAt).toBe(1234);
+      expect(workflow?.status).toBe(WorkflowStatus.RUNNING);
+      expect(workflow?.started_at).toBe('2025-01-01T00:00:00Z');
       expect(handler).toHaveBeenCalled();
     });
 
     it('handles workflow.completed event', () => {
-      cache.handleEvent(createSSEEvent('workflow.started', { workflowId: 'wf-1' }));
-      cache.handleEvent(createSSEEvent('workflow.completed', { workflowId: 'wf-1', completedAt: 5678 }));
+      cache.handleEvent(createSSEEvent('workflow.started', { workflow_id: 'wf-1' }));
+      cache.handleEvent(createSSEEvent('workflow.completed', { workflow_id: 'wf-1', completed_at: '2025-01-01T01:00:00Z' }));
 
       const workflow = cache.getWorkflow();
-      expect(workflow?.status).toBe('completed');
-      expect(workflow?.completedAt).toBe(5678);
+      expect(workflow?.status).toBe(WorkflowStatus.COMPLETED);
+      expect(workflow?.completed_at).toBe('2025-01-01T01:00:00Z');
     });
 
-    it('handles workflow.failed event', () => {
-      cache.handleEvent(createSSEEvent('workflow.failed', { workflowId: 'wf-1' }));
+    it('handles workflow.blocked event', () => {
+      cache.handleEvent(createSSEEvent('workflow.blocked', { workflow_id: 'wf-1' }));
 
-      expect(cache.getWorkflow()?.status).toBe('error');
+      expect(cache.getWorkflow()?.status).toBe(WorkflowStatus.BLOCKED);
     });
 
-    it('handles workflow.paused event', () => {
-      cache.handleEvent(createSSEEvent('workflow.paused', { workflowId: 'wf-1' }));
+    it('handles workflow.merge_pending event', () => {
+      cache.handleEvent(createSSEEvent('workflow.merge_pending', { workflow_id: 'wf-1' }));
 
-      expect(cache.getWorkflow()?.status).toBe('paused');
+      expect(cache.getWorkflow()?.status).toBe(WorkflowStatus.PENDING_MERGE);
     });
 
-    it('handles workflow.resumed event', () => {
-      cache.handleEvent(createSSEEvent('workflow.paused', { workflowId: 'wf-1' }));
-      cache.handleEvent(createSSEEvent('workflow.resumed', { workflowId: 'wf-1' }));
+    it('handles workflow.cancelled event', () => {
+      cache.handleEvent(createSSEEvent('workflow.cancelled', { workflow_id: 'wf-1' }));
 
-      expect(cache.getWorkflow()?.status).toBe('running');
+      expect(cache.getWorkflow()?.status).toBe(WorkflowStatus.CANCELLED);
     });
 
-    it('handles workflow event with id instead of workflowId', () => {
+    it('handles workflow event with id instead of workflow_id', () => {
       cache.handleEvent(createSSEEvent('workflow.started', { id: 'wf-alt' }));
 
       expect(cache.getWorkflow()?.id).toBe('wf-alt');
@@ -305,68 +308,68 @@ describe('StateCache', () => {
       cache.handleSnapshot(createMockState());
     });
 
-    it('handles agent.spawned event', () => {
+    it('handles agent.started event', () => {
       const handler = vi.fn();
       cache.on('agents.changed', handler);
 
       cache.handleEvent(
-        createSSEEvent('agent.spawned', { taskId: 'task-1', pid: 9999, startedAt: 1000 })
+        createSSEEvent('agent.started', { task_id: 'task-1', pid: 9999, started_at: '2025-01-01T00:00:00Z', worktree: '/tmp/wt', branch: 'coven/task-1' })
       );
 
       const agent = cache.getAgent('task-1');
-      expect(agent?.status).toBe('running');
+      expect(agent?.status).toBe(AgentStatus.RUNNING);
       expect(agent?.pid).toBe(9999);
-      expect(agent?.startedAt).toBe(1000);
+      expect(agent?.started_at).toBe('2025-01-01T00:00:00Z');
       expect(handler).toHaveBeenCalled();
     });
 
     it('handles agent.completed event', () => {
-      cache.handleEvent(createSSEEvent('agent.spawned', { taskId: 'task-1' }));
+      cache.handleEvent(createSSEEvent('agent.started', { task_id: 'task-1', worktree: '/tmp', branch: 'test' }));
       cache.handleEvent(
-        createSSEEvent('agent.completed', { taskId: 'task-1', exitCode: 0, completedAt: 2000 })
+        createSSEEvent('agent.completed', { task_id: 'task-1', exit_code: 0, ended_at: '2025-01-01T01:00:00Z' })
       );
 
       const agent = cache.getAgent('task-1');
-      expect(agent?.status).toBe('complete');
-      expect(agent?.exitCode).toBe(0);
-      expect(agent?.completedAt).toBe(2000);
+      expect(agent?.status).toBe(AgentStatus.COMPLETED);
+      expect(agent?.exit_code).toBe(0);
+      expect(agent?.ended_at).toBe('2025-01-01T01:00:00Z');
     });
 
     it('handles agent.failed event', () => {
-      cache.handleEvent(createSSEEvent('agent.spawned', { taskId: 'task-1' }));
+      cache.handleEvent(createSSEEvent('agent.started', { task_id: 'task-1', worktree: '/tmp', branch: 'test' }));
       cache.handleEvent(
-        createSSEEvent('agent.failed', { taskId: 'task-1', exitCode: 1, error: 'Something broke' })
+        createSSEEvent('agent.failed', { task_id: 'task-1', exit_code: 1, error: 'Something broke' })
       );
 
       const agent = cache.getAgent('task-1');
-      expect(agent?.status).toBe('failed');
-      expect(agent?.exitCode).toBe(1);
+      expect(agent?.status).toBe(AgentStatus.FAILED);
+      expect(agent?.exit_code).toBe(1);
       expect(agent?.error).toBe('Something broke');
     });
 
     it('handles agent.killed event', () => {
-      cache.handleEvent(createSSEEvent('agent.spawned', { taskId: 'task-1' }));
-      cache.handleEvent(createSSEEvent('agent.killed', { taskId: 'task-1' }));
+      cache.handleEvent(createSSEEvent('agent.started', { task_id: 'task-1', worktree: '/tmp', branch: 'test' }));
+      cache.handleEvent(createSSEEvent('agent.killed', { task_id: 'task-1' }));
 
-      expect(cache.getAgent('task-1')?.status).toBe('killed');
+      expect(cache.getAgent('task-1')?.status).toBe(AgentStatus.KILLED);
     });
 
     it('handles agent.output event without modifying agent state', () => {
-      cache.handleEvent(createSSEEvent('agent.spawned', { taskId: 'task-1' }));
+      cache.handleEvent(createSSEEvent('agent.started', { task_id: 'task-1', worktree: '/tmp', branch: 'test' }));
 
       const handler = vi.fn();
       cache.on('agents.changed', handler);
 
-      cache.handleEvent(createSSEEvent('agent.output', { taskId: 'task-1', output: 'hello' }));
+      cache.handleEvent(createSSEEvent('agent.output', { task_id: 'task-1', output: 'hello' }));
 
       // Agent state unchanged
-      expect(cache.getAgent('task-1')?.status).toBe('running');
+      expect(cache.getAgent('task-1')?.status).toBe(AgentStatus.RUNNING);
       // But change event still emitted to notify UI
       expect(handler).toHaveBeenCalled();
     });
 
-    it('ignores agent events without taskId', () => {
-      cache.handleEvent(createSSEEvent('agent.spawned', {}));
+    it('ignores agent events without task_id', () => {
+      cache.handleEvent(createSSEEvent('agent.started', {}));
 
       expect(cache.getAgents()).toHaveLength(0);
     });
@@ -376,7 +379,7 @@ describe('StateCache', () => {
     beforeEach(() => {
       cache.handleSnapshot(
         createMockState({
-          tasks: [createMockTask({ id: 'task-1', status: 'pending' })],
+          tasks: [createMockTask({ id: 'task-1', status: TaskStatus.OPEN })],
         })
       );
     });
@@ -397,48 +400,6 @@ describe('StateCache', () => {
       expect(cache.getTask('task-2')).toBeDefined();
       expect(handler).toHaveBeenCalled();
     });
-
-    it('handles task.started event', () => {
-      cache.handleEvent(createSSEEvent('task.started', { taskId: 'task-1', startedAt: 5000 }));
-
-      const task = cache.getTask('task-1');
-      expect(task?.status).toBe('running');
-      expect(task?.startedAt).toBe(5000);
-    });
-
-    it('handles task.completed event', () => {
-      cache.handleEvent(createSSEEvent('task.completed', { taskId: 'task-1', completedAt: 6000 }));
-
-      const task = cache.getTask('task-1');
-      expect(task?.status).toBe('complete');
-      expect(task?.completedAt).toBe(6000);
-    });
-
-    it('handles task.failed event', () => {
-      cache.handleEvent(
-        createSSEEvent('task.failed', { taskId: 'task-1', error: 'Task failed' })
-      );
-
-      const task = cache.getTask('task-1');
-      expect(task?.status).toBe('failed');
-      expect(task?.error).toBe('Task failed');
-    });
-
-    it('handles task event with id instead of taskId', () => {
-      cache.handleEvent(createSSEEvent('task.started', { id: 'task-1' }));
-
-      expect(cache.getTask('task-1')?.status).toBe('running');
-    });
-
-    it('emits change event for unknown task ID', () => {
-      const handler = vi.fn();
-      cache.on('tasks.changed', handler);
-
-      cache.handleEvent(createSSEEvent('task.started', { taskId: 'unknown-task' }));
-
-      // Should still emit to signal UI should refresh
-      expect(handler).toHaveBeenCalled();
-    });
   });
 
   describe('handleEvent() - question events', () => {
@@ -446,44 +407,15 @@ describe('StateCache', () => {
       cache.handleSnapshot(createMockState());
     });
 
-    it('handles questions.asked event with nested question', () => {
+    it('handles agent.question event', () => {
       const handler = vi.fn();
       cache.on('questions.changed', handler);
 
       const question = createMockQuestion({ id: 'q-new', text: 'What now?' });
-      cache.handleEvent(createSSEEvent('questions.asked', { question }));
+      cache.handleEvent(createSSEEvent('agent.question', question));
 
       expect(cache.getQuestion('q-new')?.text).toBe('What now?');
       expect(handler).toHaveBeenCalled();
-    });
-
-    it('handles questions.asked event with flat data', () => {
-      const question = createMockQuestion({ id: 'q-flat', text: 'Flat question' });
-      cache.handleEvent(createSSEEvent('questions.asked', question));
-
-      expect(cache.getQuestion('q-flat')?.text).toBe('Flat question');
-    });
-
-    it('handles questions.answered event with questionId', () => {
-      const question = createMockQuestion({ id: 'q-1' });
-      cache.handleSnapshot(createMockState({ questions: [question] }));
-
-      const handler = vi.fn();
-      cache.on('questions.changed', handler);
-
-      cache.handleEvent(createSSEEvent('questions.answered', { questionId: 'q-1' }));
-
-      expect(cache.getQuestion('q-1')).toBeUndefined();
-      expect(handler).toHaveBeenCalled();
-    });
-
-    it('handles questions.answered event with id', () => {
-      const question = createMockQuestion({ id: 'q-2' });
-      cache.handleSnapshot(createMockState({ questions: [question] }));
-
-      cache.handleEvent(createSSEEvent('questions.answered', { id: 'q-2' }));
-
-      expect(cache.getQuestion('q-2')).toBeUndefined();
     });
   });
 
@@ -522,9 +454,9 @@ describe('StateCache', () => {
     it('clears all cached state', () => {
       cache.handleSnapshot(
         createMockState({
-          workflow: { id: 'wf-1', status: 'running' },
+          workflow: { id: 'wf-1', status: WorkflowStatus.RUNNING },
           tasks: [createMockTask()],
-          agents: [createMockAgent()],
+          agents: { 'task-1': createMockAgent() },
           questions: [createMockQuestion()],
           timestamp: 12345,
         })

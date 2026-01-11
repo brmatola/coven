@@ -1,0 +1,39 @@
+post:
+  operationId: update_workflow_reject_merge
+  summary: Reject workflow merge
+  description: Rejects workflow changes and blocks the workflow
+  tags:
+    - workflows
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/WorkflowId'
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: '../schemas/workflow.yaml#/components/schemas/RejectMergeRequest'
+  responses:
+    '200':
+      description: Reject response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/workflow.yaml#/components/schemas/RejectMergeResponse'
+    '400':
+      description: Workflow is not pending merge approval
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '404':
+      description: Workflow not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

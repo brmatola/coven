@@ -1,0 +1,45 @@
+post:
+  operationId: create_question_answer
+  summary: Answer a question
+  description: Records an answer to a pending question and delivers it to the agent
+  tags:
+    - questions
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/QuestionId'
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          $ref: '../schemas/question.yaml#/components/schemas/AnswerQuestionRequest'
+  responses:
+    '200':
+      description: Answer response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/question.yaml#/components/schemas/AnswerQuestionResponse'
+    '400':
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '404':
+      description: Question not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '409':
+      description: Question already answered
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

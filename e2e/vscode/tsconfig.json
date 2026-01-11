@@ -4,20 +4,26 @@
     "target": "ES2022",
     "lib": ["ES2022"],
     "outDir": "./out",
-    "rootDir": ".",
     "sourceMap": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "noEmitOnError": false,
     "resolveJsonModule": true,
     "declaration": false,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    "typeRoots": ["../../node_modules/@types", "./node_modules/@types"],
+    "paths": {
+      "@coven/client-ts": ["../../packages/client-ts/dist"],
+      "@coven/client-ts/*": ["../../packages/client-ts/dist/*"]
+    }
   },
   "include": [
     "./**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "out"
+    "out",
+    "../../packages/api-spec/generated"
   ]
 }

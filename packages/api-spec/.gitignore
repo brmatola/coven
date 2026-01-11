@@ -1,0 +1,5 @@
+# Generated client code
+generated/
+
+# Bundled OpenAPI spec (generated during build)
+openapi.bundled.yaml

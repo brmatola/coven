@@ -60,6 +60,14 @@ type WorkflowListResponse struct {
 }
 
 // handleWorkflowsList handles GET /workflows.
+// @Summary      List all workflows
+// @Description  Returns a list of all workflows with their current status and metadata
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  WorkflowListResponse  "Workflows list response"
+// @Failure      405  {object}  map[string]string     "Method not allowed"
+// @Router       /workflows [get]
 func (h *WorkflowHandlers) handleWorkflowsList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -181,6 +189,16 @@ func (h *WorkflowHandlers) handleWorkflowByID(w http.ResponseWriter, r *http.Req
 }
 
 // handleGetWorkflow handles GET /workflows/:id.
+// @Summary      Get workflow details
+// @Description  Returns detailed information about a workflow including steps, outputs, and available actions
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Workflow ID or Task ID"
+// @Success      200  {object}  WorkflowDetailResponse  "Workflow details"
+// @Failure      404  {object}  map[string]string      "Workflow not found"
+// @Failure      405  {object}  map[string]string      "Method not allowed"
+// @Router       /workflows/{id} [get]
 func (h *WorkflowHandlers) handleGetWorkflow(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -307,6 +325,16 @@ func (h *WorkflowHandlers) flattenSteps(grimoireSteps []grimoire.Step, state *wo
 }
 
 // handleGetWorkflowLog handles GET /workflows/:id/log.
+// @Summary      Get workflow log
+// @Description  Returns the JSONL log file for a workflow
+// @Tags         workflows
+// @Accept       json
+// @Produce      application/x-ndjson
+// @Param        id   path      string  true  "Workflow ID or Task ID"
+// @Success      200  {string}  string  "JSONL log content"
+// @Failure      404  {object}  map[string]string  "Workflow not found"
+// @Failure      405  {object}  map[string]string  "Method not allowed"
+// @Router       /workflows/{id}/log [get]
 func (h *WorkflowHandlers) handleGetWorkflowLog(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -347,6 +375,17 @@ func (h *WorkflowHandlers) handleGetWorkflowLog(w http.ResponseWriter, r *http.R
 }
 
 // handleCancelWorkflow handles POST /workflows/:id/cancel.
+// @Summary      Cancel a workflow
+// @Description  Cancels a running or blocked workflow and stops any associated agents
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Workflow ID or Task ID"
+// @Success      200  {object}  map[string]interface{}  "Cancel response"
+// @Failure      400  {object}  map[string]string        "Workflow already in terminal state"
+// @Failure      404  {object}  map[string]string        "Workflow not found"
+// @Failure      405  {object}  map[string]string        "Method not allowed"
+// @Router       /workflows/{id}/cancel [post]
 func (h *WorkflowHandlers) handleCancelWorkflow(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -396,6 +435,18 @@ func (h *WorkflowHandlers) handleCancelWorkflow(w http.ResponseWriter, r *http.R
 }
 
 // handleRetryWorkflow handles POST /workflows/:id/retry.
+// @Summary      Retry a blocked workflow
+// @Description  Retries a blocked or failed workflow, optionally with modified inputs
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Workflow ID or Task ID"
+// @Param        body body      object  false "Modified inputs (optional)"  SchemaExample({"modified_inputs":{"key":"value"}})
+// @Success      200  {object}  map[string]interface{}  "Retry response"
+// @Failure      400  {object}  map[string]string        "Workflow is not in blocked or failed state"
+// @Failure      404  {object}  map[string]string        "Workflow not found"
+// @Failure      405  {object}  map[string]string        "Method not allowed"
+// @Router       /workflows/{id}/retry [post]
 func (h *WorkflowHandlers) handleRetryWorkflow(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -444,6 +495,18 @@ type ApproveMergeResponse struct {
 }
 
 // handleApproveMerge handles POST /workflows/:id/approve-merge.
+// @Summary      Approve workflow merge
+// @Description  Approves and merges workflow changes into the main repository
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Workflow ID or Task ID"
+// @Param        body body      object  false "Approval feedback (optional)"  SchemaExample({"feedback":"Looks good!"})
+// @Success      200  {object}  ApproveMergeResponse  "Merge approval response"
+// @Failure      400  {object}  map[string]string      "Workflow is not pending merge approval"
+// @Failure      404  {object}  map[string]string      "Workflow not found"
+// @Failure      405  {object}  map[string]string      "Method not allowed"
+// @Router       /workflows/{id}/approve-merge [post]
 func (h *WorkflowHandlers) handleApproveMerge(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -496,6 +559,18 @@ func (h *WorkflowHandlers) handleApproveMerge(w http.ResponseWriter, r *http.Req
 }
 
 // handleRejectMerge handles POST /workflows/:id/reject-merge.
+// @Summary      Reject workflow merge
+// @Description  Rejects workflow changes and blocks the workflow
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Workflow ID or Task ID"
+// @Param        body body      object  false "Rejection reason (optional)"  SchemaExample({"reason":"Needs more tests"})
+// @Success      200  {object}  map[string]interface{}  "Reject response"
+// @Failure      400  {object}  map[string]string        "Workflow is not pending merge approval"
+// @Failure      404  {object}  map[string]string        "Workflow not found"
+// @Failure      405  {object}  map[string]string        "Method not allowed"
+// @Router       /workflows/{id}/reject-merge [post]
 func (h *WorkflowHandlers) handleRejectMerge(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		api.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")

@@ -1,0 +1,116 @@
+components:
+  schemas:
+    QuestionType:
+      type: string
+      enum:
+        - yes_no
+        - text
+        - choice
+      description: Type of question
+
+    WorkflowContext:
+      type: object
+      properties:
+        workflow_id:
+          type: string
+        step_name:
+          type: string
+        step_task_id:
+          type: string
+          description: Process ID for the step
+
+    Question:
+      type: object
+      required:
+        - id
+        - task_id
+        - agent_id
+        - text
+        - type
+        - asked_at
+      properties:
+        id:
+          type: string
+          description: Question ID
+        task_id:
+          type: string
+          description: Task ID this question is for
+        agent_id:
+          type: string
+          description: Agent ID that asked the question
+        text:
+          type: string
+          description: Question text
+        type:
+          $ref: '#/components/schemas/QuestionType'
+        options:
+          type: array
+          items:
+            type: string
+          description: Available options (for choice questions)
+        asked_at:
+          type: string
+          format: date-time
+        answered_at:
+          type: string
+          format: date-time
+
+        answer:
+          type: [string, 'null']
+        context:
+          $ref: '#/components/schemas/WorkflowContext'
+
+
+    QuestionsResponse:
+      type: object
+      required:
+        - questions
+        - count
+        - pending_count
+      properties:
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Question'
+        count:
+          type: integer
+          description: Total number of questions returned
+        pending_count:
+          type: integer
+          description: Total number of pending questions
+
+    AnswerQuestionRequest:
+      type: object
+      required:
+        - answer
+      properties:
+        answer:
+          type: string
+          description: Answer text
+
+    AnswerQuestionResponse:
+      type: object
+      required:
+        - question_id
+        - task_id
+        - status
+        - delivered
+        - message
+      properties:
+        question_id:
+          type: string
+        task_id:
+          type: string
+        step_task_id:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [answered]
+        delivered:
+          type: boolean
+          description: Whether answer was delivered to agent
+        delivery_error:
+          type: [string, 'null']
+          description: Error message if delivery failed
+        message:
+          type: string

@@ -1,0 +1,110 @@
+components:
+  schemas:
+    TaskStatus:
+      type: string
+      enum:
+        - open
+        - in_progress
+        - closed
+        - blocked
+        - pending_merge
+      description: Status of a task from beads
+
+    Task:
+      type: object
+      required:
+        - id
+        - title
+        - status
+        - priority
+        - type
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          description: Task ID
+        title:
+          type: string
+          description: Task title
+        description:
+          type: string
+          description: Task description
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          type: integer
+          description: Priority (higher = more important)
+        type:
+          type: string
+          enum: [task, bug, feature, epic]
+          description: Task type
+        labels:
+          type: array
+          items:
+            type: string
+          description: Task labels
+        depends_on:
+          type: array
+          items:
+            type: string
+          description: Task IDs this task depends on
+        blocks:
+          type: array
+          items:
+            type: string
+          description: Task IDs blocked by this task
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TasksResponse:
+      type: object
+      required:
+        - tasks
+        - count
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        count:
+          type: integer
+          description: Number of tasks
+        last_sync:
+          type: string
+          format: date-time
+
+          description: Last time tasks were synced from beads
+
+    TaskStartResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - message
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [started, already_running]
+        message:
+          type: [string, 'null']
+    TaskStopResponse:
+      type: object
+      required:
+        - task_id
+        - status
+        - message
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [stopped]
+        message:
+          type: string

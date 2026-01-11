@@ -298,6 +298,7 @@
     }
   },
   "scripts": {
+    "prebuild": "cd ../client-ts && npm run build",
     "build": "npm run lint && tsx scripts/build.ts && npm run build:webviews",
     "watch": "tsx scripts/build.ts --watch",
     "package": "vsce package --no-dependencies --allow-missing-repository",
@@ -314,6 +315,7 @@
     "test:e2e": "node ../../e2e/vscode/out/runTest.js"
   },
   "dependencies": {
+    "@coven/client-ts": "file:../client-ts",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

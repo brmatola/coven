@@ -1,0 +1,126 @@
+get:
+  operationId: get_events
+  summary: Stream server-sent events
+  description: |
+    Establishes a Server-Sent Events (SSE) stream for real-time event notifications.
+    
+    The connection remains open and events are streamed as they occur. The stream
+    starts with an initial state snapshot, then streams events as they happen.
+    
+    Events include:
+    - State snapshots (periodic heartbeats)
+    - Agent lifecycle events (started, output, completed, failed)
+    - Task updates
+    - Workflow events (started, step progress, blocked, completed)
+    - Questions from agents
+    
+    The client should reconnect automatically if the connection is lost.
+  tags:
+    - events
+  parameters:
+    - name: Last-Event-ID
+      in: header
+      description: Last received event ID for resuming stream
+      required: false
+      schema:
+        type: string
+  responses:
+    '200':
+      description: Event stream
+      headers:
+        Content-Type:
+          schema:
+            type: string
+            example: text/event-stream
+        Cache-Control:
+          schema:
+            type: string
+            example: no-cache
+        Connection:
+          schema:
+            type: string
+            example: keep-alive
+      content:
+        text/event-stream:
+          itemSchema:
+                type: object
+                required:
+                  - type
+                  - data
+                  - timestamp
+                properties:
+                  type:
+                    type: string
+                    description: Event type
+                    enum:
+                      - state.snapshot
+                      - agent.started
+                      - agent.output
+                      - agent.completed
+                      - agent.failed
+                      - agent.killed
+                      - agent.question
+                      - tasks.updated
+                      - workflow.started
+                      - workflow.step.started
+                      - workflow.step.completed
+                      - workflow.blocked
+                      - workflow.merge_pending
+                      - workflow.completed
+                      - workflow.cancelled
+                      - heartbeat
+                  data:
+                    description: Event-specific data (varies by event type)
+                    oneOf:
+                      - $ref: '../schemas/common.yaml#/components/schemas/DaemonState'
+                      - $ref: '../schemas/agent.yaml#/components/schemas/Agent'
+                      - $ref: '../schemas/task.yaml#/components/schemas/Task'
+                      - $ref: '../schemas/question.yaml#/components/schemas/Question'
+                      - type: object
+                        description: Workflow event data
+                        properties:
+                          workflow_id:
+                            type: string
+                          task_id:
+                            type: string
+                          grimoire_name:
+                            type: string
+                          step_name:
+                            type: string
+                          step_type:
+                            type: string
+                          step_index:
+                            type: integer
+                          success:
+                            type: boolean
+                          error:
+                            type: string
+                          duration:
+                            type: string
+                          reason:
+                            type: string
+                      - type: object
+                        description: Agent output event data
+                        properties:
+                          task_id:
+                            type: string
+                          output:
+                            type: string
+                      - type: 'null'
+                        description: Heartbeat events have no data
+                  timestamp:
+                    type: string
+                    format: date-time
+                    description: Event timestamp
+    '400':
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '500':
+      description: Streaming not supported or server error
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

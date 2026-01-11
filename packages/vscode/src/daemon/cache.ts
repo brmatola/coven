@@ -1,20 +1,35 @@
 import { EventEmitter } from 'events';
-import {
-  DaemonState,
-  DaemonTask,
+import type {
   Agent,
+  Task,
   Question,
-  WorkflowState,
-  WorkflowStatus,
-} from './types';
-import { SSEEvent, SSEEventType } from './sse';
+  SSEEvent,
+  SSEEventType,
+} from '@coven/client-ts';
+import { WorkflowStatus, AgentStatus } from '@coven/client-ts';
+
+// Extension-specific aggregated state view
+export interface WorkflowState {
+  id: string;
+  status: WorkflowStatus;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface DaemonState {
+  workflow: WorkflowState | null;
+  tasks: Task[];
+  agents: Record<string, Agent>;
+  questions: Question[];
+  timestamp: number;
+}
 
 /**
  * Events emitted by StateCache
  */
 export interface StateCacheEvents {
   'workflows.changed': (workflow: WorkflowState) => void;
-  'tasks.changed': (tasks: DaemonTask[]) => void;
+  'tasks.changed': (tasks: Task[]) => void;
   'agents.changed': (agents: Agent[]) => void;
   'questions.changed': (questions: Question[]) => void;
   'state.reset': () => void;
@@ -35,7 +50,7 @@ export interface SessionState {
  */
 export class StateCache extends EventEmitter {
   private workflow: WorkflowState | null = null;
-  private tasksById: Map<string, DaemonTask> = new Map();
+  private tasksById: Map<string, Task> = new Map();
   private agentsByTaskId: Map<string, Agent> = new Map();
   private questionsById: Map<string, Question> = new Map();
   private lastTimestamp: number = 0;
@@ -58,14 +73,14 @@ export class StateCache extends EventEmitter {
   /**
    * Get all cached tasks.
    */
-  getTasks(): DaemonTask[] {
+  getTasks(): Task[] {
     return Array.from(this.tasksById.values());
   }
 
   /**
    * Get a specific task by ID.
    */
-  getTask(id: string): DaemonTask | undefined {
+  getTask(id: string): Task | undefined {
     return this.tasksById.get(id);
   }
 
@@ -101,7 +116,7 @@ export class StateCache extends EventEmitter {
    * Get the current session state derived from workflow.
    */
   getSessionState(): SessionState {
-    if (!this.workflow || this.workflow.status === 'idle') {
+    if (!this.workflow || this.workflow.status === WorkflowStatus.IDLE) {
       return { active: false };
     }
 
@@ -147,19 +162,11 @@ export class StateCache extends EventEmitter {
       }
     }
 
-    // Daemon sends agents as object {taskId: Agent}, convert to array
+    // Daemon sends agents as object {task_id: Agent}
     this.agentsByTaskId.clear();
     const agents = state.agents ?? {};
-    if (Array.isArray(agents)) {
-      for (const agent of agents) {
-        this.agentsByTaskId.set(agent.taskId, agent);
-      }
-    } else {
-      // Object format from daemon: {taskId: Agent}
-      for (const [taskId, agent] of Object.entries(agents)) {
-        const agentData = agent as Agent;
-        this.agentsByTaskId.set(taskId, { ...agentData, taskId });
-      }
+    for (const [taskId, agent] of Object.entries(agents)) {
+      this.agentsByTaskId.set(taskId, agent);
     }
 
     this.questionsById.clear();
@@ -184,6 +191,13 @@ export class StateCache extends EventEmitter {
   /**
    * Handle an incremental SSE event.
    * Updates the cache and emits appropriate change events.
+   *
+   * Event types match the API spec:
+   * - state.snapshot, heartbeat
+   * - agent.started, agent.output, agent.completed, agent.failed, agent.killed, agent.question
+   * - tasks.updated
+   * - workflow.started, workflow.step.started, workflow.step.completed,
+   *   workflow.blocked, workflow.merge_pending, workflow.completed, workflow.cancelled
    */
   handleEvent(event: SSEEvent): void {
     const eventType = event.type;
@@ -201,14 +215,16 @@ export class StateCache extends EventEmitter {
         break;
 
       case 'workflow.started':
+      case 'workflow.step.started':
+      case 'workflow.step.completed':
+      case 'workflow.blocked':
+      case 'workflow.merge_pending':
       case 'workflow.completed':
-      case 'workflow.failed':
-      case 'workflow.paused':
-      case 'workflow.resumed':
+      case 'workflow.cancelled':
         this.handleWorkflowEvent(eventType, data);
         break;
 
-      case 'agent.spawned':
+      case 'agent.started':
       case 'agent.output':
       case 'agent.completed':
       case 'agent.failed':
@@ -216,16 +232,12 @@ export class StateCache extends EventEmitter {
         this.handleAgentEvent(eventType, data);
         break;
 
-      case 'tasks.updated':
-      case 'task.started':
-      case 'task.completed':
-      case 'task.failed':
-        this.handleTaskEvent(eventType, data);
+      case 'agent.question':
+        this.handleQuestionEvent(data);
         break;
 
-      case 'questions.asked':
-      case 'questions.answered':
-        this.handleQuestionEvent(eventType, data);
+      case 'tasks.updated':
+        this.handleTasksUpdated(data);
         break;
 
       case 'heartbeat':
@@ -257,29 +269,34 @@ export class StateCache extends EventEmitter {
     eventType: SSEEventType,
     data: Record<string, unknown>
   ): void {
-    const workflowId = data.workflowId as string | undefined;
+    const workflowId = data.workflow_id as string | undefined;
     const id = workflowId ?? (data.id as string | undefined) ?? '';
 
     // Determine status from event type
     let status: WorkflowStatus;
     switch (eventType) {
       case 'workflow.started':
-        status = 'running';
+      case 'workflow.step.started':
+        status = WorkflowStatus.RUNNING;
+        break;
+      case 'workflow.step.completed':
+        // Step completed but workflow still running
+        status = this.workflow?.status ?? WorkflowStatus.RUNNING;
         break;
       case 'workflow.completed':
-        status = 'completed';
+        status = WorkflowStatus.COMPLETED;
         break;
-      case 'workflow.failed':
-        status = 'error';
+      case 'workflow.blocked':
+        status = WorkflowStatus.BLOCKED;
         break;
-      case 'workflow.paused':
-        status = 'paused';
+      case 'workflow.merge_pending':
+        status = WorkflowStatus.PENDING_MERGE;
         break;
-      case 'workflow.resumed':
-        status = 'running';
+      case 'workflow.cancelled':
+        status = WorkflowStatus.CANCELLED;
         break;
       default:
-        status = 'idle';
+        status = WorkflowStatus.IDLE;
     }
 
     // Update or create workflow state
@@ -287,8 +304,8 @@ export class StateCache extends EventEmitter {
     this.workflow = {
       id: id || existingWorkflow?.id || '',
       status,
-      startedAt: (data.startedAt as number) ?? existingWorkflow?.startedAt,
-      completedAt: (data.completedAt as number) ?? existingWorkflow?.completedAt,
+      started_at: (data.started_at as string) ?? existingWorkflow?.started_at,
+      completed_at: (data.completed_at as string) ?? existingWorkflow?.completed_at,
     };
 
     this.emit('workflows.changed', this.workflow);
@@ -298,7 +315,7 @@ export class StateCache extends EventEmitter {
     eventType: SSEEventType,
     data: Record<string, unknown>
   ): void {
-    const taskId = data.taskId as string;
+    const taskId = data.task_id as string;
     if (!taskId) return;
 
     // For output events, we don't update agent state
@@ -309,138 +326,66 @@ export class StateCache extends EventEmitter {
       return;
     }
 
-    // Update or create agent
+    // Get or create agent from data
+    const agentData = data as unknown as Partial<Agent>;
     const existingAgent = this.agentsByTaskId.get(taskId);
-    let agent: Agent;
 
+    // Map event type to agent status
+    let status: AgentStatus;
     switch (eventType) {
-      case 'agent.spawned':
-        agent = {
-          taskId,
-          status: 'running',
-          pid: data.pid as number | undefined,
-          startedAt: data.startedAt as number | undefined ?? Date.now(),
-        };
+      case 'agent.started':
+        status = AgentStatus.RUNNING;
         break;
-
       case 'agent.completed':
-        agent = {
-          ...existingAgent,
-          taskId,
-          status: 'complete',
-          completedAt: data.completedAt as number | undefined ?? Date.now(),
-          exitCode: data.exitCode as number | undefined ?? 0,
-        };
+        status = AgentStatus.COMPLETED;
         break;
-
       case 'agent.failed':
-        agent = {
-          ...existingAgent,
-          taskId,
-          status: 'failed',
-          completedAt: data.completedAt as number | undefined ?? Date.now(),
-          exitCode: data.exitCode as number | undefined,
-          error: data.error as string | undefined,
-        };
+        status = AgentStatus.FAILED;
         break;
-
       case 'agent.killed':
-        agent = {
-          ...existingAgent,
-          taskId,
-          status: 'killed',
-          completedAt: data.completedAt as number | undefined ?? Date.now(),
-        };
+        status = AgentStatus.KILLED;
         break;
-
       default:
         return;
     }
+
+    // Merge with existing or create new agent
+    const agent: Agent = {
+      task_id: taskId,
+      pid: agentData.pid ?? existingAgent?.pid ?? 0,
+      status,
+      worktree: agentData.worktree ?? existingAgent?.worktree ?? '',
+      branch: agentData.branch ?? existingAgent?.branch ?? '',
+      started_at: agentData.started_at ?? existingAgent?.started_at ?? new Date().toISOString(),
+      ended_at: agentData.ended_at ?? existingAgent?.ended_at,
+      exit_code: agentData.exit_code ?? existingAgent?.exit_code,
+      error: agentData.error ?? existingAgent?.error,
+    };
 
     this.agentsByTaskId.set(taskId, agent);
     this.emit('agents.changed', this.getAgents());
   }
 
-  private handleTaskEvent(
-    eventType: SSEEventType,
-    data: Record<string, unknown>
-  ): void {
-    // For tasks.updated, we get a full task list
-    if (eventType === 'tasks.updated') {
-      const tasks = data.tasks as DaemonTask[] | undefined;
-      if (tasks) {
-        this.tasksById.clear();
-        for (const task of tasks) {
+  private handleTasksUpdated(data: Record<string, unknown>): void {
+    // tasks.updated event provides a full task list
+    const tasks = (data.tasks ?? data) as Task[] | undefined;
+    if (Array.isArray(tasks)) {
+      this.tasksById.clear();
+      for (const task of tasks) {
+        if (task && task.id) {
           this.tasksById.set(task.id, task);
         }
       }
-      this.emit('tasks.changed', this.getTasks());
-      return;
     }
-
-    // For individual task events, update the specific task
-    const taskId = data.taskId as string | undefined ?? data.id as string | undefined;
-    if (!taskId) return;
-
-    const existingTask = this.tasksById.get(taskId);
-    if (!existingTask) {
-      // If we don't have the task, we need to fetch it
-      // For now, just emit change to signal UI should refresh
-      this.emit('tasks.changed', this.getTasks());
-      return;
-    }
-
-    let updatedTask: DaemonTask;
-    switch (eventType) {
-      case 'task.started':
-        updatedTask = {
-          ...existingTask,
-          status: 'running',
-          startedAt: data.startedAt as number | undefined ?? Date.now(),
-        };
-        break;
-
-      case 'task.completed':
-        updatedTask = {
-          ...existingTask,
-          status: 'complete',
-          completedAt: data.completedAt as number | undefined ?? Date.now(),
-        };
-        break;
-
-      case 'task.failed':
-        updatedTask = {
-          ...existingTask,
-          status: 'failed',
-          completedAt: data.completedAt as number | undefined ?? Date.now(),
-          error: data.error as string | undefined,
-        };
-        break;
-
-      default:
-        return;
-    }
-
-    this.tasksById.set(taskId, updatedTask);
     this.emit('tasks.changed', this.getTasks());
   }
 
-  private handleQuestionEvent(
-    eventType: SSEEventType,
-    data: Record<string, unknown>
-  ): void {
-    if (eventType === 'questions.asked') {
-      const question = data.question as Question | undefined ?? data as unknown as Question;
-      if (question && question.id) {
-        this.questionsById.set(question.id, question);
-        this.emit('questions.changed', this.getQuestions());
-      }
-    } else if (eventType === 'questions.answered') {
-      const questionId = data.questionId as string | undefined ?? data.id as string | undefined;
-      if (questionId) {
-        this.questionsById.delete(questionId);
-        this.emit('questions.changed', this.getQuestions());
-      }
+  private handleQuestionEvent(data: Record<string, unknown>): void {
+    // agent.question event contains the question data
+    const question = data as unknown as Question;
+    if (question && question.id) {
+      this.questionsById.set(question.id, question);
+      this.emit('questions.changed', this.getQuestions());
     }
   }
 }

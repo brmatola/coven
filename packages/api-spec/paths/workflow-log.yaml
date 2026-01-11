@@ -1,0 +1,27 @@
+get:
+  operationId: get_workflow_log
+  summary: Get workflow log
+  description: Returns the JSONL log file for a workflow
+  tags:
+    - workflows
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/WorkflowId'
+  responses:
+    '200':
+      description: JSONL log content
+      content:
+        application/x-ndjson:
+          schema:
+            type: string
+    '404':
+      description: Workflow not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

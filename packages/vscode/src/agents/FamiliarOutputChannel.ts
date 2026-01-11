@@ -1,21 +1,22 @@
 import * as vscode from 'vscode';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
+import { SSEClient } from '@coven/client-ts';
+import type { SSEEvent } from '@coven/client-ts';
 
 /**
  * SSE event data for agent spawned
  */
 interface AgentSpawnedData {
-  agentId: string;
-  taskId: string;
+  agent_id: string;
+  task_id: string;
 }
 
 /**
  * SSE event data for agent output
  */
 interface AgentOutputData {
-  agentId: string;
-  taskId: string;
+  agent_id: string;
+  task_id: string;
   chunk: string;
 }
 
@@ -23,17 +24,17 @@ interface AgentOutputData {
  * SSE event data for agent completed
  */
 interface AgentCompletedData {
-  agentId: string;
-  taskId: string;
-  exitCode: number;
+  agent_id: string;
+  task_id: string;
+  exit_code: number;
 }
 
 /**
  * SSE event data for agent failed
  */
 interface AgentFailedData {
-  agentId: string;
-  taskId: string;
+  agent_id: string;
+  task_id: string;
   error: string;
 }
 
@@ -117,8 +118,8 @@ export class FamiliarOutputChannel {
       const response = await this.client.getAgentOutput(taskId);
       const channel = this.getOrCreateChannel(taskId);
       channel.clear();
-      for (const line of response.output) {
-        channel.appendLine(line);
+      for (const outputLine of response.lines) {
+        channel.appendLine(outputLine.line);
       }
     } catch {
       // Swallow error - agent might not exist or have no output
@@ -227,47 +228,47 @@ export class FamiliarOutputChannel {
   }
 
   private handleAgentSpawned(data: AgentSpawnedData): void {
-    this.activeAgentId = data.agentId;
-    this.activeTaskId = data.taskId;
+    this.activeAgentId = data.agent_id;
+    this.activeTaskId = data.task_id;
 
-    const channel = this.getOrCreateChannel(data.taskId);
+    const channel = this.getOrCreateChannel(data.task_id);
     channel.clear();
     channel.show();
-    this.appendLine(data.taskId, '--- Agent started ---');
+    this.appendLine(data.task_id, '--- Agent started ---');
   }
 
   private handleAgentOutput(data: AgentOutputData): void {
     // Only append output if it's for the active agent or a known task
-    if (data.taskId && this.channels.has(data.taskId)) {
-      const channel = this.getOrCreateChannel(data.taskId);
+    if (data.task_id && this.channels.has(data.task_id)) {
+      const channel = this.getOrCreateChannel(data.task_id);
       channel.append(data.chunk);
-    } else if (data.agentId === this.activeAgentId && this.activeTaskId) {
+    } else if (data.agent_id === this.activeAgentId && this.activeTaskId) {
       const channel = this.getOrCreateChannel(this.activeTaskId);
       channel.append(data.chunk);
     }
   }
 
   private handleAgentCompleted(data: AgentCompletedData): void {
-    const taskId = data.taskId || this.activeTaskId;
+    const taskId = data.task_id || this.activeTaskId;
     if (taskId) {
-      this.appendLine(taskId, `--- Agent completed (exit code: ${data.exitCode}) ---`);
+      this.appendLine(taskId, `--- Agent completed (exit code: ${data.exit_code}) ---`);
     }
 
     // Clear active agent if this was it
-    if (data.agentId === this.activeAgentId) {
+    if (data.agent_id === this.activeAgentId) {
       this.activeAgentId = null;
       this.activeTaskId = null;
     }
   }
 
   private handleAgentFailed(data: AgentFailedData): void {
-    const taskId = data.taskId || this.activeTaskId;
+    const taskId = data.task_id || this.activeTaskId;
     if (taskId) {
       this.appendLine(taskId, `--- Agent failed: ${data.error} ---`);
     }
 
     // Clear active agent if this was it
-    if (data.agentId === this.activeAgentId) {
+    if (data.agent_id === this.activeAgentId) {
       this.activeAgentId = null;
       this.activeTaskId = null;
     }

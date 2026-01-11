@@ -1,6 +1,5 @@
 export { DaemonClient } from './client';
-export { SSEClient } from './sse';
-export { StateCache } from './cache';
+export { StateCache, WorkflowState, DaemonState } from './cache';
 export { ConnectionManager } from './connection';
 export { BinaryManager } from './binary';
 export { DaemonLifecycle, DaemonStartError } from './lifecycle';
@@ -12,7 +11,16 @@ export {
   withLoading,
   withProgress,
 } from './notifications';
-export type { SSEEvent, SSEEventType, SSEConnectionState, SSEClientEvents } from './sse';
+
+// Re-export SSE types from @coven/client-ts
+export { SSEClient, SSEError } from '@coven/client-ts';
+export type {
+  SSEEvent,
+  SSEEventType,
+  SSEConnectionState,
+  SSEClientEventMap,
+} from '@coven/client-ts';
+
 export type { StateCacheEvents, SessionState } from './cache';
 export type { ConnectionOptions, ConnectionManagerEvents, ConnectionState } from './connection';
 export type { BinaryManagerOptions, Platform } from './binary';

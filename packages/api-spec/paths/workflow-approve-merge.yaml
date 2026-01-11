@@ -1,0 +1,39 @@
+post:
+  operationId: create_workflow_approve_merge
+  summary: Approve workflow merge
+  description: Approves and merges workflow changes into the main repository
+  tags:
+    - workflows
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/WorkflowId'
+  requestBody:
+    required: false
+    content:
+      application/json:
+        schema:
+          $ref: '../schemas/workflow.yaml#/components/schemas/ApproveMergeRequest'
+  responses:
+    '200':
+      description: Merge approval response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/workflow.yaml#/components/schemas/ApproveMergeResponse'
+    '400':
+      description: Workflow is not pending merge approval
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '404':
+      description: Workflow not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

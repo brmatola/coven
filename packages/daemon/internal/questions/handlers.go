@@ -32,6 +32,16 @@ func (h *Handlers) Register(server *api.Server) {
 }
 
 // handleQuestions handles GET /questions
+// @Summary      Get all questions
+// @Description  Returns a list of pending questions, optionally filtered by task ID
+// @Tags         questions
+// @Accept       json
+// @Produce      json
+// @Param        task_id  query     string  false  "Filter by task ID"
+// @Param        pending  query     string  false  "Include only pending questions (default: true)"
+// @Success      200      {object}  map[string]interface{}  "Questions response"
+// @Failure      405      {object}  map[string]string       "Method not allowed"
+// @Router       /questions [get]
 func (h *Handlers) handleQuestions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -93,6 +103,16 @@ func (h *Handlers) handleQuestionByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetQuestion handles GET /questions/:id
+// @Summary      Get question by ID
+// @Description  Returns a specific question by its ID
+// @Tags         questions
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Question ID"
+// @Success      200  {object}  Question  "Question information"
+// @Failure      404  {object}  map[string]string  "Question not found"
+// @Failure      405  {object}  map[string]string  "Method not allowed"
+// @Router       /questions/{id} [get]
 func (h *Handlers) handleGetQuestion(w http.ResponseWriter, r *http.Request, questionID string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -110,6 +130,19 @@ func (h *Handlers) handleGetQuestion(w http.ResponseWriter, r *http.Request, que
 }
 
 // handleAnswerQuestion handles POST /questions/:id/answer
+// @Summary      Answer a question
+// @Description  Records an answer to a pending question and delivers it to the agent
+// @Tags         questions
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Question ID"
+// @Param        body body      object  true  "Answer body"  SchemaExample({"answer":"answer text"})
+// @Success      200  {object}  map[string]interface{}  "Answer response"
+// @Failure      400  {object}  map[string]string       "Invalid request"
+// @Failure      404  {object}  map[string]string       "Question not found"
+// @Failure      405  {object}  map[string]string       "Method not allowed"
+// @Failure      409  {object}  map[string]string       "Question already answered"
+// @Router       /questions/{id}/answer [post]
 func (h *Handlers) handleAnswerQuestion(w http.ResponseWriter, r *http.Request, questionID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

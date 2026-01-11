@@ -1,0 +1,27 @@
+get:
+  operationId: get_workflow_by_id
+  summary: Get workflow details
+  description: Returns detailed information about a workflow including steps, outputs, and available actions
+  tags:
+    - workflows
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/WorkflowId'
+  responses:
+    '200':
+      description: Workflow details
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/workflow.yaml#/components/schemas/WorkflowDetailResponse'
+    '404':
+      description: Workflow not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

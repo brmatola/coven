@@ -36,9 +36,14 @@ fmt:
 	go fmt ./...
 	goimports -w .
 
+# Generate OpenAPI specification
+generate-openapi:
+	@./scripts/generate-openapi.sh
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)/covend* coverage.out coverage.html
+	rm -rf docs/openapi
 
 # Install development tools
 tools:

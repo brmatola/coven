@@ -1,0 +1,37 @@
+components:
+  parameters:
+    TaskId:
+      name: id
+      in: path
+      required: true
+      description: Task ID
+      schema:
+        type: string
+      example: "task-123"
+
+    AgentId:
+      name: id
+      in: path
+      required: true
+      description: Agent/Task ID
+      schema:
+        type: string
+      example: "task-123"
+
+    QuestionId:
+      name: id
+      in: path
+      required: true
+      description: Question ID
+      schema:
+        type: string
+      example: "question-456"
+
+    WorkflowId:
+      name: id
+      in: path
+      required: true
+      description: Workflow ID or Task ID
+      schema:
+        type: string
+      example: "workflow-789"

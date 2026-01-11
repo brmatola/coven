@@ -1,0 +1,27 @@
+post:
+  operationId: stop_task
+  summary: Stop a task
+  description: Stops the agent working on a specific task
+  tags:
+    - tasks
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/TaskId'
+  responses:
+    '200':
+      description: Stop response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task.yaml#/components/schemas/TaskStopResponse'
+    '404':
+      description: No agent running for task
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

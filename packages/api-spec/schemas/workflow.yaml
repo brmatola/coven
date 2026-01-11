@@ -1,0 +1,304 @@
+components:
+  schemas:
+    WorkflowStatus:
+      type: string
+      enum:
+        - idle
+        - running
+        - paused
+        - completed
+        - error
+        - blocked
+        - pending_merge
+        - cancelled
+      description: Status of a workflow
+
+    WorkflowState:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          description: Workflow ID
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+        started_at:
+          type: string
+          format: date-time
+
+        completed_at:
+          type: string
+          format: date-time
+
+
+    StepStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+        - skipped
+      description: Status of a workflow step
+
+    StepInfo:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - status
+        - depth
+      properties:
+        id:
+          type: string
+          description: Step ID
+        name:
+          type: string
+          description: Step name
+        type:
+          type: string
+          enum: [agent, script, loop, merge]
+          description: Step type
+        status:
+          $ref: '#/components/schemas/StepStatus'
+        depth:
+          type: integer
+          description: Nesting depth (0 = top level)
+        is_loop:
+          type: boolean
+          description: Whether this is a loop step
+        max_iterations:
+          type: [integer, 'null']
+          description: Maximum iterations for loop
+        current_iteration:
+          type: [integer, 'null']
+          description: Current iteration for loop
+        error:
+          type: [string, 'null']
+          description: Error message if failed
+
+    StepResult:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+        output:
+          type: [string, 'null']
+        error:
+          type: [string, 'null']
+        duration:
+          type: [string, 'null']
+          description: Duration as string (e.g., "5s")
+
+    MergeReview:
+      type: object
+      properties:
+        summary:
+          type: string
+          description: Merge summary
+
+    WorkflowListItem:
+      type: object
+      required:
+        - workflow_id
+        - task_id
+        - grimoire_name
+        - status
+        - current_step
+        - worktree_path
+        - started_at
+        - updated_at
+      properties:
+        workflow_id:
+          type: string
+        task_id:
+          type: string
+        grimoire_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+        current_step:
+          type: integer
+          description: Current step index
+        worktree_path:
+          type: string
+          description: Path to worktree
+        started_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        error:
+          type: [string, 'null']
+
+    WorkflowListResponse:
+      type: object
+      required:
+        - workflows
+        - count
+      properties:
+        workflows:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowListItem'
+        count:
+          type: [integer, 'null']
+    WorkflowDetailResponse:
+      type: object
+      required:
+        - workflow_id
+        - task_id
+        - grimoire_name
+        - status
+        - current_step
+        - worktree_path
+        - started_at
+        - updated_at
+        - steps
+        - available_actions
+      properties:
+        workflow_id:
+          type: string
+        task_id:
+          type: string
+        grimoire_name:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+        current_step:
+          type: integer
+        worktree_path:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        error:
+          type: [string, 'null']
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepInfo'
+        completed_steps:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/StepResult'
+
+        step_outputs:
+          type: object
+          additionalProperties:
+            type: [string, 'null']
+        merge_review:
+          $ref: '#/components/schemas/MergeReview'
+
+        available_actions:
+          type: array
+          items:
+            type: string
+          description: Available actions for this workflow
+
+    WorkflowCancelResponse:
+      type: object
+      required:
+        - status
+        - workflow_id
+        - task_id
+      properties:
+        status:
+          type: string
+          enum: [cancelled]
+        workflow_id:
+          type: string
+        task_id:
+          type: [string, 'null']
+    WorkflowRetryRequest:
+      type: object
+      properties:
+        modified_inputs:
+          type: object
+          additionalProperties: true
+          description: Override context variables
+
+    WorkflowRetryResponse:
+      type: object
+      required:
+        - status
+        - workflow_id
+        - task_id
+        - message
+      properties:
+        status:
+          type: string
+          enum: [queued]
+        workflow_id:
+          type: string
+        task_id:
+          type: string
+        message:
+          type: [string, 'null']
+    ApproveMergeRequest:
+      type: object
+      properties:
+        feedback:
+          type: string
+          description: Optional feedback message
+
+    ApproveMergeResponse:
+      type: object
+      required:
+        - status
+        - workflow_id
+        - task_id
+        - message
+      properties:
+        status:
+          type: string
+          enum: [merged, conflicts]
+        workflow_id:
+          type: string
+        task_id:
+          type: string
+        message:
+          type: string
+        merge_commit:
+          type: [string, 'null']
+          description: Merge commit hash
+        has_conflicts:
+          type: [boolean, 'null']
+        conflict_files:
+          type: array
+          items:
+            type: [string, 'null']
+
+    RejectMergeRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Rejection reason
+
+    RejectMergeResponse:
+      type: object
+      required:
+        - status
+        - workflow_id
+        - task_id
+        - reason
+      properties:
+        status:
+          type: string
+          enum: [rejected]
+        workflow_id:
+          type: string
+        task_id:
+          type: string
+        reason:
+          type: string

@@ -1,0 +1,19 @@
+get:
+  operationId: getHealth
+  summary: Get daemon health status
+  description: Returns the current health status, version, uptime, and workspace of the daemon
+  tags:
+    - health
+  responses:
+    '200':
+      description: Health status response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/HealthStatus'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

@@ -1,14 +1,32 @@
 import type {
   DaemonState,
-  WorkflowState,
-  DaemonTask,
   Agent,
   Question,
+  WorkflowDetailResponse,
+  StepResult,
+} from '@coven/client-ts';
+import {
+  WorkflowState,
+  Task,
   AgentStatus,
-  HealthResponse,
-  WorkflowChangesResponse,
-  WorkflowReviewResponse,
-} from '../../daemon/types';
+  TaskStatus,
+  HealthStatus,
+  QuestionType,
+  WorkflowStatus,
+  StepInfo,
+  StepStatus,
+} from '@coven/client-ts';
+
+// Local type aliases for clarity in tests
+type TestTask = Task;
+
+// Health response structure for tests
+interface HealthResponse {
+  status: HealthStatus.status;
+  version: string;
+  uptime: number;
+  timestamp: number;
+}
 
 // ============================================================================
 // Timestamp Helpers
@@ -33,7 +51,7 @@ export function relativeTime(offsetMs: number): number {
  * Healthy daemon response.
  */
 export const healthyResponse: HealthResponse = {
-  status: 'ok',
+  status: HealthStatus.status.OK,
   version: '1.0.0',
   uptime: HOUR,
   timestamp: NOW,
@@ -43,7 +61,7 @@ export const healthyResponse: HealthResponse = {
  * Degraded daemon response.
  */
 export const degradedResponse: HealthResponse = {
-  status: 'degraded',
+  status: HealthStatus.status.DEGRADED,
   version: '1.0.0',
   uptime: HOUR,
   timestamp: NOW,
@@ -53,7 +71,7 @@ export const degradedResponse: HealthResponse = {
  * Error daemon response.
  */
 export const errorResponse: HealthResponse = {
-  status: 'error',
+  status: HealthStatus.status.ERROR,
   version: '1.0.0',
   uptime: HOUR,
   timestamp: NOW,
@@ -68,7 +86,7 @@ export const errorResponse: HealthResponse = {
  */
 export const idleWorkflow: WorkflowState = {
   id: 'wf-idle',
-  status: 'idle',
+  status: WorkflowState.status.IDLE,
 };
 
 /**
@@ -76,8 +94,8 @@ export const idleWorkflow: WorkflowState = {
  */
 export const runningWorkflow: WorkflowState = {
   id: 'wf-running',
-  status: 'running',
-  startedAt: relativeTime(-5 * MINUTE),
+  status: WorkflowState.status.RUNNING,
+  started_at: new Date(relativeTime(-5 * MINUTE)).toISOString(),
 };
 
 /**
@@ -85,8 +103,8 @@ export const runningWorkflow: WorkflowState = {
  */
 export const pausedWorkflow: WorkflowState = {
   id: 'wf-paused',
-  status: 'paused',
-  startedAt: relativeTime(-10 * MINUTE),
+  status: WorkflowState.status.PAUSED,
+  started_at: new Date(relativeTime(-10 * MINUTE)).toISOString(),
 };
 
 /**
@@ -94,9 +112,9 @@ export const pausedWorkflow: WorkflowState = {
  */
 export const completedWorkflow: WorkflowState = {
   id: 'wf-completed',
-  status: 'completed',
-  startedAt: relativeTime(-15 * MINUTE),
-  completedAt: relativeTime(-5 * MINUTE),
+  status: WorkflowState.status.COMPLETED,
+  started_at: new Date(relativeTime(-15 * MINUTE)).toISOString(),
+  completed_at: new Date(relativeTime(-5 * MINUTE)).toISOString(),
 };
 
 /**
@@ -104,9 +122,9 @@ export const completedWorkflow: WorkflowState = {
  */
 export const errorWorkflow: WorkflowState = {
   id: 'wf-error',
-  status: 'error',
-  startedAt: relativeTime(-10 * MINUTE),
-  completedAt: relativeTime(-5 * MINUTE),
+  status: WorkflowState.status.ERROR,
+  started_at: new Date(relativeTime(-10 * MINUTE)).toISOString(),
+  completed_at: new Date(relativeTime(-5 * MINUTE)).toISOString(),
 };
 
 // ============================================================================
@@ -116,91 +134,85 @@ export const errorWorkflow: WorkflowState = {
 /**
  * Create a task with customizable properties.
  */
-export function createTask(overrides: Partial<DaemonTask> & { id: string }): DaemonTask {
+export function createTask(overrides: Partial<TestTask> & { id: string }): TestTask {
   return {
     title: `Task ${overrides.id}`,
     description: `Description for ${overrides.id}`,
-    status: 'pending',
+    status: TaskStatus.OPEN,
     priority: 2,
-    dependencies: [],
-    createdAt: relativeTime(-HOUR),
-    updatedAt: relativeTime(-HOUR),
+    type: Task.type.TASK,
+    depends_on: [],
+    created_at: new Date(relativeTime(-HOUR)).toISOString(),
+    updated_at: new Date(relativeTime(-HOUR)).toISOString(),
     ...overrides,
   };
 }
 
 /**
- * Pending task waiting to be started.
+ * Open task waiting to be started.
  */
-export const pendingTask: DaemonTask = createTask({
+export const pendingTask: TestTask = createTask({
   id: 'task-pending',
   title: 'Pending Task',
   description: 'This task is waiting to be started',
-  status: 'pending',
+  status: TaskStatus.OPEN,
   priority: 1,
 });
 
 /**
- * Ready task that can be started.
+ * Open task that can be started (alias for pendingTask in new model).
  */
-export const readyTask: DaemonTask = createTask({
+export const readyTask: TestTask = createTask({
   id: 'task-ready',
   title: 'Ready Task',
   description: 'This task is ready to start',
-  status: 'ready',
+  status: TaskStatus.OPEN,
   priority: 2,
 });
 
 /**
- * Running task with an active agent.
+ * In-progress task with an active agent.
  */
-export const runningTask: DaemonTask = createTask({
+export const runningTask: TestTask = createTask({
   id: 'task-running',
   title: 'Running Task',
   description: 'This task is currently being worked on',
-  status: 'running',
+  status: TaskStatus.IN_PROGRESS,
   priority: 1,
-  startedAt: relativeTime(-5 * MINUTE),
-  assignedAgent: 'agent-1',
 });
 
 /**
- * Completed task.
+ * Completed (closed) task.
  */
-export const completedTask: DaemonTask = createTask({
+export const completedTask: TestTask = createTask({
   id: 'task-completed',
   title: 'Completed Task',
   description: 'This task has been completed',
-  status: 'complete',
+  status: TaskStatus.CLOSED,
   priority: 2,
-  startedAt: relativeTime(-15 * MINUTE),
-  completedAt: relativeTime(-5 * MINUTE),
 });
 
 /**
- * Failed task.
+ * Failed task (closed with implicit error).
  */
-export const failedTask: DaemonTask = createTask({
+export const failedTask: TestTask = createTask({
   id: 'task-failed',
   title: 'Failed Task',
   description: 'This task failed',
-  status: 'failed',
+  status: TaskStatus.CLOSED,
   priority: 1,
-  startedAt: relativeTime(-10 * MINUTE),
-  completedAt: relativeTime(-5 * MINUTE),
-  error: 'Agent crashed unexpectedly',
 });
 
 /**
  * Blocked task with dependencies.
  */
-export const blockedTask: DaemonTask = createTask({
+export const blockedTask: TestTask = createTask({
   id: 'task-blocked',
   title: 'Blocked Task',
   description: 'This task is blocked by dependencies',
-  status: 'blocked',
+  status: TaskStatus.BLOCKED,
   priority: 3,
-  dependencies: ['task-pending', 'task-running'],
+  depends_on: ['task-pending', 'task-running'],
 });
 
 // ============================================================================
@@ -216,58 +228,61 @@ export function createAgent(
   overrides?: Partial<Agent>
 ): Agent {
   return {
-    taskId,
+    task_id: taskId,
+    pid: 12345,
     status,
-    startedAt: relativeTime(-5 * MINUTE),
+    worktree: `/tmp/worktrees/${taskId}`,
+    branch: `coven/${taskId}`,
+    started_at: new Date(relativeTime(-5 * MINUTE)).toISOString(),
     ...overrides,
   };
 }
 
 /**
- * Idle agent (not running).
+ * Starting agent (initializing).
  */
-export const idleAgent: Agent = createAgent('task-idle', 'idle');
+export const idleAgent: Agent = createAgent('task-idle', AgentStatus.STARTING);
 
 /**
  * Running agent actively working.
  */
-export const runningAgent: Agent = createAgent('task-running', 'running', {
+export const runningAgent: Agent = createAgent('task-running', AgentStatus.RUNNING, {
   pid: 12345,
 });
 
 /**
- * Waiting agent (waiting for user input).
+ * Running agent waiting for user input (still RUNNING status in new model).
  */
-export const waitingAgent: Agent = createAgent('task-waiting', 'waiting', {
+export const waitingAgent: Agent = createAgent('task-waiting', AgentStatus.RUNNING, {
   pid: 12346,
 });
 
 /**
  * Completed agent.
  */
-export const completedAgent: Agent = createAgent('task-completed', 'complete', {
+export const completedAgent: Agent = createAgent('task-completed', AgentStatus.COMPLETED, {
   pid: 12347,
-  completedAt: relativeTime(-2 * MINUTE),
-  exitCode: 0,
+  ended_at: new Date(relativeTime(-2 * MINUTE)).toISOString(),
+  exit_code: 0,
 });
 
 /**
  * Failed agent.
  */
-export const failedAgent: Agent = createAgent('task-failed', 'failed', {
+export const failedAgent: Agent = createAgent('task-failed', AgentStatus.FAILED, {
   pid: 12348,
-  completedAt: relativeTime(-2 * MINUTE),
-  exitCode: 1,
+  ended_at: new Date(relativeTime(-2 * MINUTE)).toISOString(),
+  exit_code: 1,
   error: 'Process exited with non-zero code',
 });
 
 /**
  * Killed agent.
  */
-export const killedAgent: Agent = createAgent('task-killed', 'killed', {
+export const killedAgent: Agent = createAgent('task-killed', AgentStatus.KILLED, {
   pid: 12349,
-  completedAt: relativeTime(-1 * MINUTE),
-  exitCode: -9,
+  ended_at: new Date(relativeTime(-1 * MINUTE)).toISOString(),
+  exit_code: -9,
   error: 'Process was killed by user',
 });
 
@@ -280,10 +295,12 @@ export const killedAgent: Agent = createAgent('task-killed', 'killed', {
  */
 export function createQuestion(overrides: Partial<Question> & { id: string }): Question {
   return {
-    taskId: 'task-running',
-    agentId: 'agent-1',
+    id: overrides.id,
+    task_id: 'task-running',
+    agent_id: 'agent-1',
     text: `Question ${overrides.id}?`,
-    askedAt: relativeTime(-MINUTE),
+    type: QuestionType.TEXT,
+    asked_at: new Date(relativeTime(-MINUTE)).toISOString(),
     ...overrides,
   };
 }
@@ -294,7 +311,8 @@ export function createQuestion(overrides: Partial<Question> & { id: string }): Q
 export const textQuestion: Question = createQuestion({
   id: 'q-text',
   text: 'What should I name this file?',
-  taskId: 'task-running',
+  task_id: 'task-running',
+  type: QuestionType.TEXT,
 });
 
 /**
@@ -303,7 +321,8 @@ export const textQuestion: Question = createQuestion({
 export const multipleChoiceQuestion: Question = createQuestion({
   id: 'q-choice',
   text: 'Which approach should I use?',
-  taskId: 'task-running',
+  task_id: 'task-running',
+  type: QuestionType.CHOICE,
   options: ['Option A', 'Option B', 'Option C'],
 });
 
@@ -313,7 +332,8 @@ export const multipleChoiceQuestion: Question = createQuestion({
 export const yesNoQuestion: Question = createQuestion({
   id: 'q-yesno',
   text: 'Should I proceed with this change?',
-  taskId: 'task-running',
+  task_id: 'task-running',
+  type: QuestionType.YES_NO,
   options: ['Yes', 'No'],
 });
 
@@ -327,9 +347,7 @@ export const yesNoQuestion: Question = createQuestion({
 export const emptyState: DaemonState = {
   workflow: idleWorkflow,
   tasks: [],
-  agents: [],
-  questions: [],
-  timestamp: NOW,
+  agents: {},
 };
 
 /**
@@ -338,9 +356,7 @@ export const emptyState: DaemonState = {
 export const activeWorkflowState: DaemonState = {
   workflow: runningWorkflow,
   tasks: [readyTask, runningTask, pendingTask],
-  agents: [runningAgent],
-  questions: [],
-  timestamp: NOW,
+  agents: { 'task-running': runningAgent },
 };
 
 /**
@@ -349,9 +365,7 @@ export const activeWorkflowState: DaemonState = {
 export const pendingQuestionsState: DaemonState = {
   workflow: runningWorkflow,
   tasks: [runningTask],
-  agents: [waitingAgent],
-  questions: [textQuestion, multipleChoiceQuestion],
-  timestamp: NOW,
+  agents: { 'task-waiting': waitingAgent },
 };
 
 /**
@@ -360,9 +374,11 @@ export const pendingQuestionsState: DaemonState = {
 export const mixedState: DaemonState = {
   workflow: runningWorkflow,
   tasks: [readyTask, runningTask, blockedTask, completedTask, failedTask],
-  agents: [runningAgent, completedAgent, failedAgent],
-  questions: [textQuestion],
-  timestamp: NOW,
+  agents: {
+    'task-running': runningAgent,
+    'task-completed': completedAgent,
+    'task-failed': failedAgent,
+  },
 };
 
 /**
@@ -371,9 +387,7 @@ export const mixedState: DaemonState = {
 export const completedState: DaemonState = {
   workflow: completedWorkflow,
   tasks: [completedTask],
-  agents: [completedAgent],
-  questions: [],
-  timestamp: NOW,
+  agents: { 'task-completed': completedAgent },
 };
 
 /**
@@ -382,9 +396,7 @@ export const completedState: DaemonState = {
 export const failedState: DaemonState = {
   workflow: errorWorkflow,
   tasks: [failedTask],
-  agents: [failedAgent],
-  questions: [],
-  timestamp: NOW,
+  agents: { 'task-failed': failedAgent },
 };
 
 /**
@@ -392,43 +404,32 @@ export const failedState: DaemonState = {
  * Creates 50 tasks in various states.
  */
 export function createManyWorkflowsState(count: number = 50): DaemonState {
-  const tasks: DaemonTask[] = [];
-  const agents: Agent[] = [];
-  const questions: Question[] = [];
+  const tasks: TestTask[] = [];
+  const agents: Record<string, Agent> = {};
 
   for (let i = 0; i < count; i++) {
     const status =
       i % 5 === 0
-        ? 'running'
+        ? TaskStatus.IN_PROGRESS
         : i % 5 === 1
-          ? 'ready'
+          ? TaskStatus.OPEN
           : i % 5 === 2
-            ? 'complete'
+            ? TaskStatus.CLOSED
             : i % 5 === 3
-              ? 'failed'
-              : 'pending';
+              ? TaskStatus.BLOCKED
+              : TaskStatus.OPEN;
 
     tasks.push(
       createTask({
         id: `task-${i}`,
         title: `Task ${i}`,
-        status: status as DaemonTask['status'],
-        priority: (i % 4) as 0 | 1 | 2 | 3,
+        status,
+        priority: i % 4,
       })
     );
 
-    if (status === 'running') {
-      agents.push(createAgent(`task-${i}`, 'running', { pid: 10000 + i }));
-    }
-
-    if (i % 10 === 0 && status === 'running') {
-      questions.push(
-        createQuestion({
-          id: `q-${i}`,
-          taskId: `task-${i}`,
-          text: `Question for task ${i}?`,
-        })
-      );
+    if (status === TaskStatus.IN_PROGRESS) {
+      agents[`task-${i}`] = createAgent(`task-${i}`, AgentStatus.RUNNING, { pid: 10000 + i });
     }
   }
 
@@ -436,8 +437,6 @@ export function createManyWorkflowsState(count: number = 50): DaemonState {
     workflow: runningWorkflow,
     tasks,
     agents,
-    questions,
-    timestamp: NOW,
   };
 }
 
@@ -446,41 +445,42 @@ export function createManyWorkflowsState(count: number = 50): DaemonState {
 // ============================================================================
 
 /**
- * Workflow changes with modified files.
+ * Step results for completed workflow.
  */
-export const workflowChanges: WorkflowChangesResponse = {
-  workflowId: 'wf-completed',
-  taskId: 'task-completed',
-  baseBranch: 'main',
-  headBranch: 'coven/task-completed',
-  worktreePath: '/repo/.coven/worktrees/task-completed',
-  files: [
-    { path: 'src/feature.ts', linesAdded: 45, linesDeleted: 12, changeType: 'modified' },
-    { path: 'src/utils.ts', linesAdded: 20, linesDeleted: 0, changeType: 'added' },
-    { path: 'src/old.ts', linesAdded: 0, linesDeleted: 35, changeType: 'deleted' },
-    { path: 'src/renamed.ts', linesAdded: 5, linesDeleted: 5, changeType: 'renamed', oldPath: 'src/original.ts' },
-  ],
-  totalLinesAdded: 70,
-  totalLinesDeleted: 52,
-  commitCount: 3,
+export const completedStepResults: Record<string, StepResult> = {
+  'step-1': { success: true, output: 'Analyzed codebase structure', duration: '5s' },
+  'step-2': { success: true, output: 'Implemented feature X', duration: '30s' },
+  'step-3': { success: true, output: 'All 15 tests passing', duration: '10s' },
 };
 
 /**
- * Full workflow review data.
+ * Step info for workflow.
  */
-export const workflowReview: WorkflowReviewResponse = {
-  workflowId: 'wf-completed',
-  taskId: 'task-completed',
-  taskTitle: 'Implement feature X',
-  taskDescription: 'Add new feature X to the codebase with tests',
-  acceptanceCriteria: '- Feature X works\n- Tests pass\n- Documentation updated',
-  changes: workflowChanges,
-  stepOutputs: [
-    { stepId: 'step-1', stepName: 'analyze', summary: 'Analyzed codebase structure', exitCode: 0 },
-    { stepId: 'step-2', stepName: 'implement', summary: 'Implemented feature X', exitCode: 0 },
-    { stepId: 'step-3', stepName: 'test', summary: 'All 15 tests passing', exitCode: 0 },
-  ],
-  startedAt: relativeTime(-15 * MINUTE),
-  completedAt: relativeTime(-5 * MINUTE),
-  durationMs: 10 * MINUTE,
+export const workflowSteps: StepInfo[] = [
+  { id: 'step-1', name: 'analyze', type: StepInfo.type.AGENT, status: StepStatus.COMPLETED, depth: 0 },
+  { id: 'step-2', name: 'implement', type: StepInfo.type.AGENT, status: StepStatus.COMPLETED, depth: 0 },
+  { id: 'step-3', name: 'test', type: StepInfo.type.SCRIPT, status: StepStatus.COMPLETED, depth: 0 },
+];
+
+/**
+ * Full workflow detail response.
+ */
+export const workflowDetail: WorkflowDetailResponse = {
+  workflow_id: 'wf-completed',
+  task_id: 'task-completed',
+  grimoire_name: 'default',
+  status: WorkflowStatus.COMPLETED,
+  current_step: 3,
+  worktree_path: '/repo/.coven/worktrees/task-completed',
+  started_at: new Date(relativeTime(-15 * MINUTE)).toISOString(),
+  updated_at: new Date(relativeTime(-5 * MINUTE)).toISOString(),
+  steps: workflowSteps,
+  completed_steps: completedStepResults,
+  step_outputs: {
+    'step-1': 'Analyzed codebase structure',
+    'step-2': 'Implemented feature X',
+    'step-3': 'All 15 tests passing',
+  },
+  merge_review: { summary: 'Changes look good' },
+  available_actions: ['approve', 'reject'],
 };

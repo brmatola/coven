@@ -1,0 +1,19 @@
+get:
+  operationId: get_agents
+  summary: Get all agents
+  description: Returns a list of all active agents with their status and metadata
+  tags:
+    - agents
+  responses:
+    '200':
+      description: Agents response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/agent.yaml#/components/schemas/AgentsResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

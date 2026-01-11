@@ -1,0 +1,123 @@
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - version
+        - uptime
+        - workspace
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          description: Health status of the daemon
+        version:
+          type: string
+          description: Daemon version
+        uptime:
+          type: integer
+          format: int64
+          description: Uptime in milliseconds
+        workspace:
+          type: string
+          description: Workspace path
+
+    VersionInfo:
+      type: object
+      required:
+        - version
+        - go_version
+      properties:
+        version:
+          type: string
+          description: Daemon version
+        git_commit:
+          type: string
+          description: Git commit hash
+        build_time:
+          type: string
+          description: Build timestamp
+        go_version:
+          type: string
+          description: Go version used to build
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: string
+          description: Additional error details
+
+    Timestamp:
+      type: string
+      format: date-time
+      description: ISO 8601 timestamp
+
+    StateResponse:
+      type: object
+      required:
+        - state
+        - timestamp
+      properties:
+        state:
+          $ref: '#/components/schemas/DaemonState'
+        timestamp:
+          type: string
+          format: date-time
+
+    DaemonState:
+      type: object
+      required:
+        - agents
+        - tasks
+      properties:
+        workflow:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowState'
+            - type: 'null'
+        agents:
+          type: object
+          additionalProperties:
+            $ref: '../schemas/agent.yaml#/components/schemas/Agent'
+          description: Map of task IDs to agent state
+        tasks:
+          type: array
+          items:
+            $ref: '../schemas/task.yaml#/components/schemas/Task'
+          description: List of tasks from beads
+        last_task_sync:
+          type: string
+          format: date-time
+
+          description: Last time tasks were synced from beads
+
+    WorkflowState:
+      type: object
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: string
+          description: Workflow ID
+        status:
+          type: string
+          enum: [idle, running, paused, completed, error]
+        started_at:
+          type: string
+          format: date-time
+
+        completed_at:
+          type: string
+          format: date-time
+
+

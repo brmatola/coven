@@ -91,10 +91,12 @@ function cleanupWorkspace(workspacePath: string, retries = 3): void {
 
 async function main(): Promise<void> {
   // The extension root (where package.json is)
-  // From e2e/vscode/out/runTest.js, we need to go up to e2e/vscode, then ../../packages/vscode
+  // From out/e2e/vscode/runTest.js, __dirname is out/e2e/vscode/
+  // Go up 3 levels: ../.. -> out/, ../ -> root, then packages/vscode
   const extensionDevelopmentPath = path.resolve(__dirname, '../../../packages/vscode');
 
   // The compiled test runner (index.js in suites)
+  // Files are in out/e2e/vscode/suites/ when TypeScript preserves structure
   const extensionTestsPath = path.resolve(__dirname, './suites/index.js');
 
   // Use existing workspace or create isolated one

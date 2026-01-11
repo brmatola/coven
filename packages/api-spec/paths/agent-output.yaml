@@ -1,0 +1,34 @@
+get:
+  operationId: get_agent_output
+  summary: Get agent output
+  description: Returns the output lines from an agent process, optionally filtered by sequence number
+  tags:
+    - agents
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/AgentId'
+    - name: since
+      in: query
+      description: Return output since this sequence number
+      required: false
+      schema:
+        type: integer
+        format: int64
+  responses:
+    '200':
+      description: Agent output response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/agent.yaml#/components/schemas/AgentOutputResponse'
+    '404':
+      description: Agent not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

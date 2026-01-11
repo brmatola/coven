@@ -1,0 +1,25 @@
+post:
+  operationId: shutdown_daemon
+  summary: Shutdown daemon
+  description: |
+    Triggers a graceful shutdown of the daemon. The daemon will stop accepting new requests
+    and shut down after processing any in-flight requests.
+  tags:
+    - health
+  responses:
+    '200':
+      description: Shutdown initiated
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: shutting down
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'

@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
-import { Question } from '../daemon/types';
+import { SSEClient } from '@coven/client-ts';
+import type { SSEEvent, Question } from '@coven/client-ts';
 
 /**
  * SSE event data for questions asked
  */
 interface QuestionsAskedData {
-  questionId: string;
-  taskId: string;
-  agentId: string;
+  question_id: string;
+  task_id: string;
+  agent_id: string;
   question: string;
   options?: string[];
 }
@@ -18,7 +18,7 @@ interface QuestionsAskedData {
  * SSE event data for questions answered
  */
 interface QuestionsAnsweredData {
-  questionId: string;
+  question_id: string;
 }
 
 /**
@@ -74,7 +74,7 @@ export class QuestionHandler {
    */
   hasQuestion(taskId: string): boolean {
     for (const question of this.pendingQuestions.values()) {
-      if (question.taskId === taskId) {
+      if (question.task_id === taskId) {
         return true;
       }
     }
@@ -93,7 +93,7 @@ export class QuestionHandler {
    */
   getQuestionByTaskId(taskId: string): Question | undefined {
     for (const question of this.pendingQuestions.values()) {
-      if (question.taskId === taskId) {
+      if (question.task_id === taskId) {
         return question;
       }
     }
@@ -182,12 +182,13 @@ export class QuestionHandler {
 
   private async handleQuestionAsked(data: QuestionsAskedData): Promise<void> {
     const question: Question = {
-      id: data.questionId,
-      taskId: data.taskId,
-      agentId: data.agentId,
+      id: data.question_id,
+      task_id: data.task_id,
+      agent_id: data.agent_id,
       text: data.question,
+      type: 'text', // Default type
       options: data.options,
-      askedAt: Date.now(),
+      asked_at: new Date().toISOString(),
     };
 
     this.pendingQuestions.set(question.id, question);
@@ -208,7 +209,7 @@ export class QuestionHandler {
   }
 
   private handleQuestionAnswered(data: QuestionsAnsweredData): void {
-    this.pendingQuestions.delete(data.questionId);
+    this.pendingQuestions.delete(data.question_id);
     this.updateBadge();
   }
 

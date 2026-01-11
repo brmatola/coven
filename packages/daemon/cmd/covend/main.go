@@ -1,3 +1,12 @@
+// @title           Coven Daemon API
+// @version         1.0.0
+// @description     API for the Coven daemon that orchestrates AI agents and workflows
+// @termsOfService  http://swagger.io/terms/
+// @contact.name    API Support
+// @license.name    MIT
+// @host            localhost
+// @schemes         http
+// @BasePath        /
 package main
 
 import (

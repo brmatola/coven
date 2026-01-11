@@ -1,0 +1,25 @@
+{
+  "name": "@coven/client-ts",
+  "version": "1.0.0",
+  "description": "TypeScript client for Coven daemon API",
+  "private": true,
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./*": "./dist/src/*"
+  },
+  "scripts": {
+    "generate": "bash scripts/generate-client.sh",
+    "compile": "tsc",
+    "build": "npm run generate && npm run compile",
+    "prebuild": "npm run generate"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2"
+  }
+}

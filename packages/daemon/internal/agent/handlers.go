@@ -31,6 +31,14 @@ func (h *Handlers) Register(server *api.Server) {
 }
 
 // handleAgents handles GET /agents
+// @Summary      Get all agents
+// @Description  Returns a list of all active agents with their status and metadata
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}  "Agents response with agents array and count"
+// @Failure      405  {object}  map[string]string       "Method not allowed"
+// @Router       /agents [get]
 func (h *Handlers) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -89,6 +97,16 @@ func (h *Handlers) handleAgentByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetAgent handles GET /agents/:id
+// @Summary      Get agent by task ID
+// @Description  Returns the agent information for a specific task
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Task ID"
+// @Success      200  {object}  types.Agent  "Agent information"
+// @Failure      404  {object}  map[string]string  "Agent not found"
+// @Failure      405  {object}  map[string]string  "Method not allowed"
+// @Router       /agents/{id} [get]
 func (h *Handlers) handleGetAgent(w http.ResponseWriter, r *http.Request, taskID string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -106,6 +124,17 @@ func (h *Handlers) handleGetAgent(w http.ResponseWriter, r *http.Request, taskID
 }
 
 // handleAgentOutput handles GET /agents/:id/output
+// @Summary      Get agent output
+// @Description  Returns the output lines from an agent process, optionally filtered by sequence number
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id     path      string  true   "Task ID"
+// @Param        since  query     uint64  false  "Return output since this sequence number"
+// @Success      200    {object}  map[string]interface{}  "Agent output response"
+// @Failure      404    {object}  map[string]string       "Agent not found"
+// @Failure      405    {object}  map[string]string       "Method not allowed"
+// @Router       /agents/{id}/output [get]
 func (h *Handlers) handleAgentOutput(w http.ResponseWriter, r *http.Request, taskID string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -165,6 +194,16 @@ func (h *Handlers) handleAgentOutput(w http.ResponseWriter, r *http.Request, tas
 }
 
 // handleAgentKill handles POST /agents/:id/kill
+// @Summary      Kill an agent
+// @Description  Terminates a running agent process
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Task ID"
+// @Success      200  {object}  map[string]interface{}  "Kill response"
+// @Failure      404  {object}  map[string]string       "Agent not found"
+// @Failure      405  {object}  map[string]string       "Method not allowed"
+// @Router       /agents/{id}/kill [post]
 func (h *Handlers) handleAgentKill(w http.ResponseWriter, r *http.Request, taskID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -207,6 +246,18 @@ func (h *Handlers) handleAgentKill(w http.ResponseWriter, r *http.Request, taskI
 }
 
 // handleAgentRespond handles POST /agents/:id/respond
+// @Summary      Send response to agent
+// @Description  Sends input to an agent's stdin (e.g., to answer a question)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Task ID"
+// @Param        body body      object  true  "Response body"  SchemaExample({"response":"answer text"})
+// @Success      200  {object}  map[string]interface{}  "Response sent confirmation"
+// @Failure      400  {object}  map[string]string       "Invalid request"
+// @Failure      404  {object}  map[string]string       "Agent not found"
+// @Failure      405  {object}  map[string]string       "Method not allowed"
+// @Router       /agents/{id}/respond [post]
 func (h *Handlers) handleAgentRespond(w http.ResponseWriter, r *http.Request, taskID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

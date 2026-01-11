@@ -59,6 +59,10 @@ const ERROR_MESSAGES: Record<DaemonErrorCode, { title: string; message: string }
     title: 'Internal Error',
     message: 'Daemon encountered an error. Please check the logs.',
   },
+  not_implemented: {
+    title: 'Not Implemented',
+    message: 'This feature is not yet implemented.',
+  },
 };
 
 /**

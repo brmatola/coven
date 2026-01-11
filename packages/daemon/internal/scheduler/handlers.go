@@ -55,6 +55,17 @@ func (h *Handlers) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleTaskStart handles POST /tasks/:id/start
+// @Summary      Start a task
+// @Description  Starts an agent to work on a specific task
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Task ID"
+// @Success      200  {object}  map[string]interface{}  "Start response"
+// @Failure      404  {object}  map[string]string       "Task not found"
+// @Failure      405  {object}  map[string]string       "Method not allowed"
+// @Failure      500  {object}  map[string]string       "Failed to start agent"
+// @Router       /tasks/{id}/start [post]
 func (h *Handlers) handleTaskStart(w http.ResponseWriter, r *http.Request, taskID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -114,6 +125,16 @@ func (h *Handlers) handleTaskStart(w http.ResponseWriter, r *http.Request, taskI
 }
 
 // handleTaskStop handles POST /tasks/:id/stop
+// @Summary      Stop a task
+// @Description  Stops the agent working on a specific task
+// @Tags         tasks
+// @Accept       json
+// @Produce      json
+// @Param        id   path      string  true  "Task ID"
+// @Success      200  {object}  map[string]interface{}  "Stop response"
+// @Failure      404  {object}  map[string]string       "No agent running for task"
+// @Failure      405  {object}  map[string]string       "Method not allowed"
+// @Router       /tasks/{id}/stop [post]
 func (h *Handlers) handleTaskStop(w http.ResponseWriter, r *http.Request, taskID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

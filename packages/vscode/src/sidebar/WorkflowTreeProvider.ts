@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { StateCache } from '../daemon/cache';
-import { DaemonTask, Question, Agent, WorkflowState, WorkflowStatus } from '../daemon/types';
+import { StateCache, WorkflowState } from '../daemon/cache';
+import type { Task, Question, Agent } from '@coven/client-ts';
+import { WorkflowStatus, AgentStatus, TaskStatus } from '@coven/client-ts';
 
 /**
  * Tree item types for type-safe context handling.
@@ -278,7 +279,7 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     const agents = this.cache.getAgents();
 
     // 1. Active Workflows section - show running agents with spinner icons
-    const activeAgents = agents.filter(a => a.status === 'running');
+    const activeAgents = agents.filter(a => a.status === AgentStatus.RUNNING);
     if (activeAgents.length > 0) {
       items.push(new SectionHeaderItem('active', activeAgents.length, this.expandedSections.has('active')));
     }
@@ -289,19 +290,19 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     }
 
     // 3. Ready Tasks - queued and ready to start
-    const readyTasks = tasks.filter(t => t.status === 'ready' || t.status === 'pending');
+    const readyTasks = tasks.filter(t => t.status === TaskStatus.OPEN);
     if (readyTasks.length > 0) {
       items.push(new SectionHeaderItem('ready', readyTasks.length, this.expandedSections.has('ready')));
     }
 
     // 4. Blocked - tasks blocked on dependencies or errors
-    const blockedTasks = tasks.filter(t => t.status === 'blocked');
+    const blockedTasks = tasks.filter(t => t.status === TaskStatus.BLOCKED);
     if (blockedTasks.length > 0) {
       items.push(new SectionHeaderItem('blocked', blockedTasks.length, this.expandedSections.has('blocked')));
     }
 
     // 5. Completed - finished tasks (collapsed by default)
-    const completedTasks = tasks.filter(t => t.status === 'complete');
+    const completedTasks = tasks.filter(t => t.status === TaskStatus.CLOSED);
     if (completedTasks.length > 0) {
       items.push(new SectionHeaderItem('completed', completedTasks.length, this.expandedSections.has('completed')));
     }
@@ -342,8 +343,8 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
 
     // Show running agents with their tasks
     for (const agent of agents) {
-      if (agent.status === 'running') {
-        const task = tasks.find(t => t.id === agent.taskId);
+      if (agent.status === AgentStatus.RUNNING) {
+        const task = tasks.find(t => t.id === agent.task_id);
         if (task) {
           items.push(new TaskTreeItem(task, agent));
         }
@@ -360,7 +361,7 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     const tasks = this.cache.getTasks();
 
     return questions.map(q => {
-      const task = tasks.find(t => t.id === q.taskId);
+      const task = tasks.find(t => t.id === q.task_id);
       return new QuestionTreeItem(q, task);
     });
   }
@@ -370,7 +371,7 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
 
     const tasks = this.cache.getTasks();
     return tasks
-      .filter(t => t.status === 'ready' || t.status === 'pending')
+      .filter(t => t.status === TaskStatus.OPEN)
       .sort((a, b) => b.priority - a.priority)
       .map(t => new TaskTreeItem(t));
   }
@@ -380,7 +381,7 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
 
     const tasks = this.cache.getTasks();
     return tasks
-      .filter(t => t.status === 'blocked')
+      .filter(t => t.status === TaskStatus.BLOCKED)
       .map(t => new TaskTreeItem(t));
   }
 
@@ -389,21 +390,20 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
 
     const tasks = this.cache.getTasks();
     return tasks
-      .filter(t => t.status === 'complete')
-      .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0))
+      .filter(t => t.status === TaskStatus.CLOSED)
+      .sort((a, b) => (b.completed_at ?? 0) - (a.completed_at ?? 0))
       .map(t => new TaskTreeItem(t));
   }
 
-  private getTaskSection(task: DaemonTask): SectionType {
+  private getTaskSection(task: Task): SectionType {
     switch (task.status) {
-      case 'running':
+      case TaskStatus.IN_PROGRESS:
         return 'active';
-      case 'ready':
-      case 'pending':
+      case TaskStatus.OPEN:
         return 'ready';
-      case 'blocked':
+      case TaskStatus.BLOCKED:
         return 'blocked';
-      case 'complete':
+      case TaskStatus.CLOSED:
         return 'completed';
       default:
         return 'ready';
@@ -416,15 +416,15 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     const tasks = this.cache.getTasks();
     switch (section) {
       case 'active':
-        return this.cache.getAgents().filter(a => a.status === 'running').length;
+        return this.cache.getAgents().filter(a => a.status === AgentStatus.RUNNING).length;
       case 'questions':
         return this.cache.getQuestions().length;
       case 'ready':
-        return tasks.filter(t => t.status === 'ready' || t.status === 'pending').length;
+        return tasks.filter(t => t.status === TaskStatus.OPEN).length;
       case 'blocked':
-        return tasks.filter(t => t.status === 'blocked').length;
+        return tasks.filter(t => t.status === TaskStatus.BLOCKED).length;
       case 'completed':
-        return tasks.filter(t => t.status === 'complete').length;
+        return tasks.filter(t => t.status === TaskStatus.CLOSED).length;
       default:
         return 0;
     }
@@ -475,11 +475,11 @@ export class WorkflowItem extends WorkflowTreeItem {
     this.iconPath = getWorkflowStatusIcon(workflow.status);
     this.contextValue = `workflow.${workflow.status}`;
 
-    if (workflow.startedAt) {
+    if (workflow.started_at) {
       this.tooltip = new vscode.MarkdownString(
         `**Workflow:** ${workflow.id}\n\n` +
         `**Status:** ${workflow.status}\n\n` +
-        `**Started:** ${new Date(workflow.startedAt).toLocaleString()}`
+        `**Started:** ${new Date(workflow.started_at).toLocaleString()}`
       );
     }
   }
@@ -490,10 +490,10 @@ export class WorkflowItem extends WorkflowTreeItem {
  */
 export class TaskTreeItem extends WorkflowTreeItem {
   readonly itemType: WorkflowTreeItemType = 'taskItem';
-  readonly task: DaemonTask;
+  readonly task: Task;
   readonly agent?: Agent;
 
-  constructor(task: DaemonTask, agent?: Agent) {
+  constructor(task: Task, agent?: Agent) {
     super(task.title, vscode.TreeItemCollapsibleState.None);
 
     this.task = task;
@@ -505,11 +505,11 @@ export class TaskTreeItem extends WorkflowTreeItem {
 
     // Build description
     const parts: string[] = [];
-    if (task.status === 'running' && task.startedAt) {
-      parts.push(formatElapsedTime(task.startedAt));
+    if (task.status === TaskStatus.IN_PROGRESS && task.started_at) {
+      parts.push(formatElapsedTime(task.started_at as number));
     }
-    if (task.status === 'blocked' && task.dependencies.length > 0) {
-      parts.push(`blocked by ${task.dependencies.length}`);
+    if (task.status === TaskStatus.BLOCKED && task.depends_on?.length && task.depends_on.length > 0) {
+      parts.push(`blocked by ${task.depends_on.length}`);
     }
     if (task.priority >= 3) {
       parts.push('high priority');
@@ -541,10 +541,10 @@ export class TaskTreeItem extends WorkflowTreeItem {
 export class QuestionTreeItem extends WorkflowTreeItem {
   readonly itemType: WorkflowTreeItemType = 'questionItem';
   readonly question: Question;
-  readonly task?: DaemonTask;
+  readonly task?: Task;
 
-  constructor(question: Question, task?: DaemonTask) {
-    const label = task?.title ?? `Task ${question.taskId}`;
+  constructor(question: Question, task?: Task) {
+    const label = task?.title ?? `Task ${question.task_id}`;
     super(label, vscode.TreeItemCollapsibleState.None);
 
     this.question = question;
@@ -642,26 +642,26 @@ function getWorkflowStatusIcon(status: WorkflowStatus): vscode.ThemeIcon {
 }
 
 function getTaskStatusIcon(
-  taskStatus: DaemonTask['status'],
-  agentStatus?: Agent['status']
+  taskStatus: TaskStatus,
+  agentStatus?: AgentStatus
 ): vscode.ThemeIcon {
   // If agent is running, show spinner
-  if (agentStatus === 'running') {
+  if (agentStatus === AgentStatus.RUNNING) {
     return new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.blue'));
   }
-  if (agentStatus === 'waiting') {
-    return new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.yellow'));
-  }
 
-  const icons: Record<DaemonTask['status'], [string, string?]> = {
-    pending: ['circle-outline'],
-    ready: ['circle-outline'],
-    running: ['sync~spin', 'charts.blue'],
-    complete: ['check', 'charts.green'],
-    failed: ['error', 'charts.red'],
-    blocked: ['lock', 'charts.red'],
+  const icons: Record<TaskStatus, [string, string?]> = {
+    [TaskStatus.OPEN]: ['circle-outline'],
+    [TaskStatus.IN_PROGRESS]: ['sync~spin', 'charts.blue'],
+    [TaskStatus.CLOSED]: ['check', 'charts.green'],
+    [TaskStatus.BLOCKED]: ['lock', 'charts.red'],
+    [TaskStatus.PENDING_MERGE]: ['git-merge', 'charts.yellow'],
   };
-  const [icon, color] = icons[taskStatus];
+  const entry = icons[taskStatus];
+  if (!entry) {
+    return new vscode.ThemeIcon('circle-outline');
+  }
+  const [icon, color] = entry;
   return color ? new vscode.ThemeIcon(icon, new vscode.ThemeColor(color)) : new vscode.ThemeIcon(icon);
 }
 

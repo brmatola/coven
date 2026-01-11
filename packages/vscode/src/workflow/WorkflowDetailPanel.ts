@@ -3,7 +3,8 @@ import { WebviewPanel } from '../shared/webview/WebviewPanel';
 import { MessageRouter } from '../shared/messageRouter';
 import { getLogger } from '../shared/logger';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
+import { SSEClient } from '@coven/client-ts';
+import type { SSEEvent } from '@coven/client-ts';
 import {
   WorkflowDetailState,
   WorkflowDetailMessageToExtension,
@@ -362,23 +363,44 @@ export class WorkflowDetailPanel extends WebviewPanel<
       );
 
       // Use steps from API response (includes grimoire step definitions with status)
-      const steps: WorkflowStep[] = (response.steps ?? []).map((s) => ({
-        id: s.id,
-        name: s.name,
-        status: s.status as WorkflowStep['status'],
-        depth: s.depth,
-        isLoop: s.is_loop,
-        loopProgress: s.max_iterations ? { current: 0, total: s.max_iterations } : undefined,
-        error: s.error,
-      }));
+      const stepsArray = response.steps ?? [];
+      const steps: WorkflowStep[] = stepsArray.map((s: unknown) => {
+        const step = s as {
+          id: string;
+          name: string;
+          status: string;
+          depth: number;
+          is_loop: boolean;
+          max_iterations?: number;
+          error?: string;
+        };
+        return {
+          id: step.id,
+          name: step.name,
+          status: step.status as WorkflowStep['status'],
+          depth: step.depth,
+          isLoop: step.is_loop,
+          loopProgress: step.max_iterations ? { current: 0, total: step.max_iterations } : undefined,
+          error: step.error,
+        };
+      });
+
+      const workflow = response as {
+        workflow_id: string;
+        task_id: string;
+        grimoire_name: string;
+        status: string;
+        started_at?: string;
+        error?: string;
+      };
 
       this.currentWorkflow = {
-        id: response.workflow_id,
-        taskId: response.task_id,
-        grimoireName: response.grimoire_name,
-        status: response.status as WorkflowDetail['status'],
-        startedAt: response.started_at ? new Date(response.started_at).getTime() : undefined,
-        error: response.error,
+        id: workflow.workflow_id,
+        taskId: workflow.task_id,
+        grimoireName: workflow.grimoire_name,
+        status: workflow.status as WorkflowDetail['status'],
+        startedAt: workflow.started_at ? new Date(workflow.started_at).getTime() : undefined,
+        error: workflow.error,
         steps,
       };
 
@@ -613,7 +635,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
       const response = await this.client.getAgentOutput(stepId);
       this.outputState = {
         ...this.outputState,
-        lines: response.output,
+        lines: response.lines.map(l => l.line),
         isLoading: false,
         isStreaming: false,
       };

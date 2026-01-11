@@ -1,0 +1,33 @@
+post:
+  operationId: start_task
+  summary: Start a task
+  description: Starts an agent to work on a specific task
+  tags:
+    - tasks
+  parameters:
+    - $ref: '../components/parameters.yaml#/components/parameters/TaskId'
+  responses:
+    '200':
+      description: Start response
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/task.yaml#/components/schemas/TaskStartResponse'
+    '404':
+      description: Task not found
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '405':
+      description: Method not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
+    '500':
+      description: Failed to start agent
+      content:
+        application/json:
+          schema:
+            $ref: '../schemas/common.yaml#/components/schemas/ErrorResponse'
