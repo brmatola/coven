@@ -12,43 +12,54 @@ export async function run(): Promise<void> {
   const testsRoot = path.resolve(__dirname);
   const files = await glob('**/*.test.js', { cwd: testsRoot });
 
-  // Sort files to ensure proper test order:
-  // 1. smoke tests first
-  // 2. connection tests
-  // 3. data-format tests
-  // 4. commands tests
-  // 5. api tests
-  // 6. session tests
-  // 7. tasks tests
-  // 8. ui tests
-  // 9. initialization tests
-  // 10. resilience tests last (may affect daemon state)
+  // Test execution order (by directory/filename priority):
+  // 1. foundation/* - Basic extension activation and connection
+  // 2. session/* - Session lifecycle tests
+  // 3. task/* - Core task workflow tests (CRITICAL)
+  // 4. workflow/* - Multi-step workflow tests
+  // 5. errors/* - Error handling tests
+  // 6. review/* - Review and merge tests
   const testOrder = [
-    'smoke',
-    'connection',
-    'data-format',
-    'commands',
-    'api',
-    'generated-client', // Test generated client after basic API tests
-    'session',
-    'tasks',
-    'ui',
-    'initialization',
-    'resilience',
+    // Foundation tests first
+    'foundation/activation',
+    'foundation/connection',
+    // Session tests
+    'session/lifecycle',
+    // Core task tests
+    'task/lifecycle',
+    'task/questions',
+    // Workflow tests
+    'workflow/multi-step',
+    'workflow/panel-content',
+    // Error handling
+    'errors/agent-failure',
+    'errors/disconnect',
+    'errors/timeout',
+    // Review workflow
+    'review/merge',
+    'review/panel-content',
   ];
 
   const sortedFiles = files.sort((a, b) => {
-    const aName = path.basename(a, '.test.js');
-    const bName = path.basename(b, '.test.js');
-    const aIndex = testOrder.findIndex(t => aName.includes(t));
-    const bIndex = testOrder.findIndex(t => bName.includes(t));
-    // Unknown tests go to the end (but before resilience)
-    const aOrder = aIndex >= 0 ? aIndex : testOrder.length - 2;
-    const bOrder = bIndex >= 0 ? bIndex : testOrder.length - 2;
+    // Extract relative path without .test.js extension
+    const aPath = a.replace('.test.js', '').replace(/\\/g, '/');
+    const bPath = b.replace('.test.js', '').replace(/\\/g, '/');
+
+    // Find position in test order
+    const aIndex = testOrder.findIndex(t => aPath.includes(t));
+    const bIndex = testOrder.findIndex(t => bPath.includes(t));
+
+    // Unknown tests go to the end
+    const aOrder = aIndex >= 0 ? aIndex : testOrder.length;
+    const bOrder = bIndex >= 0 ? bIndex : testOrder.length;
+
     return aOrder - bOrder;
   });
 
   sortedFiles.forEach((f) => mocha.addFile(path.resolve(testsRoot, f)));
+
+  console.log('Running E2E tests in order:');
+  sortedFiles.forEach((f, i) => console.log(`  ${i + 1}. ${f}`));
 
   return new Promise((resolve, reject) => {
     mocha.run((failures) => {

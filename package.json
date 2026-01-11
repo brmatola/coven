@@ -11,7 +11,7 @@
     "build:client-ts": "cd packages/client-ts && npm run build",
 
     "test:vscode": "cd packages/vscode && npm test",
-    "test:vscode:e2e": "cd packages/vscode && npm run test:e2e",
+    "test:vscode:e2e": "cd packages/vscode && COVEN_E2E_MODE=true npm run test:e2e",
     "test:daemon": "cd packages/daemon && go test ./...",
     "test:daemon:e2e": "npm run build:daemon && go test -tags=e2e -v ./e2e/daemon/...",
 

@@ -55,14 +55,41 @@ export function createUnixSocketAdapter(socketPath: string): AxiosAdapter {
             : JSON.stringify(configData)
           : undefined;
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-      const configHeaders = (config.headers as Record<string, string>) || {};
+      // Normalize headers from axios config
+      // Axios 1.x uses AxiosHeaders class, not plain objects
+      // We need to extract valid string headers and filter undefined values
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...configHeaders,
-        ...(bodyString !== undefined && { 'Content-Length': Buffer.byteLength(bodyString).toString() }),
       };
+
+      // Extract headers from config.headers, handling AxiosHeaders class
+      if (config.headers) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        const configHeaders = config.headers;
+        if (typeof configHeaders === 'object') {
+          // If it's an AxiosHeaders instance, it has a toJSON method
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          const headersObj = typeof (configHeaders as { toJSON?: () => Record<string, unknown> }).toJSON === 'function'
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+            ? (configHeaders as { toJSON: () => Record<string, unknown> }).toJSON()
+            : configHeaders as Record<string, unknown>;
+
+          // Only copy valid string values, skip undefined/null
+          for (const [key, value] of Object.entries(headersObj)) {
+            if (value !== undefined && value !== null && typeof value === 'string') {
+              headers[key] = value;
+            } else if (value !== undefined && value !== null) {
+              headers[key] = String(value);
+            }
+          }
+        }
+      }
+
+      // Add Content-Length if we have a body
+      if (bodyString !== undefined) {
+        headers['Content-Length'] = Buffer.byteLength(bodyString).toString();
+      }
 
       const requestOptions: http.RequestOptions = {
         socketPath,

@@ -7,6 +7,8 @@
  * - Beads CLI interactions
  * - SSE event waiting and assertions
  * - VS Code command and view interactions
+ * - Mock agent configuration
+ * - UI state verification
  */
 
 // Daemon helpers
@@ -15,6 +17,25 @@ export {
   DaemonHelperOptions,
   createDaemonHelper,
 } from './daemon';
+
+// Mock agent configuration
+export {
+  MockAgentConfigurator,
+  MockAgentOptions,
+  MockAgentPresets,
+  createMockAgentConfigurator,
+  withOutput,
+} from './mock-agent';
+
+// UI state verification
+export {
+  UIStateVerifier,
+  TreeViewState,
+  StatusBarState,
+  CacheState,
+  SectionType,
+  createUIStateVerifier,
+} from './ui-verifier';
 
 // Direct daemon client for testing
 export {

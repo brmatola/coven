@@ -2,7 +2,7 @@
  * Shared test setup for E2E tests.
  *
  * Provides a consistent test environment with daemon, event handling,
- * and workspace management for all test suites.
+ * workspace management, mock agent configuration, and UI verification.
  */
 import * as path from 'path';
 import * as fs from 'fs';
@@ -13,6 +13,11 @@ import {
   EventWaiter,
   createEventWaiter,
   TestDaemonClient,
+  MockAgentConfigurator,
+  MockAgentOptions,
+  createMockAgentConfigurator,
+  UIStateVerifier,
+  createUIStateVerifier,
 } from '../helpers';
 
 export interface TestContext {
@@ -22,6 +27,10 @@ export interface TestContext {
   events: EventWaiter | null;
   usingVSCodeDaemon: boolean;
   cleanup: (() => void) | null;
+  /** Mock agent configurator for setting up deterministic agent behavior */
+  mockAgent: MockAgentConfigurator;
+  /** UI state verifier for checking tree view and status bar state */
+  ui: UIStateVerifier;
 }
 
 let testContext: TestContext | null = null;
@@ -84,6 +93,8 @@ export async function initTestContext(): Promise<TestContext> {
   }
 
   const directClient = new TestDaemonClient(workspacePath);
+  const mockAgent = createMockAgentConfigurator(workspacePath);
+  const ui = createUIStateVerifier();
 
   testContext = {
     workspacePath,
@@ -92,9 +103,54 @@ export async function initTestContext(): Promise<TestContext> {
     events: null,
     usingVSCodeDaemon,
     cleanup,
+    mockAgent,
+    ui,
   };
 
   return testContext;
+}
+
+/**
+ * Initialize test context with mock agent configured.
+ * This is the recommended entry point for tests that need agent execution.
+ *
+ * @param agentOptions Options for mock agent behavior (delay, fail, question, etc.)
+ * @returns The initialized test context
+ */
+export async function initTestContextWithMockAgent(
+  agentOptions: MockAgentOptions = { delay: '100ms' }
+): Promise<TestContext> {
+  // First initialize base context
+  const ctx = await initTestContext();
+
+  // Ensure mock agent is built
+  if (!ctx.mockAgent.isBuilt()) {
+    try {
+      await ctx.mockAgent.ensureBuilt();
+    } catch (err) {
+      console.warn(
+        'Mock agent not built and build failed. Tests requiring mock agent will fail.',
+        err
+      );
+    }
+  }
+
+  // Configure mock agent
+  ctx.mockAgent.configure(agentOptions);
+
+  // If daemon is already running (VS Code started it), we need to restart it
+  // to pick up the new agent configuration
+  if (ctx.usingVSCodeDaemon) {
+    console.log('Restarting daemon to apply mock agent configuration...');
+    try {
+      await ctx.daemon.stop();
+      await ctx.daemon.start();
+    } catch (err) {
+      console.warn('Failed to restart daemon for mock agent config:', err);
+    }
+  }
+
+  return ctx;
 }
 
 /**

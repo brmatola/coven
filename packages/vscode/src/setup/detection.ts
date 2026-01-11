@@ -239,10 +239,15 @@ export async function detectCoven(): Promise<CovenDetectionResult> {
   }
 
   const covenDir = path.join(workspaceRoot, '.coven');
-  const configPath = path.join(covenDir, 'config.yaml');
+  // Check for either config.json (daemon format) or config.yaml
+  const jsonConfigPath = path.join(covenDir, 'config.json');
+  const yamlConfigPath = path.join(covenDir, 'config.yaml');
 
   const hasCovenDir = await directoryExists(covenDir);
-  const hasConfigFile = await fileExists(configPath);
+  const hasJsonConfig = await fileExists(jsonConfigPath);
+  const hasYamlConfig = await fileExists(yamlConfigPath);
+  const hasConfigFile = hasJsonConfig || hasYamlConfig;
+  const configPath = hasJsonConfig ? jsonConfigPath : yamlConfigPath;
 
   if (!hasCovenDir) {
     return {

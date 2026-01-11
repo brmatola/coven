@@ -19,6 +19,18 @@ export type WorkflowTreeItemType =
 export type SectionType = 'active' | 'questions' | 'ready' | 'blocked' | 'completed';
 
 /**
+ * Snapshot of the tree view state for E2E testing.
+ */
+export interface TreeViewStateSnapshot {
+  active: string[];
+  questions: string[];
+  ready: string[];
+  blocked: string[];
+  completed: string[];
+  isConnected: boolean;
+}
+
+/**
  * Default debounce interval for rapid event updates (ms).
  */
 const DEFAULT_DEBOUNCE_MS = 100;
@@ -179,6 +191,57 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
    */
   getDirtySections(): SectionType[] {
     return Array.from(this.dirtySections);
+  }
+
+  /**
+   * Get a snapshot of the tree view state for E2E testing.
+   * Returns task IDs organized by section.
+   */
+  getStateSnapshot(): TreeViewStateSnapshot {
+    if (!this.cache || !this.cache.isInitialized()) {
+      return {
+        active: [],
+        questions: [],
+        ready: [],
+        blocked: [],
+        completed: [],
+        isConnected: false,
+      };
+    }
+
+    const tasks = this.cache.getTasks();
+    const agents = this.cache.getAgents();
+    const questions = this.cache.getQuestions();
+
+    // Active: task IDs with running agents
+    const active = agents
+      .filter(a => a.status === AgentStatus.RUNNING)
+      .map(a => a.task_id);
+
+    // Questions: task IDs that have pending questions
+    const questionTaskIds = questions.map(q => q.task_id);
+
+    // Ready, Blocked, Completed by task status
+    const ready = tasks
+      .filter(t => t.status === TaskStatus.OPEN)
+      .map(t => t.id);
+
+    const blocked = tasks
+      .filter(t => t.status === TaskStatus.BLOCKED)
+      .map(t => t.id);
+
+    const completed = tasks
+      .filter(t => t.status === TaskStatus.CLOSED)
+      .map(t => t.id);
+
+    return {
+      active,
+      questions: questionTaskIds,
+      ready,
+      blocked,
+      completed,
+      isConnected: true,
+    };
   }
 
   /**

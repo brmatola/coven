@@ -11,7 +11,6 @@ import { StateCache, WorkflowState } from '../daemon/cache';
 import type { Task, Question, Agent } from '@coven/client-ts';
 import { WorkflowStatus, AgentStatus, TaskStatus, Task as TaskClass } from '@coven/client-ts';
 import type * as vscode from 'vscode';
-import { TreeItemCollapsibleState } from 'vscode';
 
 // Mock StateCache
 vi.mock('../daemon/cache', () => ({

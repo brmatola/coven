@@ -5,7 +5,7 @@
  * and provides a convenient interface for the extension.
  */
 
-import { CovenClient, ApiError, HealthStatus, HealthService, StateService, TasksService, AgentsService, QuestionsService, WorkflowsService, WorkflowStatus } from '@coven/client-ts';
+import { CovenClient, ApiError, HealthStatus, WorkflowStatus } from '@coven/client-ts';
 import type { CancelablePromise, StateResponse, TasksResponse, AgentsResponse, QuestionsResponse, AgentOutputResponse, Agent, Task, Question, ApproveMergeResponse, RejectMergeResponse } from '@coven/client-ts';
 import type { AxiosError, AxiosResponse } from 'axios';
 import { DaemonClientError } from './types';
@@ -89,7 +89,8 @@ export class DaemonClient {
    */
   async getHealth(): Promise<HealthResponse> {
     try {
-      const healthResult: CancelablePromise<HealthStatus> = HealthService.getHealth();
+      // Use this.client.HealthService, not the static import, to ensure patched request is used
+      const healthResult: CancelablePromise<HealthStatus> = this.client.HealthService.getHealth();
       const health = await healthResult;
       let status: 'ok' | 'degraded' | 'error' = 'error';
       const healthStatusValue = health.status;
@@ -119,7 +120,7 @@ export class DaemonClient {
    */
   async getState(): Promise<DaemonState> {
     try {
-      const stateResult: CancelablePromise<StateResponse> = StateService.getState();
+      const stateResult: CancelablePromise<StateResponse> = this.client.StateService.getState();
       const state = await stateResult;
       
       // Transform state response to DaemonState format
@@ -187,7 +188,7 @@ export class DaemonClient {
    */
   async getTasks(): Promise<Task[]> {
     try {
-      const responseResult: CancelablePromise<TasksResponse> = TasksService.getTasks();
+      const responseResult: CancelablePromise<TasksResponse> = this.client.TasksService.getTasks();
       const response = await responseResult;
       // Map generated Task type to Task
       return (response.tasks as unknown as Task[]) || [];
@@ -214,7 +215,7 @@ export class DaemonClient {
    */
   async startTask(id: string): Promise<void> {
     try {
-      const result: CancelablePromise<unknown> = TasksService.startTask({ id });
+      const result: CancelablePromise<unknown> = this.client.TasksService.startTask({ id });
       await result;
     } catch (error) {
       throw this.mapError(error);
@@ -226,7 +227,7 @@ export class DaemonClient {
    */
   async killTask(id: string, _reason?: string): Promise<void> {
     try {
-      const result: CancelablePromise<unknown> = TasksService.stopTask({ id });
+      const result: CancelablePromise<unknown> = this.client.TasksService.stopTask({ id });
       await result;
     } catch (error) {
       throw this.mapError(error);
@@ -242,7 +243,7 @@ export class DaemonClient {
    */
   async getAgents(): Promise<Agent[]> {
     try {
-      const responseResult: CancelablePromise<AgentsResponse> = AgentsService.getAgents();
+      const responseResult: CancelablePromise<AgentsResponse> = this.client.AgentsService.getAgents();
       const response = await responseResult;
       return (response.agents as unknown as Agent[]) || [];
     } catch (error) {
@@ -255,7 +256,7 @@ export class DaemonClient {
    */
   async getAgent(taskId: string): Promise<Agent> {
     try {
-      const agentResult: CancelablePromise<Agent> = AgentsService.getAgentById({ id: taskId });
+      const agentResult: CancelablePromise<Agent> = this.client.AgentsService.getAgentById({ id: taskId });
       return await agentResult;
     } catch (error) {
       throw this.mapError(error);
@@ -267,7 +268,7 @@ export class DaemonClient {
    */
   async getAgentOutput(taskId: string, since?: number): Promise<AgentOutputResponse> {
     try {
-      const responseResult: CancelablePromise<AgentOutputResponse> = AgentsService.getAgentOutput(
+      const responseResult: CancelablePromise<AgentOutputResponse> = this.client.AgentsService.getAgentOutput(
         since !== undefined ? { id: taskId, since } : { id: taskId }
       );
       return await responseResult;
@@ -285,7 +286,7 @@ export class DaemonClient {
    */
   async getQuestions(): Promise<Question[]> {
     try {
-      const responseResult: CancelablePromise<QuestionsResponse> = QuestionsService.getQuestions({});
+      const responseResult: CancelablePromise<QuestionsResponse> = this.client.QuestionsService.getQuestions({});
       const response = await responseResult;
       return response.questions || [];
     } catch (error) {
@@ -298,7 +299,7 @@ export class DaemonClient {
    */
   async answerQuestion(questionId: string, answer: string): Promise<void> {
     try {
-      const result: CancelablePromise<unknown> = QuestionsService.createQuestionAnswer({
+      const result: CancelablePromise<unknown> = this.client.QuestionsService.createQuestionAnswer({
         id: questionId,
         requestBody: { answer },
       });
@@ -333,7 +334,7 @@ export class DaemonClient {
    */
   async approveWorkflow(workflowId: string, feedback?: string): Promise<void> {
     try {
-      const result: CancelablePromise<ApproveMergeResponse> = WorkflowsService.createWorkflowApproveMerge({
+      const result: CancelablePromise<ApproveMergeResponse> = this.client.WorkflowsService.createWorkflowApproveMerge({
         id: workflowId,
         requestBody: feedback ? { feedback } : {},
       });
@@ -348,7 +349,7 @@ export class DaemonClient {
    */
   async rejectWorkflow(workflowId: string, reason?: string): Promise<void> {
     try {
-      const result: CancelablePromise<RejectMergeResponse> = WorkflowsService.updateWorkflowRejectMerge({
+      const result: CancelablePromise<RejectMergeResponse> = this.client.WorkflowsService.updateWorkflowRejectMerge({
         id: workflowId,
         requestBody: reason ? { reason } : {},
       });
@@ -414,16 +415,17 @@ export class DaemonClient {
 
     // Handle generic Error objects
     if (error && typeof error === 'object' && error instanceof Error) {
-      if (error.message.includes('ECONNREFUSED')) {
+      const message = error.message || '';
+      if (message.includes('ECONNREFUSED')) {
         return new DaemonClientError('connection_refused', 'Daemon connection refused');
       }
-      if (error.message.includes('ENOENT') || error.message.includes('socket')) {
+      if (message.includes('ENOENT') || message.includes('socket')) {
         return new DaemonClientError('socket_not_found', `Socket not found: ${this.socketPath}`);
       }
-      if (error.message.includes('timeout')) {
+      if (message.includes('timeout')) {
         return new DaemonClientError('connection_timeout', 'Connection timed out');
       }
-      return new DaemonClientError('request_failed', error.message);
+      return new DaemonClientError('request_failed', message);
     }
 
     return new DaemonClientError('request_failed', String(error));

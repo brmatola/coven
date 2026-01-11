@@ -110,6 +110,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register setup commands (coven.initGit, coven.initBeads, etc.)
   registerSetupCommands(context);
 
+  // Register E2E test commands when in E2E mode
+  if (process.env.COVEN_E2E_MODE === 'true') {
+    ctx.logger.info('Registering E2E test commands (COVEN_E2E_MODE=true)');
+    ctx.subscriptions.push(
+      vscode.commands.registerCommand('coven._getTreeViewState', () => {
+        return workflowProvider?.getStateSnapshot() ?? null;
+      }),
+      vscode.commands.registerCommand('coven._getStatusBarState', () => {
+        return statusBar?.getStateSnapshot() ?? null;
+      }),
+      vscode.commands.registerCommand('coven._getCacheState', () => {
+        if (!stateCache) return null;
+        return {
+          isInitialized: stateCache.isInitialized(),
+          tasks: stateCache.getTasks(),
+          agents: stateCache.getAgents(),
+          questions: stateCache.getQuestions(),
+          workflow: stateCache.getWorkflow(),
+          session: stateCache.getSessionState(),
+        };
+      }),
+      vscode.commands.registerCommand('coven._isConnected', () => {
+        return connectionManager?.isConnected() ?? false;
+      }),
+      vscode.commands.registerCommand('coven._getDaemonSocketPath', () => {
+        return daemonSocketPath;
+      })
+    );
+  }
+
   // Check workspace initialization status
   if (workspaceRoot) {
     // Initialize daemon notification service

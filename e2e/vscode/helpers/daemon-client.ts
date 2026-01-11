@@ -142,6 +142,20 @@ export class TestDaemonClient {
   }
 
   /**
+   * Kill an agent (alias for stopTask, matches daemon API).
+   */
+  async killTask(taskId: string): Promise<void> {
+    await this.request<void>('POST', `/agents/${taskId}/kill`);
+  }
+
+  /**
+   * Answer a question from an agent.
+   */
+  async answerQuestion(questionId: string, answer: string): Promise<void> {
+    await this.request<void>('POST', `/questions/${questionId}/answer`, { answer });
+  }
+
+  /**
    * Get agents list.
    */
   async getAgents(): Promise<{ agents: DaemonAgent[]; count: number }> {

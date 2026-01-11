@@ -1,0 +1,8 @@
+name: simple-agent
+description: Single agent step for basic testing
+timeout: 2m
+steps:
+  - name: execute
+    type: agent
+    spell: "Complete the task"
+    timeout: 1m

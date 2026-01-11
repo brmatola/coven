@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DaemonClient } from './client';
 import { DaemonClientError } from './types';
 import {
@@ -16,6 +16,35 @@ import {
   Task,
 } from '@coven/client-ts';
 
+// Create hoisted mocks to avoid vitest hoisting issues
+const mocks = vi.hoisted(() => ({
+  mockHealthService: {
+    getHealth: vi.fn(),
+    shutdownDaemon: vi.fn(),
+  },
+  mockStateService: {
+    getState: vi.fn(),
+  },
+  mockTasksService: {
+    getTasks: vi.fn(),
+    startTask: vi.fn(),
+    stopTask: vi.fn(),
+  },
+  mockAgentsService: {
+    getAgents: vi.fn(),
+    getAgentById: vi.fn(),
+    getAgentOutput: vi.fn(),
+  },
+  mockQuestionsService: {
+    getQuestions: vi.fn(),
+    createQuestionAnswer: vi.fn(),
+  },
+  mockWorkflowsService: {
+    createWorkflowApproveMerge: vi.fn(),
+    updateWorkflowRejectMerge: vi.fn(),
+  },
+}));
+
 // Mock the generated services
 vi.mock('@coven/client-ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@coven/client-ts')>();
@@ -27,31 +56,21 @@ vi.mock('@coven/client-ts', async (importOriginal) => {
         get: vi.fn(),
         delete: vi.fn(),
       }),
+      // Instance services that delegate to the shared mocks
+      HealthService: mocks.mockHealthService,
+      StateService: mocks.mockStateService,
+      TasksService: mocks.mockTasksService,
+      AgentsService: mocks.mockAgentsService,
+      QuestionsService: mocks.mockQuestionsService,
+      WorkflowsService: mocks.mockWorkflowsService,
     })),
-    HealthService: {
-      getHealth: vi.fn(),
-    },
-    StateService: {
-      getState: vi.fn(),
-    },
-    TasksService: {
-      getTasks: vi.fn(),
-      startTask: vi.fn(),
-      stopTask: vi.fn(),
-    },
-    AgentsService: {
-      getAgents: vi.fn(),
-      getAgentById: vi.fn(),
-      getAgentOutput: vi.fn(),
-    },
-    QuestionsService: {
-      getQuestions: vi.fn(),
-      createQuestionAnswer: vi.fn(),
-    },
-    WorkflowsService: {
-      createWorkflowApproveMerge: vi.fn(),
-      updateWorkflowRejectMerge: vi.fn(),
-    },
+    // Also export static services for backward compatibility
+    HealthService: mocks.mockHealthService,
+    StateService: mocks.mockStateService,
+    TasksService: mocks.mockTasksService,
+    AgentsService: mocks.mockAgentsService,
+    QuestionsService: mocks.mockQuestionsService,
+    WorkflowsService: mocks.mockWorkflowsService,
   };
 });
 
@@ -59,13 +78,25 @@ describe('DaemonClient', () => {
   let client: DaemonClient;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Only clear individual mock calls, don't use vi.clearAllMocks() as it interferes with CovenClient mock
+    mocks.mockHealthService.getHealth.mockClear();
+    mocks.mockHealthService.shutdownDaemon.mockClear();
+    mocks.mockStateService.getState.mockClear();
+    mocks.mockTasksService.getTasks.mockClear();
+    mocks.mockTasksService.startTask.mockClear();
+    mocks.mockTasksService.stopTask.mockClear();
+    mocks.mockAgentsService.getAgents.mockClear();
+    mocks.mockAgentsService.getAgentById.mockClear();
+    mocks.mockAgentsService.getAgentOutput.mockClear();
+    mocks.mockQuestionsService.getQuestions.mockClear();
+    mocks.mockQuestionsService.createQuestionAnswer.mockClear();
+    mocks.mockWorkflowsService.createWorkflowApproveMerge.mockClear();
+    mocks.mockWorkflowsService.updateWorkflowRejectMerge.mockClear();
+
     client = new DaemonClient('/test.sock');
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+  // Note: Don't use vi.restoreAllMocks() as it restores CovenClient to non-mocked state
 
   describe('constructor', () => {
     it('creates client with socket path', () => {
@@ -411,16 +442,17 @@ describe('DaemonClient', () => {
 
   describe('Error handling', () => {
     it('maps ApiError to DaemonClientError', async () => {
-      vi.mocked(TasksService.getTasks).mockRejectedValue(
-        new ApiError({ status: 500 } as Response, 'Internal error')
+      mocks.mockTasksService.getTasks.mockImplementation(() =>
+        Promise.reject(new ApiError({ status: 500 } as Response, 'Internal error'))
       );
 
       await expect(client.getTasks()).rejects.toBeInstanceOf(DaemonClientError);
     });
 
     it('maps connection refused error', async () => {
-      const error = new Error('connect ECONNREFUSED');
-      vi.mocked(TasksService.getTasks).mockRejectedValue(error);
+      mocks.mockTasksService.getTasks.mockImplementation(() =>
+        Promise.reject(new Error('connect ECONNREFUSED'))
+      );
 
       await expect(client.getTasks()).rejects.toMatchObject({
         code: 'connection_refused',
@@ -428,8 +460,9 @@ describe('DaemonClient', () => {
     });
 
     it('maps socket not found error', async () => {
-      const error = new Error('connect ENOENT /test.sock');
-      vi.mocked(TasksService.getTasks).mockRejectedValue(error);
+      mocks.mockTasksService.getTasks.mockImplementation(() =>
+        Promise.reject(new Error('connect ENOENT /test.sock'))
+      );
 
       await expect(client.getTasks()).rejects.toMatchObject({
         code: 'socket_not_found',
@@ -437,8 +470,9 @@ describe('DaemonClient', () => {
     });
 
     it('maps timeout error', async () => {
-      const error = new Error('connection timeout');
-      vi.mocked(TasksService.getTasks).mockRejectedValue(error);
+      mocks.mockTasksService.getTasks.mockImplementation(() =>
+        Promise.reject(new Error('connection timeout'))
+      );
 
       await expect(client.getTasks()).rejects.toMatchObject({
         code: 'connection_timeout',
@@ -446,7 +480,9 @@ describe('DaemonClient', () => {
     });
 
     it('maps unknown errors to request_failed', async () => {
-      vi.mocked(TasksService.getTasks).mockRejectedValue(new Error('Unknown error'));
+      mocks.mockTasksService.getTasks.mockImplementation(() =>
+        Promise.reject(new Error('Unknown error'))
+      );
 
       await expect(client.getTasks()).rejects.toMatchObject({
         code: 'request_failed',

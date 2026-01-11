@@ -3,6 +3,20 @@ import { WorkflowStatus } from '@coven/client-ts';
 import { StateCache, SessionState, WorkflowState } from '../daemon/cache';
 
 /**
+ * Snapshot of the status bar state for E2E testing.
+ */
+export interface StatusBarStateSnapshot {
+  text: string;
+  tooltip: string;
+  isConnected: boolean;
+  isNotInitialized: boolean;
+  activeCount: number;
+  pendingCount: number;
+  questionCount: number;
+  hasWarningBackground: boolean;
+}
+
+/**
  * Manages the Coven status bar item.
  * Shows daemon connection status and provides quick access to actions.
  */
@@ -196,6 +210,50 @@ export class CovenStatusBar implements vscode.Disposable {
    */
   getStatusBarItem(): vscode.StatusBarItem {
     return this.statusBarItem;
+  }
+
+  /**
+   * Get a snapshot of the status bar state for E2E testing.
+   */
+  getStateSnapshot(): StatusBarStateSnapshot {
+    const text = this.statusBarItem.text;
+
+    // Parse state from text content
+    const isConnected = !text.includes('disconnected') && !text.includes('not initialized');
+    const isNotInitialized = text.includes('not initialized');
+
+    // Extract counts from text like "covend: 1 active, 2 pending"
+    let activeCount = 0;
+    let pendingCount = 0;
+    let questionCount = 0;
+
+    const activeMatch = text.match(/(\d+)\s*active/);
+    if (activeMatch) {
+      activeCount = parseInt(activeMatch[1], 10);
+    }
+
+    const pendingMatch = text.match(/(\d+)\s*pending/);
+    if (pendingMatch) {
+      pendingCount = parseInt(pendingMatch[1], 10);
+    }
+
+    const awaitingMatch = text.match(/(\d+)\s*awaiting/);
+    if (awaitingMatch) {
+      questionCount = parseInt(awaitingMatch[1], 10);
+    }
+
+    return {
+      text,
+      tooltip: typeof this.statusBarItem.tooltip === 'string'
+        ? this.statusBarItem.tooltip
+        : this.statusBarItem.tooltip?.value ?? '',
+      isConnected,
+      isNotInitialized,
+      activeCount,
+      pendingCount,
+      questionCount,
+      hasWarningBackground: this.isPulsing || text.includes('warning'),
+    };
   }
 
   /**

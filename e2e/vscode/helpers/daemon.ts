@@ -81,6 +81,9 @@ export class DaemonHelper {
     const covenDir = path.join(this.workspacePath, '.coven');
     fs.mkdirSync(covenDir, { recursive: true });
 
+    // Kill any existing daemon for this workspace before starting
+    await this.killExistingDaemon();
+
     // Clean up any stale socket
     if (fs.existsSync(this.socketPath)) {
       fs.unlinkSync(this.socketPath);
@@ -296,6 +299,38 @@ export class DaemonHelper {
   // ============================================================================
   // Private Methods
   // ============================================================================
+
+  /**
+   * Kill any existing daemon process for this workspace.
+   * Uses pkill to find and kill daemon processes by workspace path.
+   */
+  private async killExistingDaemon(): Promise<void> {
+    try {
+      // Find daemon processes by looking for covend with our workspace path
+      // Using pgrep/pkill is more reliable than tracking process references
+      const result = execSync(
+        `pgrep -f "covend.*--workspace.*${this.workspacePath}" 2>/dev/null || true`,
+        { encoding: 'utf-8' }
+      );
+      const pids = result.trim().split('\n').filter(Boolean);
+
+      for (const pid of pids) {
+        try {
+          process.kill(parseInt(pid, 10), 'SIGKILL');
+          console.log(`Killed existing daemon process ${pid}`);
+        } catch {
+          // Process might have already exited
+        }
+      }
+
+      // Wait a moment for processes to die
+      if (pids.length > 0) {
+        await this.delay(500);
+      }
+    } catch {
+      // pgrep not available or other error - continue anyway
+    }
+  }
 
   /**
    * Wait for daemon process to exit.

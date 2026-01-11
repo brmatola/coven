@@ -73,8 +73,9 @@ export class BeadsClient {
 
     const output = execSync(`bd create ${args.join(' ')}`, this.execOptions) as string;
 
-    // Extract task ID from output
-    const match = output.match(/(beads-[a-z0-9]+)/);
+    // Extract task ID from output - format is "Created issue: <prefix>-<hash>"
+    // The prefix varies by project (e.g., beads-test-xxx, coven-e2e-xxx-yyy)
+    const match = output.match(/Created issue: ([a-zA-Z0-9]+-[a-zA-Z0-9-]+)/);
     if (!match) {
       throw new Error(`Could not parse task ID from: ${output}`);
     }

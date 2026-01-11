@@ -46,6 +46,31 @@ function createTestWorkspace(): { workspacePath: string; cleanup: () => void } {
     } catch {
       console.log('Beads CLI not available - tests will skip Beads-specific tests');
     }
+
+    // Initialize .coven directory with config.json (daemon configuration format)
+    const covenDir = path.join(tempDir, '.coven');
+    fs.mkdirSync(covenDir, { recursive: true });
+    const covenConfig = {
+      poll_interval: 1,
+      max_concurrent_agents: 1,
+      log_level: 'debug',
+    };
+    fs.writeFileSync(path.join(covenDir, 'config.json'), JSON.stringify(covenConfig, null, 2));
+    console.log('Coven directory initialized');
+
+    // Find the daemon binary path from repo root
+    // From compiled location (e2e/vscode/out/runTest.js), go up 3 levels to repo root
+    const repoRoot = path.resolve(__dirname, '..', '..', '..');
+    const daemonBinaryPath = path.join(repoRoot, 'build', 'covend');
+
+    // Configure VS Code settings to use our test daemon binary
+    const vscodeDir = path.join(tempDir, '.vscode');
+    fs.mkdirSync(vscodeDir, { recursive: true });
+    const vscodeSettings = {
+      'coven.binaryPath': daemonBinaryPath,
+    };
+    fs.writeFileSync(path.join(vscodeDir, 'settings.json'), JSON.stringify(vscodeSettings, null, 2));
+    console.log(`VS Code configured to use daemon at: ${daemonBinaryPath}`);
   } catch (err) {
     // Clean up on error
     cleanupWorkspace(tempDir);
@@ -124,6 +149,7 @@ async function main(): Promise<void> {
         '--disable-telemetry',
       ],
       extensionTestsEnv: {
+        COVEN_E2E_MODE: 'true',
         COVEN_E2E_WORKSPACE: workspacePath,
         COVEN_E2E_TIMEOUT: String(config.timeout),
       },
