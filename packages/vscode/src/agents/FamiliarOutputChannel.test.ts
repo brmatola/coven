@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { FamiliarOutputChannel } from './FamiliarOutputChannel';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
+import type { SSEClient, SSEEvent } from '@coven/client-ts';
 import { EventEmitter } from 'events';
 
 // Mock daemon client
@@ -147,9 +147,12 @@ describe('FamiliarOutputChannel', () => {
   describe('fetch history', () => {
     it('should fetch and display historical output', async () => {
       mockDaemonClient.getAgentOutput.mockResolvedValue({
-        taskId: 'task-123',
-        output: ['Line 1', 'Line 2', 'Line 3'],
-        totalLines: 3,
+        lines: [
+          { line: 'Line 1', timestamp: '2025-01-01T00:00:00Z' },
+          { line: 'Line 2', timestamp: '2025-01-01T00:00:01Z' },
+          { line: 'Line 3', timestamp: '2025-01-01T00:00:02Z' },
+        ],
+        total_lines: 3,
       });
 
       const channel = outputChannel.getOrCreateChannel('task-123');
@@ -178,7 +181,7 @@ describe('FamiliarOutputChannel', () => {
       it('should create channel and show it when agent spawned', () => {
         const event: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
 
@@ -195,7 +198,7 @@ describe('FamiliarOutputChannel', () => {
 
         const event: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
 
@@ -208,7 +211,7 @@ describe('FamiliarOutputChannel', () => {
       it('should append start message when agent spawned', () => {
         const event: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
 
@@ -227,7 +230,7 @@ describe('FamiliarOutputChannel', () => {
 
         const event: SSEEvent = {
           type: 'agent.output',
-          data: { agentId: 'agent-1', taskId: 'task-123', chunk: 'Hello world' },
+          data: { agent_id: 'agent-1', task_id: 'task-123', chunk: 'Hello world' },
           timestamp: Date.now(),
         };
 
@@ -241,7 +244,7 @@ describe('FamiliarOutputChannel', () => {
         // First spawn an agent to set active agent
         const spawnEvent: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', spawnEvent);
@@ -249,10 +252,10 @@ describe('FamiliarOutputChannel', () => {
         const channel = outputChannel.getOrCreateChannel('task-123');
         vi.clearAllMocks();
 
-        // Now emit output without taskId (will use activeTaskId)
+        // Now emit output without task_id (will use activeTaskId)
         const outputEvent: SSEEvent = {
           type: 'agent.output',
-          data: { agentId: 'agent-1', taskId: '', chunk: 'Output' },
+          data: { agent_id: 'agent-1', task_id: '', chunk: 'Output' },
           timestamp: Date.now(),
         };
 
@@ -265,7 +268,7 @@ describe('FamiliarOutputChannel', () => {
       it('should ignore output for unknown agent/task', () => {
         const event: SSEEvent = {
           type: 'agent.output',
-          data: { agentId: 'unknown', taskId: '', chunk: 'Hello' },
+          data: { agent_id: 'unknown', task_id: '', chunk: 'Hello' },
           timestamp: Date.now(),
         };
 
@@ -282,7 +285,7 @@ describe('FamiliarOutputChannel', () => {
 
         const event: SSEEvent = {
           type: 'agent.completed',
-          data: { agentId: 'agent-1', taskId: 'task-123', exitCode: 0 },
+          data: { agent_id: 'agent-1', task_id: 'task-123', exit_code: 0 },
           timestamp: Date.now(),
         };
 
@@ -298,7 +301,7 @@ describe('FamiliarOutputChannel', () => {
         // Spawn first
         const spawnEvent: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', spawnEvent);
@@ -308,7 +311,7 @@ describe('FamiliarOutputChannel', () => {
         // Complete
         const completeEvent: SSEEvent = {
           type: 'agent.completed',
-          data: { agentId: 'agent-1', taskId: 'task-123', exitCode: 0 },
+          data: { agent_id: 'agent-1', task_id: 'task-123', exit_code: 0 },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', completeEvent);
@@ -317,11 +320,11 @@ describe('FamiliarOutputChannel', () => {
         expect(outputChannel.getActiveTaskId()).toBe(null);
       });
 
-      it('should use activeTaskId when taskId not in event', () => {
+      it('should use activeTaskId when task_id not in event', () => {
         // Spawn first
         const spawnEvent: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', spawnEvent);
@@ -329,10 +332,10 @@ describe('FamiliarOutputChannel', () => {
         const channel = outputChannel.getOrCreateChannel('task-123');
         vi.clearAllMocks();
 
-        // Complete without taskId
+        // Complete without task_id
         const completeEvent: SSEEvent = {
           type: 'agent.completed',
-          data: { agentId: 'agent-1', taskId: '', exitCode: 0 },
+          data: { agent_id: 'agent-1', task_id: '', exit_code: 0 },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', completeEvent);
@@ -349,7 +352,7 @@ describe('FamiliarOutputChannel', () => {
 
         const event: SSEEvent = {
           type: 'agent.failed',
-          data: { agentId: 'agent-1', taskId: 'task-123', error: 'Process crashed' },
+          data: { agent_id: 'agent-1', task_id: 'task-123', error: 'Process crashed' },
           timestamp: Date.now(),
         };
 
@@ -365,7 +368,7 @@ describe('FamiliarOutputChannel', () => {
         // Spawn first
         const spawnEvent: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', spawnEvent);
@@ -375,7 +378,7 @@ describe('FamiliarOutputChannel', () => {
         // Fail
         const failEvent: SSEEvent = {
           type: 'agent.failed',
-          data: { agentId: 'agent-1', taskId: 'task-123', error: 'Error' },
+          data: { agent_id: 'agent-1', task_id: 'task-123', error: 'Error' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', failEvent);
@@ -384,11 +387,11 @@ describe('FamiliarOutputChannel', () => {
         expect(outputChannel.getActiveTaskId()).toBe(null);
       });
 
-      it('should use activeTaskId when taskId not in event', () => {
+      it('should use activeTaskId when task_id not in event', () => {
         // Spawn first
         const spawnEvent: SSEEvent = {
           type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-123' },
+          data: { agent_id: 'agent-1', task_id: 'task-123' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', spawnEvent);
@@ -396,10 +399,10 @@ describe('FamiliarOutputChannel', () => {
         const channel = outputChannel.getOrCreateChannel('task-123');
         vi.clearAllMocks();
 
-        // Fail without taskId
+        // Fail without task_id
         const failEvent: SSEEvent = {
           type: 'agent.failed',
-          data: { agentId: 'agent-1', taskId: '', error: 'Timeout' },
+          data: { agent_id: 'agent-1', task_id: '', error: 'Timeout' },
           timestamp: Date.now(),
         };
         mockSSEClient.emit('event', failEvent);
@@ -431,7 +434,7 @@ describe('FamiliarOutputChannel', () => {
     it('should clear active agent when disposing its channel', () => {
       const spawnEvent: SSEEvent = {
         type: 'agent.spawned',
-        data: { agentId: 'agent-1', taskId: 'task-123' },
+        data: { agent_id: 'agent-1', task_id: 'task-123' },
         timestamp: Date.now(),
       };
       mockSSEClient.emit('event', spawnEvent);
@@ -470,7 +473,7 @@ describe('FamiliarOutputChannel', () => {
     it('should clear active agent state', () => {
       const spawnEvent: SSEEvent = {
         type: 'agent.spawned',
-        data: { agentId: 'agent-1', taskId: 'task-123' },
+        data: { agent_id: 'agent-1', task_id: 'task-123' },
         timestamp: Date.now(),
       };
       mockSSEClient.emit('event', spawnEvent);
@@ -491,7 +494,7 @@ describe('FamiliarOutputChannel', () => {
 
       const event: SSEEvent = {
         type: 'agent.spawned',
-        data: { agentId: 'agent-1', taskId: 'task-123' },
+        data: { agent_id: 'agent-1', task_id: 'task-123' },
         timestamp: Date.now(),
       };
 

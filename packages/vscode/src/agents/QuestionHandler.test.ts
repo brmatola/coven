@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { QuestionHandler } from './QuestionHandler';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient, SSEEvent } from '../daemon/sse';
+import type { SSEClient, SSEEvent } from '@coven/client-ts';
 import { EventEmitter } from 'events';
 
 // Mock daemon client
@@ -55,9 +55,9 @@ describe('QuestionHandler', () => {
       const event: SSEEvent = {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-123',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-123',
+          agent_id: 'agent-1',
           question: 'What should I do?',
         },
         timestamp: Date.now(),
@@ -73,9 +73,9 @@ describe('QuestionHandler', () => {
       const event: SSEEvent = {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-123',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-123',
+          agent_id: 'agent-1',
           question: 'What should I do?',
         },
         timestamp: Date.now(),
@@ -99,9 +99,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-1',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-1',
+          agent_id: 'agent-1',
           question: 'Question 1?',
         },
         timestamp: Date.now(),
@@ -110,9 +110,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-2',
-          taskId: 'task-2',
-          agentId: 'agent-2',
+          question_id: 'q-2',
+          task_id: 'task-2',
+          agent_id: 'agent-2',
           question: 'Question 2?',
         },
         timestamp: Date.now(),
@@ -137,7 +137,7 @@ describe('QuestionHandler', () => {
     it('should return correct count', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q1?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q1?' },
         timestamp: Date.now(),
       });
 
@@ -158,9 +158,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-123',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-123',
+          agent_id: 'agent-1',
           question: 'Question?',
         },
         timestamp: Date.now(),
@@ -183,9 +183,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-123',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-123',
+          agent_id: 'agent-1',
           question: 'What should I do?',
         },
         timestamp: Date.now(),
@@ -211,9 +211,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-123',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-123',
+          agent_id: 'agent-1',
           question: 'What should I do?',
         },
         timestamp: Date.now(),
@@ -221,7 +221,7 @@ describe('QuestionHandler', () => {
 
       const question = questionHandler.getQuestionByTaskId('task-123');
       expect(question).toBeDefined();
-      expect(question?.taskId).toBe('task-123');
+      expect(question?.task_id).toBe('task-123');
     });
   });
 
@@ -238,9 +238,9 @@ describe('QuestionHandler', () => {
         const event: SSEEvent = {
           type: 'questions.asked',
           data: {
-            questionId: 'q-1',
-            taskId: 'task-123',
-            agentId: 'agent-1',
+            question_id: 'q-1',
+            task_id: 'task-123',
+            agent_id: 'agent-1',
             question: 'Should I proceed?',
             options: ['Yes', 'No'],
           },
@@ -261,9 +261,9 @@ describe('QuestionHandler', () => {
         const event: SSEEvent = {
           type: 'questions.asked',
           data: {
-            questionId: 'q-1',
-            taskId: 'task-123',
-            agentId: 'agent-1',
+            question_id: 'q-1',
+            task_id: 'task-123',
+            agent_id: 'agent-1',
             question: 'Short question?',
           },
           timestamp: Date.now(),
@@ -288,9 +288,9 @@ describe('QuestionHandler', () => {
         const event: SSEEvent = {
           type: 'questions.asked',
           data: {
-            questionId: 'q-1',
-            taskId: 'task-123',
-            agentId: 'agent-1',
+            question_id: 'q-1',
+            task_id: 'task-123',
+            agent_id: 'agent-1',
             question: longQuestion,
           },
           timestamp: Date.now(),
@@ -313,7 +313,7 @@ describe('QuestionHandler', () => {
 
         mockSSEClient.emit('event', {
           type: 'questions.asked',
-          data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+          data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
           timestamp: Date.now(),
         });
 
@@ -321,7 +321,7 @@ describe('QuestionHandler', () => {
 
         mockSSEClient.emit('event', {
           type: 'questions.asked',
-          data: { questionId: 'q-2', taskId: 't-2', agentId: 'a-2', question: 'Q2?' },
+          data: { question_id: 'q-2', task_id: 't-2', agent_id: 'a-2', question: 'Q2?' },
           timestamp: Date.now(),
         });
 
@@ -336,7 +336,7 @@ describe('QuestionHandler', () => {
         // First add a question
         mockSSEClient.emit('event', {
           type: 'questions.asked',
-          data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+          data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
           timestamp: Date.now(),
         });
 
@@ -345,7 +345,7 @@ describe('QuestionHandler', () => {
         // Then answer it
         mockSSEClient.emit('event', {
           type: 'questions.answered',
-          data: { questionId: 'q-1' },
+          data: { question_id: 'q-1' },
           timestamp: Date.now(),
         });
 
@@ -360,7 +360,7 @@ describe('QuestionHandler', () => {
         // Add question
         mockSSEClient.emit('event', {
           type: 'questions.asked',
-          data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+          data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
           timestamp: Date.now(),
         });
 
@@ -369,7 +369,7 @@ describe('QuestionHandler', () => {
         // Answer question
         mockSSEClient.emit('event', {
           type: 'questions.answered',
-          data: { questionId: 'q-1' },
+          data: { question_id: 'q-1' },
           timestamp: Date.now(),
         });
 
@@ -411,7 +411,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -427,7 +427,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -445,9 +445,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 't-1',
-          agentId: 'a-1',
+          question_id: 'q-1',
+          task_id: 't-1',
+          agent_id: 'a-1',
           question: 'Continue?',
           options: ['Yes', 'No'],
         },
@@ -473,9 +473,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 't-1',
-          agentId: 'a-1',
+          question_id: 'q-1',
+          task_id: 't-1',
+          agent_id: 'a-1',
           question: 'Continue?',
           options: ['Yes', 'No'],
         },
@@ -497,9 +497,9 @@ describe('QuestionHandler', () => {
       mockSSEClient.emit('event', {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 't-1',
-          agentId: 'a-1',
+          question_id: 'q-1',
+          task_id: 't-1',
+          agent_id: 'a-1',
           question: 'Continue?',
           options: ['Yes', 'No'],
         },
@@ -533,7 +533,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 'task-123', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 'task-123', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -555,7 +555,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -571,7 +571,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -590,7 +590,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -608,7 +608,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -627,7 +627,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -652,9 +652,9 @@ describe('QuestionHandler', () => {
       const event: SSEEvent = {
         type: 'questions.asked',
         data: {
-          questionId: 'q-1',
-          taskId: 'task-123',
-          agentId: 'agent-1',
+          question_id: 'q-1',
+          task_id: 'task-123',
+          agent_id: 'agent-1',
           question: 'Continue?',
         },
         timestamp: Date.now(),
@@ -685,7 +685,7 @@ describe('QuestionHandler', () => {
       // Add question
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 
@@ -708,7 +708,7 @@ describe('QuestionHandler', () => {
       vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
       mockSSEClient.emit('event', {
         type: 'questions.asked',
-        data: { questionId: 'q-1', taskId: 't-1', agentId: 'a-1', question: 'Q?' },
+        data: { question_id: 'q-1', task_id: 't-1', agent_id: 'a-1', question: 'Q?' },
         timestamp: Date.now(),
       });
 

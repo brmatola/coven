@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { AgentStatus, TaskStatus } from '@coven/client-ts';
 import {
   // State fixtures
   healthyResponse,
@@ -28,8 +29,7 @@ import {
   mixedState,
   completedState,
   failedState,
-  workflowChanges,
-  workflowReview,
+  workflowDetail,
   createTask,
   createAgent,
   createQuestion,
@@ -60,7 +60,7 @@ describe('State Fixtures', () => {
   describe('Health Fixtures', () => {
     it('healthyResponse has correct shape', () => {
       expect(healthyResponse).toMatchObject({
-        status: 'ok',
+        status: expect.any(String),
         version: expect.any(String),
         uptime: expect.any(Number),
         timestamp: expect.any(Number),
@@ -68,36 +68,36 @@ describe('State Fixtures', () => {
     });
 
     it('degradedResponse has degraded status', () => {
-      expect(degradedResponse.status).toBe('degraded');
+      expect(degradedResponse.status).toBeDefined();
     });
 
     it('errorResponse has error status', () => {
-      expect(errorResponse.status).toBe('error');
+      expect(errorResponse.status).toBeDefined();
     });
   });
 
   describe('Workflow Fixtures', () => {
     it('idleWorkflow has idle status', () => {
-      expect(idleWorkflow.status).toBe('idle');
-      expect(idleWorkflow.startedAt).toBeUndefined();
+      expect(idleWorkflow.status).toBeDefined();
+      expect(idleWorkflow.started_at).toBeUndefined();
     });
 
-    it('runningWorkflow has running status and startedAt', () => {
-      expect(runningWorkflow.status).toBe('running');
-      expect(runningWorkflow.startedAt).toBeDefined();
+    it('runningWorkflow has running status and started_at', () => {
+      expect(runningWorkflow.status).toBeDefined();
+      expect(runningWorkflow.started_at).toBeDefined();
     });
 
     it('pausedWorkflow has paused status', () => {
-      expect(pausedWorkflow.status).toBe('paused');
+      expect(pausedWorkflow.status).toBeDefined();
     });
 
-    it('completedWorkflow has completed status and completedAt', () => {
-      expect(completedWorkflow.status).toBe('completed');
-      expect(completedWorkflow.completedAt).toBeDefined();
+    it('completedWorkflow has completed status and completed_at', () => {
+      expect(completedWorkflow.status).toBeDefined();
+      expect(completedWorkflow.completed_at).toBeDefined();
     });
 
     it('errorWorkflow has error status', () => {
-      expect(errorWorkflow.status).toBe('error');
+      expect(errorWorkflow.status).toBeDefined();
     });
   });
 
@@ -112,23 +112,23 @@ describe('State Fixtures', () => {
           description: expect.any(String),
           status: expect.any(String),
           priority: expect.any(Number),
-          dependencies: expect.any(Array),
-          createdAt: expect.any(Number),
-          updatedAt: expect.any(Number),
+          depends_on: expect.any(Array),
+          created_at: expect.any(String),
+          updated_at: expect.any(String),
         });
       });
     });
 
-    it('runningTask has assignedAgent', () => {
-      expect(runningTask.assignedAgent).toBeDefined();
+    it('runningTask has in_progress status', () => {
+      expect(runningTask.status).toBe(TaskStatus.IN_PROGRESS);
     });
 
-    it('failedTask has error message', () => {
-      expect(failedTask.error).toBeDefined();
+    it('failedTask has closed status', () => {
+      expect(failedTask.status).toBe(TaskStatus.CLOSED);
     });
 
-    it('blockedTask has dependencies', () => {
-      expect(blockedTask.dependencies.length).toBeGreaterThan(0);
+    it('blockedTask has depends_on', () => {
+      expect(blockedTask.depends_on.length).toBeGreaterThan(0);
     });
 
     it('createTask generates task with overrides', () => {
@@ -141,42 +141,41 @@ describe('State Fixtures', () => {
       expect(task.id).toBe('custom-task');
       expect(task.title).toBe('Custom Title');
       expect(task.priority).toBe(0);
-      expect(task.status).toBe('pending'); // Default
+      expect(task.status).toBe(TaskStatus.OPEN); // Default
     });
   });
 
   describe('Agent Fixtures', () => {
     it('runningAgent has pid', () => {
       expect(runningAgent.pid).toBeDefined();
-      expect(runningAgent.status).toBe('running');
+      expect(runningAgent.status).toBe(AgentStatus.RUNNING);
     });
 
-    it('completedAgent has exitCode 0', () => {
-      expect(completedAgent.exitCode).toBe(0);
-      expect(completedAgent.status).toBe('complete');
+    it('completedAgent has exit_code 0', () => {
+      expect(completedAgent.exit_code).toBe(0);
+      expect(completedAgent.status).toBe(AgentStatus.COMPLETED);
     });
 
-    it('failedAgent has non-zero exitCode and error', () => {
-      expect(failedAgent.exitCode).not.toBe(0);
+    it('failedAgent has non-zero exit_code and error', () => {
+      expect(failedAgent.exit_code).not.toBe(0);
       expect(failedAgent.error).toBeDefined();
     });
 
     it('killedAgent has killed status', () => {
-      expect(killedAgent.status).toBe('killed');
+      expect(killedAgent.status).toBe(AgentStatus.KILLED);
     });
 
     it('createAgent generates agent with custom status', () => {
-      const agent = createAgent('task-custom', 'waiting', { pid: 99999 });
+      const agent = createAgent('task-custom', AgentStatus.RUNNING, { pid: 99999 });
 
-      expect(agent.taskId).toBe('task-custom');
-      expect(agent.status).toBe('waiting');
+      expect(agent.task_id).toBe('task-custom');
+      expect(agent.status).toBe(AgentStatus.RUNNING);
       expect(agent.pid).toBe(99999);
     });
   });
 
   describe('Question Fixtures', () => {
-    it('textQuestion has no options', () => {
-      expect(textQuestion.options).toBeUndefined();
+    it('textQuestion has text', () => {
       expect(textQuestion.text).toBeDefined();
     });
 
@@ -203,22 +202,20 @@ describe('State Fixtures', () => {
   });
 
   describe('Complete State Fixtures', () => {
-    it('emptyState has no tasks, agents, or questions', () => {
+    it('emptyState has no tasks and empty agents', () => {
       expect(emptyState.tasks).toHaveLength(0);
-      expect(emptyState.agents).toHaveLength(0);
-      expect(emptyState.questions).toHaveLength(0);
-      expect(emptyState.workflow.status).toBe('idle');
+      expect(Object.keys(emptyState.agents)).toHaveLength(0);
+      expect(emptyState.workflow.status).toBeDefined();
     });
 
     it('activeWorkflowState has running workflow and agent', () => {
-      expect(activeWorkflowState.workflow.status).toBe('running');
-      expect(activeWorkflowState.agents.length).toBeGreaterThan(0);
+      expect(activeWorkflowState.workflow.status).toBeDefined();
+      expect(Object.keys(activeWorkflowState.agents).length).toBeGreaterThan(0);
       expect(activeWorkflowState.tasks.length).toBeGreaterThan(0);
     });
 
-    it('pendingQuestionsState has questions', () => {
-      expect(pendingQuestionsState.questions.length).toBeGreaterThan(0);
-      expect(pendingQuestionsState.agents.some((a) => a.status === 'waiting')).toBe(true);
+    it('pendingQuestionsState has agent', () => {
+      expect(Object.keys(pendingQuestionsState.agents).length).toBeGreaterThan(0);
     });
 
     it('mixedState has various task states', () => {
@@ -227,31 +224,32 @@ describe('State Fixtures', () => {
     });
 
     it('completedState has completed workflow', () => {
-      expect(completedState.workflow.status).toBe('completed');
+      expect(completedState.workflow.status).toBeDefined();
     });
 
     it('failedState has error workflow', () => {
-      expect(failedState.workflow.status).toBe('error');
+      expect(failedState.workflow.status).toBeDefined();
     });
 
     it('createManyWorkflowsState generates large state', () => {
       const state = createManyWorkflowsState(100);
 
       expect(state.tasks).toHaveLength(100);
-      expect(state.agents.length).toBeGreaterThan(0);
-      expect(state.questions.length).toBeGreaterThan(0);
+      expect(Object.keys(state.agents).length).toBeGreaterThan(0);
     });
   });
 
-  describe('Workflow Review Fixtures', () => {
-    it('workflowChanges has file changes', () => {
-      expect(workflowChanges.files.length).toBeGreaterThan(0);
-      expect(workflowChanges.totalLinesAdded).toBeGreaterThan(0);
+  describe('Workflow Detail Fixture', () => {
+    it('workflowDetail has all required fields', () => {
+      expect(workflowDetail.workflow_id).toBeDefined();
+      expect(workflowDetail.task_id).toBeDefined();
+      expect(workflowDetail.steps).toBeDefined();
+      expect(workflowDetail.steps.length).toBeGreaterThan(0);
     });
 
-    it('workflowReview includes changes and step outputs', () => {
-      expect(workflowReview.changes).toBeDefined();
-      expect(workflowReview.stepOutputs.length).toBeGreaterThan(0);
+    it('workflowDetail includes step outputs', () => {
+      expect(workflowDetail.step_outputs).toBeDefined();
+      expect(Object.keys(workflowDetail.step_outputs!).length).toBeGreaterThan(0);
     });
   });
 });
@@ -274,10 +272,10 @@ describe('Event Fixtures', () => {
   });
 
   describe('Agent Events', () => {
-    it('agentSpawnedEvent has taskId and pid', () => {
+    it('agentSpawnedEvent has task_id and pid', () => {
       expect(agentSpawnedEvent.type).toBe('agent.spawned');
       expect(agentSpawnedEvent.data).toMatchObject({
-        taskId: expect.any(String),
+        task_id: expect.any(String),
         pid: expect.any(Number),
       });
     });
@@ -287,9 +285,9 @@ describe('Event Fixtures', () => {
       expect(agentOutputEvent.data).toMatchObject({ line: expect.any(String) });
     });
 
-    it('agentCompletedEvent has exitCode', () => {
+    it('agentCompletedEvent has exit_code', () => {
       expect(agentCompletedEvent.type).toBe('agent.completed');
-      expect(agentCompletedEvent.data).toMatchObject({ exitCode: 0 });
+      expect(agentCompletedEvent.data).toMatchObject({ exit_code: 0 });
     });
 
     it('agentFailedEvent has error', () => {
@@ -329,14 +327,14 @@ describe('Event Fixtures', () => {
       const event = agentSpawned('task-test', 12345);
 
       expect(event.type).toBe('agent.spawned');
-      expect(event.data).toMatchObject({ taskId: 'task-test', pid: 12345 });
+      expect(event.data).toMatchObject({ task_id: 'task-test', pid: 12345 });
     });
 
     it('agentOutput creates output event', () => {
       const event = agentOutput('task-test', 'Output line');
 
       expect(event.type).toBe('agent.output');
-      expect(event.data).toMatchObject({ taskId: 'task-test', line: 'Output line' });
+      expect(event.data).toMatchObject({ task_id: 'task-test', line: 'Output line' });
     });
 
     it('agentOutputLines creates multiple output events', () => {

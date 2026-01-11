@@ -1,561 +1,454 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DaemonClient } from './client';
 import { DaemonClientError } from './types';
-import type { DaemonState, HealthResponse, DaemonTask, Agent, Question } from './types';
+import {
+  HealthService,
+  StateService,
+  TasksService,
+  AgentsService,
+  QuestionsService,
+  WorkflowsService,
+  HealthStatus,
+  TaskStatus,
+  AgentStatus,
+  QuestionType,
+  ApiError,
+  Task,
+} from '@coven/client-ts';
 
-// Mock http module
-vi.mock('http', () => {
-  const mockRequest = vi.fn();
+// Mock the generated services
+vi.mock('@coven/client-ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@coven/client-ts')>();
   return {
-    request: mockRequest,
+    ...actual,
+    CovenClient: vi.fn().mockImplementation(() => ({
+      getAxiosInstance: vi.fn().mockReturnValue({
+        post: vi.fn(),
+        get: vi.fn(),
+        delete: vi.fn(),
+      }),
+    })),
+    HealthService: {
+      getHealth: vi.fn(),
+    },
+    StateService: {
+      getState: vi.fn(),
+    },
+    TasksService: {
+      getTasks: vi.fn(),
+      startTask: vi.fn(),
+      stopTask: vi.fn(),
+    },
+    AgentsService: {
+      getAgents: vi.fn(),
+      getAgentById: vi.fn(),
+      getAgentOutput: vi.fn(),
+    },
+    QuestionsService: {
+      getQuestions: vi.fn(),
+      createQuestionAnswer: vi.fn(),
+    },
+    WorkflowsService: {
+      createWorkflowApproveMerge: vi.fn(),
+      updateWorkflowRejectMerge: vi.fn(),
+    },
   };
 });
 
-import * as http from 'http';
-import { EventEmitter } from 'events';
-
-// Helper to create mock response
-class MockResponse extends EventEmitter {
-  statusCode: number;
-
-  constructor(statusCode: number) {
-    super();
-    this.statusCode = statusCode;
-  }
-
-  emitData(data: string): void {
-    this.emit('data', Buffer.from(data));
-  }
-
-  emitEnd(): void {
-    this.emit('end');
-  }
-}
-
-// Helper to create mock request
-class MockRequest extends EventEmitter {
-  destroyed = false;
-
-  write = vi.fn();
-  end = vi.fn();
-  destroy = vi.fn(() => {
-    this.destroyed = true;
-  });
-}
-
-function setupMockRequest(
-  statusCode: number,
-  responseData: unknown,
-  error?: NodeJS.ErrnoException
-): { request: MockRequest; response: MockResponse } {
-  const mockReq = new MockRequest();
-  const mockRes = new MockResponse(statusCode);
-
-  (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-    (_options: unknown, callback: (res: MockResponse) => void) => {
-      if (error) {
-        // Defer error emission to allow event handlers to be set up
-        setTimeout(() => mockReq.emit('error', error), 0);
-      } else {
-        // Call the callback with the response
-        callback(mockRes);
-        // Emit data and end after callback is called
-        setTimeout(() => {
-          if (responseData !== undefined) {
-            mockRes.emitData(JSON.stringify(responseData));
-          }
-          mockRes.emitEnd();
-        }, 0);
-      }
-      return mockReq;
-    }
-  );
-
-  return { request: mockReq, response: mockRes };
-}
-
 describe('DaemonClient', () => {
+  let client: DaemonClient;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    client = new DaemonClient('/test.sock');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('constructor', () => {
-    it('stores socket path', () => {
-      const client = new DaemonClient('/path/to/socket.sock');
+    it('creates client with socket path', () => {
       expect(client).toBeDefined();
     });
   });
 
   describe('getHealth()', () => {
-    it('makes GET request to /health', async () => {
-      const healthResponse: HealthResponse = {
-        status: 'ok',
+    it('returns health response on success', async () => {
+      const mockHealth: HealthStatus = {
+        status: HealthStatus.status.OK,
         version: '1.0.0',
         uptime: 12345,
-        timestamp: Date.now(),
       };
 
-      setupMockRequest(200, healthResponse);
+      vi.mocked(HealthService.getHealth).mockResolvedValue(mockHealth);
 
-      const client = new DaemonClient('/test.sock');
       const result = await client.getHealth();
 
-      expect(result).toEqual(healthResponse);
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          socketPath: '/test.sock',
-          path: '/health',
-          method: 'GET',
-        }),
-        expect.any(Function)
+      expect(result.status).toBe('ok');
+      expect(result.version).toBe('1.0.0');
+      expect(result.uptime).toBe(12345);
+      expect(result.timestamp).toBeDefined();
+    });
+
+    it('maps degraded status correctly', async () => {
+      const mockHealth: HealthStatus = {
+        status: HealthStatus.status.DEGRADED,
+        version: '1.0.0',
+        uptime: 12345,
+      };
+
+      vi.mocked(HealthService.getHealth).mockResolvedValue(mockHealth);
+
+      const result = await client.getHealth();
+      expect(result.status).toBe('degraded');
+    });
+
+    it('maps error status correctly', async () => {
+      const mockHealth: HealthStatus = {
+        status: HealthStatus.status.ERROR,
+        version: '1.0.0',
+        uptime: 12345,
+      };
+
+      vi.mocked(HealthService.getHealth).mockResolvedValue(mockHealth);
+
+      const result = await client.getHealth();
+      expect(result.status).toBe('error');
+    });
+
+    it('throws DaemonClientError on API error', async () => {
+      vi.mocked(HealthService.getHealth).mockRejectedValue(
+        new ApiError({} as Response, 'Service unavailable')
       );
+
+      await expect(client.getHealth()).rejects.toBeInstanceOf(DaemonClientError);
     });
   });
 
   describe('getState()', () => {
-    it('makes GET request to /state', async () => {
-      const state: DaemonState = {
-        workflow: { id: 'test', status: 'running' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+    it('returns transformed state', async () => {
+      const mockState = {
+        state: {
+          workflow: { id: 'wf-1', status: 'running' },
+          tasks: [
+            {
+              id: 'task-1',
+              title: 'Test Task',
+              status: TaskStatus.OPEN,
+              priority: 2,
+              type: Task.type.TASK,
+              created_at: '2025-01-01T00:00:00Z',
+              updated_at: '2025-01-01T00:00:00Z',
+            },
+          ],
+          agents: {
+            'task-1': {
+              task_id: 'task-1',
+              pid: 12345,
+              status: AgentStatus.RUNNING,
+              worktree: '/tmp/wt',
+              branch: 'test',
+              started_at: '2025-01-01T00:00:00Z',
+            },
+          },
+        },
+        timestamp: '2025-01-01T00:00:00Z',
       };
 
-      setupMockRequest(200, state);
+      vi.mocked(StateService.getState).mockResolvedValue(mockState);
 
-      const client = new DaemonClient('/test.sock');
       const result = await client.getState();
 
-      expect(result).toEqual(state);
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/state' }),
-        expect.any(Function)
-      );
+      expect(result.workflow?.id).toBe('wf-1');
+      expect(result.tasks).toHaveLength(1);
+      expect(result.agents).toHaveLength(1);
+    });
+
+    it('handles empty state', async () => {
+      const mockState = {
+        state: {},
+        timestamp: '2025-01-01T00:00:00Z',
+      };
+
+      vi.mocked(StateService.getState).mockResolvedValue(mockState);
+
+      const result = await client.getState();
+
+      expect(result.tasks).toEqual([]);
+      expect(result.agents).toEqual([]);
     });
   });
 
   describe('Session API', () => {
-    it('startSession() makes POST to /session/start', async () => {
-      const mockReq = new MockRequest();
-      const mockRes = new MockResponse(200);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return mockReq;
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
-      await client.startSession({ featureBranch: 'feature/test' });
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: '/session/start',
-          method: 'POST',
-        }),
-        expect.any(Function)
-      );
-      expect(mockReq.write).toHaveBeenCalledWith(JSON.stringify({ featureBranch: 'feature/test' }));
+    it('startSession() returns not implemented error', async () => {
+      await expect(client.startSession()).rejects.toMatchObject({
+        code: 'request_failed',
+        message: expect.stringContaining('not yet in generated client'),
+      });
     });
 
-    it('stopSession() makes POST to /session/stop', async () => {
-      const mockReq = new MockRequest();
-      const mockRes = new MockResponse(200);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return mockReq;
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
-      await client.stopSession(true);
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: '/session/stop',
-          method: 'POST',
-        }),
-        expect.any(Function)
-      );
-      expect(mockReq.write).toHaveBeenCalledWith(JSON.stringify({ force: true }));
+    it('stopSession() returns not implemented error', async () => {
+      await expect(client.stopSession()).rejects.toMatchObject({
+        code: 'request_failed',
+        message: expect.stringContaining('not yet in generated client'),
+      });
     });
   });
 
   describe('Task API', () => {
     it('getTasks() returns task list', async () => {
-      const tasks: DaemonTask[] = [
-        {
-          id: 'task-1',
-          title: 'Test Task',
-          description: 'Description',
-          status: 'ready',
-          priority: 2,
-          dependencies: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      ];
+      const mockTasks = {
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Test Task',
+            status: TaskStatus.OPEN,
+            priority: 2,
+            type: Task.type.TASK,
+            created_at: '2025-01-01T00:00:00Z',
+            updated_at: '2025-01-01T00:00:00Z',
+          },
+        ],
+        count: 1,
+      };
 
-      // Daemon returns { tasks: [...], count: N }
-      setupMockRequest(200, { tasks, count: tasks.length });
+      vi.mocked(TasksService.getTasks).mockResolvedValue(mockTasks);
 
-      const client = new DaemonClient('/test.sock');
       const result = await client.getTasks();
 
-      expect(result).toEqual(tasks);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('task-1');
     });
 
-    it('getTask() fetches single task', async () => {
-      const task: DaemonTask = {
-        id: 'task-1',
-        title: 'Test Task',
-        description: 'Description',
-        status: 'ready',
-        priority: 2,
-        dependencies: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+    it('getTask() returns task by ID', async () => {
+      const mockTasks = {
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Test Task',
+            status: TaskStatus.OPEN,
+            priority: 2,
+            type: Task.type.TASK,
+            created_at: '2025-01-01T00:00:00Z',
+            updated_at: '2025-01-01T00:00:00Z',
+          },
+        ],
+        count: 1,
       };
 
-      setupMockRequest(200, task);
+      vi.mocked(TasksService.getTasks).mockResolvedValue(mockTasks);
 
-      const client = new DaemonClient('/test.sock');
       const result = await client.getTask('task-1');
 
-      expect(result).toEqual(task);
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/tasks/task-1' }),
-        expect.any(Function)
-      );
+      expect(result.id).toBe('task-1');
     });
 
-    it('getTask() URL-encodes task ID', async () => {
-      setupMockRequest(200, {});
+    it('getTask() throws task_not_found for unknown ID', async () => {
+      vi.mocked(TasksService.getTasks).mockResolvedValue({ tasks: [], count: 0 });
 
-      const client = new DaemonClient('/test.sock');
-      await client.getTask('task/with/slashes');
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/tasks/task%2Fwith%2Fslashes' }),
-        expect.any(Function)
-      );
-    });
-
-    it('startTask() makes POST to /tasks/:id/start', async () => {
-      const mockReq = new MockRequest();
-      const mockRes = new MockResponse(200);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return mockReq;
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
-      await client.startTask('task-1');
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: '/tasks/task-1/start',
-          method: 'POST',
-        }),
-        expect.any(Function)
-      );
-    });
-
-    it('killTask() makes POST to /tasks/:id/kill', async () => {
-      const mockReq = new MockRequest();
-      const mockRes = new MockResponse(200);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return mockReq;
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
-      await client.killTask('task-1', 'User requested');
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: '/tasks/task-1/kill',
-          method: 'POST',
-        }),
-        expect.any(Function)
-      );
-      expect(mockReq.write).toHaveBeenCalledWith(JSON.stringify({ reason: 'User requested' }));
-    });
-  });
-
-  describe('Agent API', () => {
-    it('getAgents() returns agent list', async () => {
-      const agents: Agent[] = [
-        {
-          taskId: 'task-1',
-          status: 'running',
-          pid: 12345,
-          startedAt: Date.now(),
-        },
-      ];
-
-      setupMockRequest(200, agents);
-
-      const client = new DaemonClient('/test.sock');
-      const result = await client.getAgents();
-
-      expect(result).toEqual(agents);
-    });
-
-    it('getAgent() fetches single agent', async () => {
-      const agent: Agent = {
-        taskId: 'task-1',
-        status: 'running',
-        pid: 12345,
-        startedAt: Date.now(),
-      };
-
-      setupMockRequest(200, agent);
-
-      const client = new DaemonClient('/test.sock');
-      const result = await client.getAgent('task-1');
-
-      expect(result).toEqual(agent);
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/agents/task-1' }),
-        expect.any(Function)
-      );
-    });
-
-    it('getAgentOutput() fetches agent output', async () => {
-      const output = {
-        taskId: 'task-1',
-        output: ['Line 1', 'Line 2'],
-        totalLines: 2,
-      };
-
-      setupMockRequest(200, output);
-
-      const client = new DaemonClient('/test.sock');
-      const result = await client.getAgentOutput('task-1', 100);
-
-      expect(result).toEqual(output);
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/agents/task-1/output?lines=100' }),
-        expect.any(Function)
-      );
-    });
-
-    it('getAgentOutput() works without lines parameter', async () => {
-      setupMockRequest(200, { taskId: 'task-1', output: [], totalLines: 0 });
-
-      const client = new DaemonClient('/test.sock');
-      await client.getAgentOutput('task-1');
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({ path: '/agents/task-1/output' }),
-        expect.any(Function)
-      );
-    });
-  });
-
-  describe('Question API', () => {
-    it('getQuestions() returns question list', async () => {
-      const questions: Question[] = [
-        {
-          id: 'q-1',
-          taskId: 'task-1',
-          agentId: 'agent-1',
-          text: 'What should I do?',
-          askedAt: Date.now(),
-        },
-      ];
-
-      setupMockRequest(200, questions);
-
-      const client = new DaemonClient('/test.sock');
-      const result = await client.getQuestions();
-
-      expect(result).toEqual(questions);
-    });
-
-    it('answerQuestion() makes POST with answer', async () => {
-      const mockReq = new MockRequest();
-      const mockRes = new MockResponse(200);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return mockReq;
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
-      await client.answerQuestion('q-1', 'Do option A');
-
-      expect(http.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          path: '/questions/q-1/answer',
-          method: 'POST',
-        }),
-        expect.any(Function)
-      );
-      expect(mockReq.write).toHaveBeenCalledWith(JSON.stringify({ answer: 'Do option A' }));
-    });
-  });
-
-  describe('Error handling', () => {
-    it('throws DaemonClientError on connection refused', async () => {
-      const error = new Error('connect ECONNREFUSED') as NodeJS.ErrnoException;
-      error.code = 'ECONNREFUSED';
-
-      setupMockRequest(0, undefined, error);
-
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getHealth()).rejects.toMatchObject({
-        code: 'connection_refused',
-        message: 'Daemon connection refused',
-      });
-    });
-
-    it('throws DaemonClientError on socket not found', async () => {
-      const error = new Error('connect ENOENT') as NodeJS.ErrnoException;
-      error.code = 'ENOENT';
-
-      setupMockRequest(0, undefined, error);
-
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getHealth()).rejects.toMatchObject({
-        code: 'socket_not_found',
-      });
-    });
-
-    it('throws DaemonClientError on timeout', async () => {
-      const mockReq = new MockRequest();
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        setTimeout(() => mockReq.emit('timeout'), 0);
-        return mockReq;
-      });
-
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getHealth()).rejects.toMatchObject({
-        code: 'connection_timeout',
-      });
-    });
-
-    it('throws task_not_found for 404 on /tasks/', async () => {
-      const mockRes = new MockResponse(404);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => {
-            mockRes.emitEnd();
-          }, 0);
-          return new MockRequest();
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
       await expect(client.getTask('nonexistent')).rejects.toMatchObject({
         code: 'task_not_found',
       });
     });
 
-    it('throws agent_not_found for 404 on /agents/', async () => {
-      const mockRes = new MockResponse(404);
+    it('startTask() calls TasksService.startTask', async () => {
+      vi.mocked(TasksService.startTask).mockResolvedValue({});
 
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return new MockRequest();
-        }
-      );
+      await client.startTask('task-1');
 
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getAgent('nonexistent')).rejects.toMatchObject({
-        code: 'agent_not_found',
+      expect(TasksService.startTask).toHaveBeenCalledWith({ id: 'task-1' });
+    });
+
+    it('killTask() calls TasksService.stopTask', async () => {
+      vi.mocked(TasksService.stopTask).mockResolvedValue({});
+
+      await client.killTask('task-1', 'User requested');
+
+      expect(TasksService.stopTask).toHaveBeenCalledWith({ id: 'task-1' });
+    });
+  });
+
+  describe('Agent API', () => {
+    it('getAgents() returns agent list', async () => {
+      const mockAgents = {
+        agents: [
+          {
+            task_id: 'task-1',
+            pid: 12345,
+            status: AgentStatus.RUNNING,
+            worktree: '/tmp/wt',
+            branch: 'test',
+            started_at: '2025-01-01T00:00:00Z',
+          },
+        ],
+      };
+
+      vi.mocked(AgentsService.getAgents).mockResolvedValue(mockAgents);
+
+      const result = await client.getAgents();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].task_id).toBe('task-1');
+    });
+
+    it('getAgent() returns single agent', async () => {
+      const mockAgent = {
+        task_id: 'task-1',
+        pid: 12345,
+        status: AgentStatus.RUNNING,
+        worktree: '/tmp/wt',
+        branch: 'test',
+        started_at: '2025-01-01T00:00:00Z',
+      };
+
+      vi.mocked(AgentsService.getAgentById).mockResolvedValue(mockAgent);
+
+      const result = await client.getAgent('task-1');
+
+      expect(result.task_id).toBe('task-1');
+      expect(AgentsService.getAgentById).toHaveBeenCalledWith({ id: 'task-1' });
+    });
+
+    it('getAgentOutput() returns output', async () => {
+      const mockOutput = {
+        lines: [{ line: 'Hello', timestamp: '2025-01-01T00:00:00Z' }],
+        total_lines: 1,
+      };
+
+      vi.mocked(AgentsService.getAgentOutput).mockResolvedValue(mockOutput);
+
+      const result = await client.getAgentOutput('task-1', 100);
+
+      expect(result.lines).toHaveLength(1);
+      expect(AgentsService.getAgentOutput).toHaveBeenCalledWith({ id: 'task-1', since: 100 });
+    });
+
+    it('getAgentOutput() works without since parameter', async () => {
+      const mockOutput = {
+        lines: [],
+        total_lines: 0,
+      };
+
+      vi.mocked(AgentsService.getAgentOutput).mockResolvedValue(mockOutput);
+
+      await client.getAgentOutput('task-1');
+
+      expect(AgentsService.getAgentOutput).toHaveBeenCalledWith({ id: 'task-1' });
+    });
+  });
+
+  describe('Question API', () => {
+    it('getQuestions() returns question list', async () => {
+      const mockQuestions = {
+        questions: [
+          {
+            id: 'q-1',
+            task_id: 'task-1',
+            agent_id: 'agent-1',
+            text: 'What should I do?',
+            type: QuestionType.TEXT,
+            asked_at: '2025-01-01T00:00:00Z',
+          },
+        ],
+      };
+
+      vi.mocked(QuestionsService.getQuestions).mockResolvedValue(mockQuestions);
+
+      const result = await client.getQuestions();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('q-1');
+    });
+
+    it('answerQuestion() calls QuestionsService', async () => {
+      vi.mocked(QuestionsService.createQuestionAnswer).mockResolvedValue({});
+
+      await client.answerQuestion('q-1', 'Do option A');
+
+      expect(QuestionsService.createQuestionAnswer).toHaveBeenCalledWith({
+        id: 'q-1',
+        requestBody: { answer: 'Do option A' },
+      });
+    });
+  });
+
+  describe('Workflow Review API', () => {
+    it('approveWorkflow() calls WorkflowsService', async () => {
+      vi.mocked(WorkflowsService.createWorkflowApproveMerge).mockResolvedValue({});
+
+      await client.approveWorkflow('wf-1', 'Looks good');
+
+      expect(WorkflowsService.createWorkflowApproveMerge).toHaveBeenCalledWith({
+        id: 'wf-1',
+        requestBody: { feedback: 'Looks good' },
       });
     });
 
-    it('throws question_not_found for 404 on /questions/', async () => {
-      const mockRes = new MockResponse(404);
+    it('rejectWorkflow() calls WorkflowsService', async () => {
+      vi.mocked(WorkflowsService.updateWorkflowRejectMerge).mockResolvedValue({});
 
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => mockRes.emitEnd(), 0);
-          return new MockRequest();
-        }
-      );
+      await client.rejectWorkflow('wf-1', 'Needs changes');
 
-      const client = new DaemonClient('/test.sock');
-      await expect(client.answerQuestion('nonexistent', 'answer')).rejects.toMatchObject({
-        code: 'question_not_found',
+      expect(WorkflowsService.updateWorkflowRejectMerge).toHaveBeenCalledWith({
+        id: 'wf-1',
+        requestBody: { reason: 'Needs changes' },
       });
     });
 
-    it('parses error message from response body', async () => {
-      const mockRes = new MockResponse(500);
-
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => {
-            mockRes.emitData(JSON.stringify({ code: 'internal_error', message: 'Database error' }));
-            mockRes.emitEnd();
-          }, 0);
-          return new MockRequest();
-        }
-      );
-
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getState()).rejects.toMatchObject({
-        code: 'internal_error',
-        message: 'Database error',
+    it('getWorkflowChanges() returns not implemented', async () => {
+      await expect(client.getWorkflowChanges('wf-1')).rejects.toMatchObject({
+        code: 'request_failed',
       });
     });
 
-    it('throws parse_error on invalid JSON response', async () => {
-      const mockRes = new MockResponse(200);
+    it('getWorkflowReview() returns not implemented', async () => {
+      await expect(client.getWorkflowReview('wf-1')).rejects.toMatchObject({
+        code: 'not_implemented',
+      });
+    });
+  });
 
-      (http.request as ReturnType<typeof vi.fn>).mockImplementation(
-        (_options: unknown, callback: (res: MockResponse) => void) => {
-          callback(mockRes);
-          setTimeout(() => {
-            mockRes.emitData('not valid json');
-            mockRes.emitEnd();
-          }, 0);
-          return new MockRequest();
-        }
+  describe('Error handling', () => {
+    it('maps ApiError to DaemonClientError', async () => {
+      vi.mocked(TasksService.getTasks).mockRejectedValue(
+        new ApiError({ status: 500 } as Response, 'Internal error')
       );
 
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getHealth()).rejects.toMatchObject({
-        code: 'parse_error',
+      await expect(client.getTasks()).rejects.toBeInstanceOf(DaemonClientError);
+    });
+
+    it('maps connection refused error', async () => {
+      const error = new Error('connect ECONNREFUSED');
+      vi.mocked(TasksService.getTasks).mockRejectedValue(error);
+
+      await expect(client.getTasks()).rejects.toMatchObject({
+        code: 'connection_refused',
       });
     });
 
-    it('handles generic errors', async () => {
-      const error = new Error('Unknown error') as NodeJS.ErrnoException;
-      error.code = 'UNKNOWN';
+    it('maps socket not found error', async () => {
+      const error = new Error('connect ENOENT /test.sock');
+      vi.mocked(TasksService.getTasks).mockRejectedValue(error);
 
-      setupMockRequest(0, undefined, error);
+      await expect(client.getTasks()).rejects.toMatchObject({
+        code: 'socket_not_found',
+      });
+    });
 
-      const client = new DaemonClient('/test.sock');
-      await expect(client.getHealth()).rejects.toMatchObject({
+    it('maps timeout error', async () => {
+      const error = new Error('connection timeout');
+      vi.mocked(TasksService.getTasks).mockRejectedValue(error);
+
+      await expect(client.getTasks()).rejects.toMatchObject({
+        code: 'connection_timeout',
+      });
+    });
+
+    it('maps unknown errors to request_failed', async () => {
+      vi.mocked(TasksService.getTasks).mockRejectedValue(new Error('Unknown error'));
+
+      await expect(client.getTasks()).rejects.toMatchObject({
         code: 'request_failed',
       });
     });

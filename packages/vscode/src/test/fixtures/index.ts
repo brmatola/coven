@@ -70,9 +70,10 @@ export {
   mixedState,
   completedState,
   failedState,
-  // Review
-  workflowChanges,
-  workflowReview,
+  // Workflow detail
+  workflowDetail,
+  workflowSteps,
+  completedStepResults,
 } from './stateFixtures';
 
 // Event fixtures

@@ -332,7 +332,7 @@ describe('MockSSEStream', () => {
 
         expect(events).toHaveLength(3);
         events.forEach((e) => expect(e.type).toBe('agent.output'));
-        expect(events[0].data).toMatchObject({ taskId: 'task-1', line: 'Line 1' });
+        expect(events[0].data).toMatchObject({ task_id: 'task-1', line: 'Line 1' });
       });
     });
 
@@ -343,7 +343,7 @@ describe('MockSSEStream', () => {
         expect(event.type).toBe('questions.asked');
         expect(event.data).toMatchObject({
           id: 'q-1',
-          taskId: 'task-1',
+          task_id: 'task-1',
           text: 'What to do?',
           options: ['A', 'B'],
         });

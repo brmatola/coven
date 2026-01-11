@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { WorkflowDetailPanel } from './WorkflowDetailPanel';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient } from '../daemon/sse';
+import type { SSEClient } from '@coven/client-ts';
 
 // Mock daemon client
 vi.mock('../daemon/client', () => ({
   DaemonClient: vi.fn().mockImplementation(() => ({
-    getState: vi.fn(),
+    get: vi.fn(),
     getAgentOutput: vi.fn(),
   })),
 }));
@@ -24,7 +24,7 @@ vi.mock('../shared/logger', () => ({
 
 describe('WorkflowDetailPanel', () => {
   let mockDaemonClient: {
-    getState: ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
     getAgentOutput: ReturnType<typeof vi.fn>;
   };
   let mockSSEClient: {
@@ -98,23 +98,24 @@ describe('WorkflowDetailPanel', () => {
     currentWorkflowId = 'workflow-1';
 
     mockDaemonClient = {
-      getState: vi.fn().mockResolvedValue({
-        workflow: {
-          id: 'workflow-1',
-          status: 'running',
-          startedAt: Date.now(),
-        },
-        tasks: [
-          { id: 'task-1', title: 'First Task', status: 'done' },
-          { id: 'task-2', title: 'Second Task', status: 'working' },
-          { id: 'task-3', title: 'Third Task', status: 'ready' },
+      get: vi.fn().mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'running',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        started_at: new Date(Date.now()).toISOString(),
+        steps: [
+          { id: 'task-1', name: 'First Task', type: 'spell', status: 'completed', depth: 0 },
+          { id: 'task-2', name: 'Second Task', type: 'spell', status: 'running', depth: 0 },
+          { id: 'task-3', name: 'Third Task', type: 'spell', status: 'pending', depth: 0 },
         ],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+        available_actions: ['pause', 'cancel'],
       }),
       getAgentOutput: vi.fn().mockResolvedValue({
-        output: ['line 1', 'line 2', 'line 3'],
+        lines: [{ line: 'line 1' }, { line: 'line 2' }, { line: 'line 3' }],
+        total_lines: 3,
       }),
     };
 
@@ -223,7 +224,7 @@ describe('WorkflowDetailPanel', () => {
 
       // Wait for async operation
       await vi.waitFor(() => {
-        expect(mockDaemonClient.getState).toHaveBeenCalled();
+        expect(mockDaemonClient.get).toHaveBeenCalled();
       });
     });
 
@@ -250,7 +251,7 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should handle fetch error', async () => {
-      mockDaemonClient.getState.mockRejectedValue(new Error('Connection failed'));
+      mockDaemonClient.get.mockRejectedValue(new Error('Connection failed'));
 
       createPanel();
 
@@ -299,19 +300,22 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should show warning when pausing non-running workflow', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'paused' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'paused',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        steps: [],
+        available_actions: ['resume', 'cancel'],
       });
 
       createPanel();
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
-        expect(mockDaemonClient.getState).toHaveBeenCalled();
+        expect(mockDaemonClient.get).toHaveBeenCalled();
       });
 
       getMessageHandler()?.({ type: 'pause' });
@@ -324,12 +328,15 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should handle resume action', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'paused' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'paused',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        steps: [],
+        available_actions: ['resume', 'cancel'],
       });
 
       createPanel();
@@ -392,7 +399,7 @@ describe('WorkflowDetailPanel', () => {
 
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
-        expect(mockDaemonClient.getState).toHaveBeenCalled();
+        expect(mockDaemonClient.get).toHaveBeenCalled();
       });
 
       getMessageHandler()?.({ type: 'cancel' });
@@ -408,12 +415,16 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should handle retry action', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'failed' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'failed',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        steps: [],
+        available_actions: ['retry'],
+        error: 'Something went wrong',
       });
 
       createPanel();
@@ -508,7 +519,7 @@ describe('WorkflowDetailPanel', () => {
       // First fetch the workflow
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
-        expect(mockDaemonClient.getState).toHaveBeenCalled();
+        expect(mockDaemonClient.get).toHaveBeenCalled();
       });
 
       vi.mocked(mockPanel.webview.postMessage).mockClear();
@@ -532,7 +543,7 @@ describe('WorkflowDetailPanel', () => {
       // First fetch the workflow
       getMessageHandler()?.({ type: 'ready' });
       await vi.waitFor(() => {
-        expect(mockDaemonClient.getState).toHaveBeenCalled();
+        expect(mockDaemonClient.get).toHaveBeenCalled();
       });
 
       vi.mocked(mockPanel.webview.postMessage).mockClear();
@@ -580,12 +591,15 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should return resume and cancel for paused workflow', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'paused' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'paused',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        steps: [],
+        available_actions: ['resume', 'cancel'],
       });
 
       createPanel();
@@ -605,12 +619,16 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should return retry for failed workflow', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'failed' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'failed',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        steps: [],
+        available_actions: ['retry'],
+        error: 'Something went wrong',
       });
 
       createPanel();
@@ -630,12 +648,15 @@ describe('WorkflowDetailPanel', () => {
     });
 
     it('should return no actions for completed workflow', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'completed' },
-        tasks: [],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'completed',
+        current_step: 0,
+        worktree_path: '/tmp/worktree',
+        steps: [],
+        available_actions: [],
       });
 
       createPanel();
@@ -657,18 +678,21 @@ describe('WorkflowDetailPanel', () => {
 
   describe('step status mapping', () => {
     it('should map task statuses to step statuses correctly', async () => {
-      mockDaemonClient.getState.mockResolvedValue({
-        workflow: { id: 'workflow-1', status: 'running' },
-        tasks: [
-          { id: 'task-1', title: 'Done Task', status: 'done' },
-          { id: 'task-2', title: 'Working Task', status: 'working' },
-          { id: 'task-3', title: 'Ready Task', status: 'ready' },
-          { id: 'task-4', title: 'Blocked Task', status: 'blocked' },
-          { id: 'task-5', title: 'Review Task', status: 'review' },
+      mockDaemonClient.get.mockResolvedValue({
+        workflow_id: 'workflow-1',
+        task_id: 'task-1',
+        grimoire_name: 'test-grimoire',
+        status: 'running',
+        current_step: 1,
+        worktree_path: '/tmp/worktree',
+        steps: [
+          { id: 'task-1', name: 'Done Task', type: 'spell', status: 'completed', depth: 0 },
+          { id: 'task-2', name: 'Working Task', type: 'spell', status: 'running', depth: 0 },
+          { id: 'task-3', name: 'Ready Task', type: 'spell', status: 'pending', depth: 0 },
+          { id: 'task-4', name: 'Blocked Task', type: 'spell', status: 'pending', depth: 0 },
+          { id: 'task-5', name: 'Review Task', type: 'spell', status: 'completed', depth: 0 },
         ],
-        agents: [],
-        questions: [],
-        timestamp: Date.now(),
+        available_actions: ['pause', 'cancel'],
       });
 
       createPanel();

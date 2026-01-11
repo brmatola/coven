@@ -2,27 +2,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BeadsTaskSource } from './BeadsTaskSource';
 import { BeadsClient } from './BeadsClient';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient } from '../daemon/sse';
-import { DaemonTask, DaemonClientError } from '../daemon/types';
+import { DaemonClientError } from '../daemon/types';
+import type { Task, SSEClient } from '@coven/client-ts';
+import { TaskStatus, Task as TaskClass } from '@coven/client-ts';
 
 vi.mock('./BeadsClient');
 vi.mock('../daemon/client');
-vi.mock('../daemon/sse');
 
 const MockBeadsClient = BeadsClient as unknown as ReturnType<typeof vi.fn>;
 const MockDaemonClient = DaemonClient as unknown as ReturnType<typeof vi.fn>;
-const MockSSEClient = SSEClient as unknown as ReturnType<typeof vi.fn>;
 
-function createMockDaemonTask(overrides: Partial<DaemonTask> = {}): DaemonTask {
+function createMockTask(overrides: Partial<Task> = {}): Task {
   return {
     id: 'test-abc',
     title: 'Test Task',
     description: 'Test description',
-    status: 'ready',
+    status: TaskStatus.OPEN,
     priority: 2,
-    dependencies: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    depends_on: [],
+    type: TaskClass.type.TASK,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -76,7 +76,6 @@ describe('BeadsTaskSource (Thin Client)', () => {
     };
 
     MockDaemonClient.mockImplementation(() => mockDaemonClient);
-    MockSSEClient.mockImplementation(() => mockSSEClient);
     MockBeadsClient.mockImplementation(() => mockBeadsClient);
 
     source = new BeadsTaskSource(
@@ -115,8 +114,8 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('converts daemon tasks to Coven tasks', async () => {
       const daemonTasks = [
-        createMockDaemonTask({ id: 'task-1', title: 'Task 1' }),
-        createMockDaemonTask({ id: 'task-2', title: 'Task 2' }),
+        createMockTask({ id: 'task-1', title: 'Task 1' }),
+        createMockTask({ id: 'task-2', title: 'Task 2' }),
       ];
       mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
 
@@ -130,12 +129,11 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('maps daemon status correctly', async () => {
       const daemonTasks = [
-        createMockDaemonTask({ id: 'task-1', status: 'ready' }),
-        createMockDaemonTask({ id: 'task-2', status: 'running' }),
-        createMockDaemonTask({ id: 'task-3', status: 'complete' }),
-        createMockDaemonTask({ id: 'task-4', status: 'failed' }),
-        createMockDaemonTask({ id: 'task-5', status: 'pending' }),
-        createMockDaemonTask({ id: 'task-6', status: 'blocked' }),
+        createMockTask({ id: 'task-1', status: TaskStatus.OPEN }),
+        createMockTask({ id: 'task-2', status: TaskStatus.IN_PROGRESS }),
+        createMockTask({ id: 'task-3', status: TaskStatus.CLOSED }),
+        createMockTask({ id: 'task-4', status: TaskStatus.BLOCKED }),
+        createMockTask({ id: 'task-5', status: TaskStatus.PENDING_MERGE }),
       ];
       mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
 
@@ -144,18 +142,17 @@ describe('BeadsTaskSource (Thin Client)', () => {
       expect(tasks[0].status).toBe('ready');
       expect(tasks[1].status).toBe('working');
       expect(tasks[2].status).toBe('done');
-      expect(tasks[3].status).toBe('blocked'); // failed maps to blocked
-      expect(tasks[4].status).toBe('ready'); // pending maps to ready
-      expect(tasks[5].status).toBe('blocked');
+      expect(tasks[3].status).toBe('blocked');
+      expect(tasks[4].status).toBe('review');
     });
 
     it('maps daemon priority correctly', async () => {
       const daemonTasks = [
-        createMockDaemonTask({ id: 'task-0', priority: 0 }),
-        createMockDaemonTask({ id: 'task-1', priority: 1 }),
-        createMockDaemonTask({ id: 'task-2', priority: 2 }),
-        createMockDaemonTask({ id: 'task-3', priority: 3 }),
-        createMockDaemonTask({ id: 'task-4', priority: 4 }),
+        createMockTask({ id: 'task-0', priority: 0 }),
+        createMockTask({ id: 'task-1', priority: 1 }),
+        createMockTask({ id: 'task-2', priority: 2 }),
+        createMockTask({ id: 'task-3', priority: 3 }),
+        createMockTask({ id: 'task-4', priority: 4 }),
       ];
       mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
 
@@ -170,10 +167,10 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('marks tasks with dependencies as blocked', async () => {
       const daemonTasks = [
-        createMockDaemonTask({
+        createMockTask({
           id: 'task-1',
-          status: 'ready',
-          dependencies: ['dep-1', 'dep-2'],
+          status: TaskStatus.OPEN,
+          depends_on: ['dep-1', 'dep-2'],
         }),
       ];
       mockDaemonClient.getTasks.mockResolvedValue(daemonTasks);
@@ -204,7 +201,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
       mockDaemonClient.getTasks.mockResolvedValue([]);
       await source.fetchTasks();
 
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'new-task' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'new-task' })]);
       const result = await source.sync();
 
       expect(result.added).toHaveLength(1);
@@ -212,7 +209,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
     });
 
     it('detects removed tasks', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'old-task' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'old-task' })]);
       await source.fetchTasks();
 
       mockDaemonClient.getTasks.mockResolvedValue([]);
@@ -223,12 +220,12 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('detects updated tasks', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', title: 'Old Title' }),
+        createMockTask({ id: 'task-1', title: 'Old Title' }),
       ]);
       await source.fetchTasks();
 
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', title: 'New Title' }),
+        createMockTask({ id: 'task-1', title: 'New Title' }),
       ]);
       const result = await source.sync();
 
@@ -243,7 +240,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
       const syncHandler = vi.fn();
       source.on('sync', syncHandler);
 
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'new-task' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'new-task' })]);
       await source.sync();
 
       expect(syncHandler).toHaveBeenCalledWith({
@@ -266,12 +263,12 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
       source.watch();
 
-      mockDaemonClient.getTask.mockResolvedValue(createMockDaemonTask({ id: 'new-task' }));
+      mockDaemonClient.getTask.mockResolvedValue(createMockTask({ id: 'new-task' }));
 
       const syncHandler = vi.fn();
       source.on('sync', syncHandler);
 
-      sseEventHandler?.({ type: 'task.created', data: { taskId: 'new-task' } });
+      sseEventHandler?.({ type: 'task.created', data: { task_id: 'new-task' } });
 
       await vi.waitFor(() => {
         expect(mockDaemonClient.getTask).toHaveBeenCalledWith('new-task');
@@ -281,19 +278,19 @@ describe('BeadsTaskSource (Thin Client)', () => {
     });
 
     it('handles task.updated events', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'task-1' })]);
       await source.fetchTasks();
 
       source.watch();
 
       mockDaemonClient.getTask.mockResolvedValue(
-        createMockDaemonTask({ id: 'task-1', title: 'Updated Title' })
+        createMockTask({ id: 'task-1', title: 'Updated Title' })
       );
 
       const syncHandler = vi.fn();
       source.on('sync', syncHandler);
 
-      sseEventHandler?.({ type: 'task.updated', data: { taskId: 'task-1' } });
+      sseEventHandler?.({ type: 'task.updated', data: { task_id: 'task-1' } });
 
       await vi.waitFor(() => {
         expect(syncHandler).toHaveBeenCalledWith({
@@ -307,7 +304,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
     });
 
     it('handles task removal when task not found', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'task-1' })]);
       await source.fetchTasks();
       expect(source.getTask('task-1')).toBeDefined();
 
@@ -319,7 +316,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
       const syncHandler = vi.fn();
       source.on('sync', syncHandler);
 
-      sseEventHandler?.({ type: 'task.failed', data: { taskId: 'task-1' } });
+      sseEventHandler?.({ type: 'task.failed', data: { task_id: 'task-1' } });
 
       await vi.waitFor(() => {
         expect(source.getTask('task-1')).toBeUndefined();
@@ -344,7 +341,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
   describe('fetchTask', () => {
     it('fetches single task from daemon', async () => {
       mockDaemonClient.getTask.mockResolvedValue(
-        createMockDaemonTask({ id: 'task-1', title: 'Single Task' })
+        createMockTask({ id: 'task-1', title: 'Single Task' })
       );
 
       const task = await source.fetchTask('task-1');
@@ -356,7 +353,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
     });
 
     it('caches fetched task', async () => {
-      mockDaemonClient.getTask.mockResolvedValue(createMockDaemonTask({ id: 'task-1' }));
+      mockDaemonClient.getTask.mockResolvedValue(createMockTask({ id: 'task-1' }));
 
       await source.fetchTask('task-1');
 
@@ -375,7 +372,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
   describe('cache operations', () => {
     it('getTask returns cached task', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'task-1' })]);
       await source.fetchTasks();
 
       const task = source.getTask('task-1');
@@ -390,8 +387,8 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('getTasks returns all cached tasks', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1' }),
-        createMockDaemonTask({ id: 'task-2' }),
+        createMockTask({ id: 'task-1' }),
+        createMockTask({ id: 'task-2' }),
       ]);
       await source.fetchTasks();
 
@@ -401,9 +398,9 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('getTasksByStatus filters correctly', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', status: 'ready' }),
-        createMockDaemonTask({ id: 'task-2', status: 'running' }),
-        createMockDaemonTask({ id: 'task-3', status: 'ready' }),
+        createMockTask({ id: 'task-1', status: TaskStatus.OPEN }),
+        createMockTask({ id: 'task-2', status: TaskStatus.IN_PROGRESS }),
+        createMockTask({ id: 'task-3', status: TaskStatus.OPEN }),
       ]);
       await source.fetchTasks();
 
@@ -416,9 +413,9 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('getTasksGroupedByStatus groups correctly', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', status: 'ready' }),
-        createMockDaemonTask({ id: 'task-2', status: 'running' }),
-        createMockDaemonTask({ id: 'task-3', status: 'complete' }),
+        createMockTask({ id: 'task-1', status: TaskStatus.OPEN }),
+        createMockTask({ id: 'task-2', status: TaskStatus.IN_PROGRESS }),
+        createMockTask({ id: 'task-3', status: TaskStatus.CLOSED }),
       ]);
       await source.fetchTasks();
 
@@ -430,9 +427,9 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('getNextTask returns highest priority ready task', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', status: 'ready', priority: 3 }),
-        createMockDaemonTask({ id: 'task-2', status: 'ready', priority: 1 }),
-        createMockDaemonTask({ id: 'task-3', status: 'ready', priority: 2 }),
+        createMockTask({ id: 'task-1', status: TaskStatus.OPEN, priority: 3 }),
+        createMockTask({ id: 'task-2', status: TaskStatus.OPEN, priority: 1 }),
+        createMockTask({ id: 'task-3', status: TaskStatus.OPEN, priority: 2 }),
       ]);
       await source.fetchTasks();
 
@@ -442,7 +439,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('getNextTask returns undefined when no ready tasks', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', status: 'running' }),
+        createMockTask({ id: 'task-1', status: TaskStatus.IN_PROGRESS }),
       ]);
       await source.fetchTasks();
 
@@ -453,7 +450,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
   describe('write operations (via CLI)', () => {
     it('updateTaskStatus calls BeadsClient', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'task-1' })]);
       await source.fetchTasks();
 
       await source.updateTaskStatus('task-1', 'working');
@@ -463,7 +460,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('updateTaskStatus updates cache optimistically', async () => {
       mockDaemonClient.getTasks.mockResolvedValue([
-        createMockDaemonTask({ id: 'task-1', status: 'ready' }),
+        createMockTask({ id: 'task-1', status: TaskStatus.OPEN }),
       ]);
       await source.fetchTasks();
 
@@ -475,7 +472,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
     it('createTask calls BeadsClient and syncs from daemon', async () => {
       mockDaemonClient.getTask.mockResolvedValue(
-        createMockDaemonTask({ id: 'new-id', title: 'New Task' })
+        createMockTask({ id: 'new-id', title: 'New Task' })
       );
 
       const task = await source.createTask('New Task', 'Description');
@@ -485,7 +482,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
     });
 
     it('closeTask removes from cache and calls BeadsClient', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'task-1' })]);
       await source.fetchTasks();
 
       await source.closeTask('task-1');
@@ -497,7 +494,7 @@ describe('BeadsTaskSource (Thin Client)', () => {
 
   describe('dispose', () => {
     it('clears cache and stops watch', async () => {
-      mockDaemonClient.getTasks.mockResolvedValue([createMockDaemonTask({ id: 'task-1' })]);
+      mockDaemonClient.getTasks.mockResolvedValue([createMockTask({ id: 'task-1' })]);
       await source.fetchTasks();
       source.watch();
 

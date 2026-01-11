@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { ReviewPanel } from './ReviewPanel';
 import { DaemonClient } from '../daemon/client';
-import { SSEClient } from '../daemon/sse';
+import type { SSEClient } from '@coven/client-ts';
 
 // Mock daemon client
 vi.mock('../daemon/client', () => ({
@@ -108,31 +108,31 @@ describe('ReviewPanel', () => {
     mockDaemonClient = {
       getWorkflowReview: vi.fn().mockResolvedValue({
         workflowId: 'workflow-1',
-        taskId: 'task-1',
-        taskTitle: 'Implement feature X',
-        taskDescription: 'Add new functionality',
-        acceptanceCriteria: 'Feature works correctly',
+        task_id: 'task-1',
+        task_title: 'Implement feature X',
+        task_description: 'Add new functionality',
+        acceptance_criteria: 'Feature works correctly',
         changes: {
           workflowId: 'workflow-1',
-          taskId: 'task-1',
-          baseBranch: 'main',
-          headBranch: 'feature/x',
-          worktreePath: '/tmp/worktree-1',
+          task_id: 'task-1',
+          base_branch: 'main',
+          head_branch: 'feature/x',
+          worktree_path: '/tmp/worktree-1',
           files: [
-            { path: 'src/feature.ts', linesAdded: 50, linesDeleted: 10, changeType: 'modified' },
-            { path: 'src/new.ts', linesAdded: 100, linesDeleted: 0, changeType: 'added' },
+            { path: 'src/feature.ts', lines_added: 50, lines_deleted: 10, change_type: 'modified' },
+            { path: 'src/new.ts', lines_added: 100, lines_deleted: 0, change_type: 'added' },
           ],
-          totalLinesAdded: 150,
-          totalLinesDeleted: 10,
-          commitCount: 3,
+          total_lines_added: 150,
+          total_lines_deleted: 10,
+          commit_count: 3,
         },
-        stepOutputs: [
-          { stepId: 'step-1', stepName: 'Implement', summary: 'Added feature', exitCode: 0 },
-          { stepId: 'step-2', stepName: 'Test', summary: 'All tests pass', exitCode: 0 },
+        step_outputs: [
+          { stepId: 'step-1', stepName: 'Implement', summary: 'Added feature', exit_code: 0 },
+          { stepId: 'step-2', stepName: 'Test', summary: 'All tests pass', exit_code: 0 },
         ],
-        startedAt: Date.now() - 60000,
-        completedAt: Date.now(),
-        durationMs: 60000,
+        started_at: Date.now() - 60000,
+        completed_at: Date.now(),
+        duration_ms: 60000,
       }),
       approveWorkflow: vi.fn().mockResolvedValue(undefined),
       rejectWorkflow: vi.fn().mockResolvedValue(undefined),
@@ -646,7 +646,7 @@ describe('ReviewPanel', () => {
 
       mockSSEClient.emit('event', {
         type: 'workflow.completed',
-        data: { workflowId: 'workflow-1' },
+        data: { workflow_id: 'workflow-1' },
         timestamp: Date.now(),
       });
 
@@ -667,7 +667,7 @@ describe('ReviewPanel', () => {
 
       mockSSEClient.emit('event', {
         type: 'workflow.failed',
-        data: { workflowId: 'workflow-1' },
+        data: { workflow_id: 'workflow-1' },
         timestamp: Date.now(),
       });
 
@@ -688,7 +688,7 @@ describe('ReviewPanel', () => {
 
       mockSSEClient.emit('event', {
         type: 'workflow.completed',
-        data: { workflowId: 'other-workflow' },
+        data: { workflow_id: 'other-workflow' },
         timestamp: Date.now(),
       });
 

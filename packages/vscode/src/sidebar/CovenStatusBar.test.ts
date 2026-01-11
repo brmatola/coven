@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CovenStatusBar } from './CovenStatusBar';
-import { StateCache, SessionState } from '../daemon/cache';
-import { WorkflowState } from '../daemon/types';
+import { StateCache, SessionState, WorkflowState } from '../daemon/cache';
+import { WorkflowStatus } from '@coven/client-ts';
 import { window } from 'vscode';
 
 // Mock StateCache
@@ -11,13 +11,9 @@ vi.mock('../daemon/cache', () => ({
     off: vi.fn(),
     getSessionState: vi.fn(),
     getWorkflow: vi.fn(),
-    getWorkflows: vi.fn().mockReturnValue([]),
     getQuestions: vi.fn(),
   })),
 }));
-
-// Mock daemon types
-vi.mock('../daemon/types', () => ({}));
 
 function createMockSessionState(overrides: Partial<SessionState> = {}): SessionState {
   return {
@@ -31,7 +27,7 @@ function createMockWorkflowState(
 ): WorkflowState {
   return {
     id: 'wf-1',
-    status: 'running',
+    status: WorkflowStatus.RUNNING,
     ...overrides,
   };
 }
@@ -99,7 +95,6 @@ describe('CovenStatusBar', () => {
       (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
         createMockSessionState({ active: true })
       );
-      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([]);
 
       statusBar.setStateCache(mockStateCache);
 
@@ -111,7 +106,6 @@ describe('CovenStatusBar', () => {
   describe('state updates', () => {
     beforeEach(() => {
       (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(null);
-      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([]);
       (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([]);
     });
 
@@ -130,9 +124,9 @@ describe('CovenStatusBar', () => {
       (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
         createMockSessionState({ active: true })
       );
-      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([
-        createMockWorkflowState({ id: 'wf-1', status: 'running' }),
-      ]);
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockWorkflowState({ id: 'wf-1', status: WorkflowStatus.RUNNING })
+      );
 
       statusBar.setStateCache(mockStateCache);
 
@@ -144,15 +138,14 @@ describe('CovenStatusBar', () => {
       (mockStateCache.getSessionState as ReturnType<typeof vi.fn>).mockReturnValue(
         createMockSessionState({ active: true })
       );
-      (mockStateCache.getWorkflows as ReturnType<typeof vi.fn>).mockReturnValue([
-        createMockWorkflowState({ id: 'wf-1', status: 'pending_merge' }),
-        createMockWorkflowState({ id: 'wf-2', status: 'blocked' }),
-      ]);
+      (mockStateCache.getWorkflow as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockWorkflowState({ id: 'wf-1', status: WorkflowStatus.PENDING_MERGE })
+      );
 
       statusBar.setStateCache(mockStateCache);
 
       const item = statusBar.getStatusBarItem();
-      expect(item.text).toContain('2 pending');
+      expect(item.text).toContain('1 pending');
     });
 
     it('shows pending questions count', () => {
@@ -160,7 +153,7 @@ describe('CovenStatusBar', () => {
         createMockSessionState({ active: true })
       );
       (mockStateCache.getQuestions as ReturnType<typeof vi.fn>).mockReturnValue([
-        { id: 'q-1', taskId: 'task-1', question: 'Test?', askedAt: Date.now() },
+        { id: 'q-1', task_id: 'task-1', text: 'Test?', asked_at: new Date().toISOString() },
       ]);
 
       statusBar.setStateCache(mockStateCache);
