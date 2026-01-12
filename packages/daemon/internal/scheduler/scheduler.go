@@ -11,6 +11,7 @@ import (
 	"github.com/coven/daemon/internal/beads"
 	"github.com/coven/daemon/internal/git"
 	"github.com/coven/daemon/internal/logging"
+	"github.com/coven/daemon/internal/questions"
 	"github.com/coven/daemon/internal/state"
 	"github.com/coven/daemon/internal/workflow"
 	"github.com/coven/daemon/pkg/types"
@@ -323,14 +324,17 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 	}
 
 	// Filter out tasks that already have running agents
-	runningSet := make(map[string]bool)
-	for _, taskID := range runningAgents {
-		runningSet[taskID] = true
+	// Note: runningAgents contains step task IDs like "taskid-step-1"
+	// We need to extract the main task ID to compare
+	runningMainTaskSet := make(map[string]bool)
+	for _, stepTaskID := range runningAgents {
+		mainTaskID, _ := questions.ParseStepTaskID(stepTaskID)
+		runningMainTaskSet[mainTaskID] = true
 	}
 
 	var tasksToStart []types.Task
 	for _, task := range readyTasks {
-		if !runningSet[task.ID] && len(tasksToStart) < availableSlots {
+		if !runningMainTaskSet[task.ID] && len(tasksToStart) < availableSlots {
 			tasksToStart = append(tasksToStart, task)
 		}
 	}
@@ -619,25 +623,25 @@ func statusForWorkflowResult(result *WorkflowResult) types.TaskStatus {
 }
 
 func (s *Scheduler) handleAgentComplete(result *agent.ProcessResult) {
-	s.logger.Info("agent completed",
-		"task_id", result.TaskID,
+	// Parse step task ID to get main task ID
+	mainTaskID, _ := questions.ParseStepTaskID(result.TaskID)
+
+	s.logger.Info("agent completed (scheduler)",
+		"task_id", mainTaskID,
+		"step_task_id", result.TaskID,
 		"exit_code", result.ExitCode,
 		"duration", result.Duration,
 	)
 
-	// Get current agent state
-	agentState := s.store.GetAgent(result.TaskID)
+	// Get current agent state using main task ID
+	agentState := s.store.GetAgent(mainTaskID)
 	if agentState == nil {
-		s.logger.Warn("agent state not found", "task_id", result.TaskID)
+		s.logger.Warn("agent state not found", "task_id", mainTaskID, "step_task_id", result.TaskID)
 		return
 	}
 
-	// Update agent status
-	s.store.UpdateAgentStatus(result.TaskID, result.ToAgentStatus())
-	s.store.SetAgentExitCode(result.TaskID, result.ExitCode)
-	if result.Error != "" {
-		s.store.SetAgentError(result.TaskID, result.Error)
-	}
+	// Note: Agent status updates are handled by daemon.go's OnComplete callback
+	// This callback focuses on updating task status in beads
 
 	// Update task status based on result
 	ctx := context.Background()
@@ -650,9 +654,9 @@ func (s *Scheduler) handleAgentComplete(result *agent.ProcessResult) {
 		newStatus = types.TaskStatusOpen // Return to open on failure for retry
 	}
 
-	if err := s.beadsClient.UpdateStatus(ctx, result.TaskID, newStatus); err != nil {
+	if err := s.beadsClient.UpdateStatus(ctx, mainTaskID, newStatus); err != nil {
 		s.logger.Error("failed to update task status",
-			"task_id", result.TaskID,
+			"task_id", mainTaskID,
 			"status", newStatus,
 			"error", err,
 		)

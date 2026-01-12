@@ -113,25 +113,38 @@ func New(workspace, version string) (*Daemon, error) {
 
 	// Wire up event callbacks - this handles both state updates and event emission
 	processManager.OnComplete(func(result *agent.ProcessResult) {
+		// Parse the step task ID to get the main task ID
+		mainTaskID, _ := questions.ParseStepTaskID(result.TaskID)
+
 		logger.Info("agent completed",
-			"task_id", result.TaskID,
+			"task_id", mainTaskID,
+			"step_task_id", result.TaskID,
 			"exit_code", result.ExitCode,
 			"duration", result.Duration,
 		)
 
-		// Update agent status in store
-		store.UpdateAgentStatus(result.TaskID, result.ToAgentStatus())
-		store.SetAgentExitCode(result.TaskID, result.ExitCode)
+		// Update agent status in store using main task ID
+		store.UpdateAgentStatus(mainTaskID, result.ToAgentStatus())
+		store.SetAgentExitCode(mainTaskID, result.ExitCode)
 		if result.Error != "" {
-			store.SetAgentError(result.TaskID, result.Error)
+			store.SetAgentError(mainTaskID, result.Error)
 		}
 
-		// Emit event
-		agnt := store.GetAgent(result.TaskID)
+		// Emit event using main task ID based on result status
+		agnt := store.GetAgent(mainTaskID)
 		if agnt != nil {
-			if result.Error != "" {
-				eventBroker.EmitAgentFailed(agnt, result.Error)
-			} else {
+			status := result.ToAgentStatus()
+			switch status {
+			case types.AgentStatusFailed:
+				// For non-zero exits, use a generic error message if none provided
+				errMsg := result.Error
+				if errMsg == "" && result.ExitCode != 0 {
+					errMsg = fmt.Sprintf("agent exited with code %d", result.ExitCode)
+				}
+				eventBroker.EmitAgentFailed(agnt, errMsg)
+			case types.AgentStatusKilled:
+				eventBroker.EmitAgentFailed(agnt, "agent was killed")
+			case types.AgentStatusCompleted:
 				eventBroker.EmitAgentCompleted(agnt)
 			}
 		}
@@ -153,6 +166,27 @@ func New(workspace, version string) (*Daemon, error) {
 		// Check for questions
 		questionDetector.ProcessLine(ctx, line.Stream, line.Data, line.Sequence)
 		eventBroker.EmitAgentOutput(taskID, line.Data)
+	})
+
+	processManager.OnSpawn(func(info *agent.ProcessInfo) {
+		// Parse the step task ID to get the main task ID
+		mainTaskID, _ := questions.ParseStepTaskID(info.TaskID)
+
+		// Get agent from store and emit started event
+		agnt := store.GetAgent(mainTaskID)
+		if agnt != nil {
+			logger.Info("agent spawned, emitting started event",
+				"task_id", mainTaskID,
+				"step_task_id", info.TaskID,
+				"pid", info.PID,
+			)
+			eventBroker.EmitAgentStarted(agnt)
+		} else {
+			logger.Warn("agent not found in store when spawning",
+				"task_id", mainTaskID,
+				"step_task_id", info.TaskID,
+			)
+		}
 	})
 
 	questionDetector.OnQuestion(func(q *questions.Question) {

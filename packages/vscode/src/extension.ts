@@ -34,6 +34,7 @@ import {
   rejectWorkflow,
 } from './commands/workflow';
 import { registerSetupCommands } from './setup/commands';
+import { installDialogMock, DialogResponse } from './testing';
 
 // Global state
 let workflowProvider: WorkflowTreeProvider | null = null;
@@ -113,6 +114,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register E2E test commands when in E2E mode
   if (process.env.COVEN_E2E_MODE === 'true') {
     ctx.logger.info('Registering E2E test commands (COVEN_E2E_MODE=true)');
+
+    // Install dialog mock for testing commands with confirmation dialogs
+    const dialogMock = installDialogMock();
+    ctx.logger.info('Dialog mock installed for E2E testing');
+
     ctx.subscriptions.push(
       vscode.commands.registerCommand('coven._getTreeViewState', () => {
         return workflowProvider?.getStateSnapshot() ?? null;
@@ -136,6 +142,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }),
       vscode.commands.registerCommand('coven._getDaemonSocketPath', () => {
         return daemonSocketPath;
+      }),
+      // Dialog mock commands for E2E testing
+      vscode.commands.registerCommand(
+        'coven._queueDialogResponse',
+        (pattern: string, response: DialogResponse) => {
+          dialogMock.queueResponse(pattern, response);
+        }
+      ),
+      vscode.commands.registerCommand('coven._getDialogInvocations', () => {
+        return dialogMock.getInvocations();
+      }),
+      vscode.commands.registerCommand('coven._clearDialogInvocations', () => {
+        dialogMock.clearInvocations();
+      }),
+      vscode.commands.registerCommand('coven._resetDialogMock', () => {
+        dialogMock.reset();
       })
     );
   }

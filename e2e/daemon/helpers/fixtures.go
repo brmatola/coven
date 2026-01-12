@@ -92,9 +92,11 @@ func (e *TestEnv) ConfigureMockAgentWithArgs(t *testing.T, args string) string {
 	}
 
 	// Write config with mock agent
+	// NOTE: agent_args must be empty since mockagent doesn't accept claude's -p flag
 	config := map[string]interface{}{
 		"poll_interval":         1,
 		"agent_command":         agentCmd,
+		"agent_args":            []string{},
 		"max_concurrent_agents": 3,
 		"log_level":             "debug",
 	}

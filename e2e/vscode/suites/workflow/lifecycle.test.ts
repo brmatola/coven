@@ -95,11 +95,9 @@ suite('Workflow Lifecycle', function () {
     } catch {
       const state = await ui.getTreeViewState();
       if (state?.ready.includes(taskId)) {
-        console.log('Task stayed in ready - daemon may not be starting agents, skipping test');
-        this.skip();
-        return;
+        assert.fail('Task stayed in ready - daemon did not start workflow. Check daemon logs.');
       }
-      throw new Error('Task did not become active');
+      assert.fail('Task did not become active within timeout');
     }
 
     // 4. Give it a moment to start executing
@@ -128,11 +126,63 @@ suite('Workflow Lifecycle', function () {
     console.log('Cancel workflow test completed');
   });
 
-  // NOTE: This test requires grimoire with-merge functionality.
-  // Skip until grimoire workflows are verified to work.
-  test.skip('Retry blocked workflow restarts execution', async function () {
-    // This test requires grimoire with-merge to block at pending_merge then retry
-    // Skip until grimoire workflows are working
+  test('Retry blocked workflow restarts execution', async function () {
+    const ui = ctx.ui;
+    const events = await getEventWaiter();
+
+    // Install with-merge grimoire (require_review: true, will block at merge)
+    ctx.installGrimoires(['with-merge']);
+
+    // Configure mock agent and restart daemon to pick up grimoire
+    ctx.mockAgent.configure({ delay: '200ms' });
+    await ctx.daemon.restart();
+    await waitForExtensionConnected();
+
+    // 1. Create task with grimoire label
+    const taskTitle = `E2E Retry Workflow ${Date.now()}`;
+    const taskId = beads.createTask({
+      title: taskTitle,
+      type: 'task',
+      priority: 2,
+      labels: ['grimoire:with-merge'],
+    });
+    testTaskIds.push(taskId);
+    console.log(`Created task: ${taskId}`);
+
+    // 2. Start task and wait for merge_pending
+    await vscode.commands.executeCommand('coven.refreshTasks');
+    await ui.waitForTaskInSection(taskId, 'ready', 15000);
+    await vscode.commands.executeCommand('coven.startTask', taskId);
+    console.log('Started task');
+
+    await events.waitForEvent('workflow.merge_pending', 60000);
+    console.log('Workflow pending merge');
+
+    // 3. Reject the merge to block the workflow
+    const { workflows } = await ctx.directClient.getWorkflows();
+    const workflow = workflows.find(w => w.task_id === taskId);
+    assert.ok(workflow, 'Should find workflow for task');
+
+    // Use workflow_id if available, otherwise task_id
+    const workflowId = workflow.workflow_id || workflow.task_id;
+    await vscode.commands.executeCommand('coven.rejectMerge', workflowId);
+    console.log('Rejected merge');
+
+    await events.waitForEvent('workflow.blocked', 30000);
+    console.log('Workflow blocked');
+
+    // 4. Retry the workflow
+    await vscode.commands.executeCommand('coven.retryWorkflow', workflowId);
+    console.log('Retried workflow');
+
+    // 5. Workflow should restart and reach pending_merge again
+    await events.waitForEvent('workflow.merge_pending', 60000);
+    console.log('Workflow restarted and reached pending merge again');
+
+    // 6. Clean up by approving
+    await vscode.commands.executeCommand('coven.approveMerge', workflowId);
+    await events.waitForEvent('workflow.completed', 30000);
+    console.log('Retry workflow test completed');
   });
 
   test('Workflow status updates are reflected in UI', async function () {
@@ -160,11 +210,10 @@ suite('Workflow Lifecycle', function () {
 
     // Check which section it's in
     const initialState = await ui.getTreeViewState();
-    if (initialState?.blocked.includes(taskId)) {
-      console.log('Task is blocked (may have dependencies from previous tests), skipping status test');
-      this.skip();
-      return;
-    }
+    assert.ok(
+      !initialState?.blocked.includes(taskId),
+      'Task should not be blocked - indicates dependency issue or previous test contamination'
+    );
 
     // Task should be in ready
     await ui.waitForTaskInSection(taskId, 'ready', 5000);
@@ -180,11 +229,9 @@ suite('Workflow Lifecycle', function () {
     } catch {
       const currentState = await ui.getTreeViewState();
       if (currentState?.ready.includes(taskId)) {
-        console.log('Task stayed in ready - daemon may not be starting agents, skipping test');
-        this.skip();
-        return;
+        assert.fail('Task stayed in ready - daemon did not start workflow. Check daemon logs.');
       }
-      throw new Error('Task did not become active');
+      assert.fail('Task did not become active within timeout');
     }
 
     state = await ui.getTreeViewState();
@@ -206,10 +253,66 @@ suite('Workflow Lifecycle', function () {
     console.log('Workflow status tracking test completed');
   });
 
-  // NOTE: This test requires grimoire multi-step functionality.
-  // Skip until grimoire workflows are verified to work.
-  test.skip('Get workflow details via API', async function () {
-    // This test requires multi-step grimoire workflow
-    // Skip until grimoire workflows are working
+  test('Get workflow details via API', async function () {
+    const ui = ctx.ui;
+    const events = await getEventWaiter();
+
+    // Install multi-step grimoire
+    ctx.installGrimoires(['multi-step']);
+
+    // Configure mock agent and restart daemon
+    ctx.mockAgent.configure({ delay: '200ms' });
+    await ctx.daemon.restart();
+    await waitForExtensionConnected();
+
+    // 1. Create task with grimoire label
+    const taskTitle = `E2E Workflow Details ${Date.now()}`;
+    const taskId = beads.createTask({
+      title: taskTitle,
+      type: 'task',
+      priority: 2,
+      labels: ['grimoire:multi-step'],
+    });
+    testTaskIds.push(taskId);
+    console.log(`Created task: ${taskId}`);
+
+    // 2. Start task
+    await vscode.commands.executeCommand('coven.refreshTasks');
+    await ui.waitForTaskInSection(taskId, 'ready', 15000);
+    await vscode.commands.executeCommand('coven.startTask', taskId);
+    console.log('Started task');
+
+    // 3. Wait for workflow to start
+    await ui.waitForTaskInSection(taskId, 'active', 15000);
+    console.log('Task is active');
+
+    // 4. Get workflow details via API
+    const { workflows } = await ctx.directClient.getWorkflows();
+    const workflow = workflows.find(w => w.task_id === taskId);
+    assert.ok(workflow, 'Should find workflow for task');
+
+    // Get detailed workflow info (use workflow_id if available, otherwise task_id)
+    const workflowId = workflow.workflow_id || workflow.task_id;
+    const details = await ctx.directClient.getWorkflow(workflowId);
+    assert.ok(details, 'Should get workflow details');
+    console.log('Got workflow details:', JSON.stringify(details, null, 2));
+
+    // Verify workflow details
+    assert.equal(details.task_id, taskId, 'Should have correct task_id');
+    assert.ok(details.grimoire_name, 'Should have grimoire_name');
+    assert.ok(details.worktree_path, 'Should have worktree_path');
+    assert.ok(details.steps, 'Should have steps array');
+    assert.ok(details.steps.length > 0, 'Should have at least one step');
+
+    // 5. Wait for completion
+    await events.waitForEvent('workflow.completed', 60000);
+    console.log('Workflow completed');
+
+    // 6. Get final workflow details with step outputs
+    const finalDetails = await ctx.directClient.getWorkflow(workflowId);
+    assert.ok(finalDetails, 'Should get final workflow details');
+    console.log('Final workflow status:', finalDetails.status);
+
+    console.log('Workflow details test completed');
   });
 });

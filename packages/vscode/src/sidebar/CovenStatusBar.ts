@@ -24,6 +24,7 @@ export class CovenStatusBar implements vscode.Disposable {
   private statusBarItem: vscode.StatusBarItem;
   private stateCache: StateCache | null = null;
   private workflowChangeHandler: ((workflow: WorkflowState) => void) | null = null;
+  private questionsChangeHandler: (() => void) | null = null;
   private pulseInterval: ReturnType<typeof setInterval> | null = null;
   private isPulsing = false;
 
@@ -42,18 +43,29 @@ export class CovenStatusBar implements vscode.Disposable {
    */
   setStateCache(cache: StateCache | null): void {
     // Unsubscribe from previous cache
-    if (this.stateCache && this.workflowChangeHandler) {
-      this.stateCache.off('workflows.changed', this.workflowChangeHandler);
-      this.workflowChangeHandler = null;
+    if (this.stateCache) {
+      if (this.workflowChangeHandler) {
+        this.stateCache.off('workflows.changed', this.workflowChangeHandler);
+        this.workflowChangeHandler = null;
+      }
+      if (this.questionsChangeHandler) {
+        this.stateCache.off('questions.changed', this.questionsChangeHandler);
+        this.questionsChangeHandler = null;
+      }
     }
 
     this.stateCache = cache;
 
     if (cache) {
-      this.workflowChangeHandler = (): void => {
+      const updateHandler = (): void => {
         this.updateFromSession(cache.getSessionState());
       };
+
+      this.workflowChangeHandler = updateHandler;
+      this.questionsChangeHandler = updateHandler;
+
       cache.on('workflows.changed', this.workflowChangeHandler);
+      cache.on('questions.changed', this.questionsChangeHandler);
 
       // Initial update
       this.updateFromSession(cache.getSessionState());
@@ -261,8 +273,13 @@ export class CovenStatusBar implements vscode.Disposable {
    */
   dispose(): void {
     this.stopPulse();
-    if (this.stateCache && this.workflowChangeHandler) {
-      this.stateCache.off('workflows.changed', this.workflowChangeHandler);
+    if (this.stateCache) {
+      if (this.workflowChangeHandler) {
+        this.stateCache.off('workflows.changed', this.workflowChangeHandler);
+      }
+      if (this.questionsChangeHandler) {
+        this.stateCache.off('questions.changed', this.questionsChangeHandler);
+      }
     }
     this.statusBarItem.dispose();
   }

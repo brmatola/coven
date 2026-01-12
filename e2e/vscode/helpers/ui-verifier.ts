@@ -50,6 +50,23 @@ export interface CacheState {
 export type SectionType = 'active' | 'questions' | 'ready' | 'blocked' | 'completed';
 
 /**
+ * Panel state snapshot.
+ */
+export interface PanelState {
+  isVisible: boolean;
+  viewType: string;
+  title?: string;
+}
+
+/**
+ * Output channel content snapshot.
+ */
+export interface OutputChannelContent {
+  name: string;
+  lines: string[];
+}
+
+/**
  * Helper for verifying UI state in E2E tests.
  *
  * Uses internal test commands (coven._*) to query extension state.
@@ -325,6 +342,131 @@ export class UIStateVerifier {
         throw new Error(`Expected ${key} to be ${value}, got ${actual}`);
       }
     }
+  }
+
+  // ============================================================================
+  // Panel State Methods
+  // ============================================================================
+
+  /**
+   * Get the state of a panel by view type.
+   *
+   * @param panelType The panel view type (e.g., 'coven.taskDetail', 'coven.setup')
+   * @returns Panel state or null if panel not found
+   */
+  async getPanelState(panelType: string): Promise<PanelState | null> {
+    try {
+      const state = await vscode.commands.executeCommand<PanelState>(
+        'coven._getPanelState',
+        panelType
+      );
+      return state ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Wait for a panel to be visible.
+   *
+   * @param panelType The panel view type
+   * @param timeout Maximum time to wait in ms
+   * @throws Error if timeout expires
+   */
+  async waitForPanelOpen(panelType: string, timeout = 5000): Promise<void> {
+    const endTime = Date.now() + timeout;
+
+    while (Date.now() < endTime) {
+      const state = await this.getPanelState(panelType);
+      if (state?.isVisible) {
+        return;
+      }
+      await this.delay(this.pollIntervalMs);
+    }
+
+    throw new Error(`Panel ${panelType} did not open within ${timeout}ms`);
+  }
+
+  /**
+   * Wait for a panel to be closed.
+   *
+   * @param panelType The panel view type
+   * @param timeout Maximum time to wait in ms
+   */
+  async waitForPanelClosed(panelType: string, timeout = 5000): Promise<void> {
+    const endTime = Date.now() + timeout;
+
+    while (Date.now() < endTime) {
+      const state = await this.getPanelState(panelType);
+      if (!state || !state.isVisible) {
+        return;
+      }
+      await this.delay(this.pollIntervalMs);
+    }
+
+    throw new Error(`Panel ${panelType} did not close within ${timeout}ms`);
+  }
+
+  // ============================================================================
+  // Output Channel Methods
+  // ============================================================================
+
+  /**
+   * Get the content of an output channel.
+   *
+   * @param channelName The output channel name
+   * @returns Output channel content or null if not found
+   */
+  async getOutputChannelContent(channelName: string): Promise<OutputChannelContent | null> {
+    try {
+      const content = await vscode.commands.executeCommand<OutputChannelContent>(
+        'coven._getOutputChannelContent',
+        channelName
+      );
+      return content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get the lines from an output channel.
+   *
+   * @param channelName The output channel name
+   * @returns Array of lines or empty array if not found
+   */
+  async getOutputChannelLines(channelName: string): Promise<string[]> {
+    const content = await this.getOutputChannelContent(channelName);
+    return content?.lines ?? [];
+  }
+
+  /**
+   * Wait for output channel to contain specific text.
+   *
+   * @param channelName The output channel name
+   * @param text Text to search for
+   * @param timeout Maximum time to wait in ms
+   */
+  async waitForOutputContains(
+    channelName: string,
+    text: string,
+    timeout = 5000
+  ): Promise<void> {
+    const endTime = Date.now() + timeout;
+
+    while (Date.now() < endTime) {
+      const lines = await this.getOutputChannelLines(channelName);
+      if (lines.some(line => line.includes(text))) {
+        return;
+      }
+      await this.delay(this.pollIntervalMs);
+    }
+
+    const finalLines = await this.getOutputChannelLines(channelName);
+    throw new Error(
+      `Output channel '${channelName}' did not contain '${text}' within ${timeout}ms. ` +
+        `Current content: ${finalLines.join('\n').substring(0, 500)}`
+    );
   }
 
   /**

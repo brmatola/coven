@@ -21,6 +21,7 @@ export interface CreateTaskOptions {
   description?: string;
   type?: 'task' | 'bug' | 'feature';
   priority?: number;
+  labels?: string[];
 }
 
 /**
@@ -69,6 +70,12 @@ export class BeadsClient {
 
     if (options.description) {
       args.push(`--description="${options.description}"`);
+    }
+
+    if (options.labels && options.labels.length > 0) {
+      for (const label of options.labels) {
+        args.push(`--label="${label}"`);
+      }
     }
 
     const output = execSync(`bd create ${args.join(' ')}`, this.execOptions) as string;

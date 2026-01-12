@@ -46,13 +46,14 @@ type ProcessResult struct {
 
 // ProcessManager manages agent processes.
 type ProcessManager struct {
-	mu          sync.RWMutex
-	processes   map[string]*runningProcess
-	logger      *logging.Logger
-	gracePeriod time.Duration
-	timeout     time.Duration
-	onComplete  func(result *ProcessResult)
-	onOutput    func(taskID string, line OutputLine)
+	mu               sync.RWMutex
+	processes        map[string]*runningProcess
+	logger           *logging.Logger
+	gracePeriod      time.Duration
+	timeout          time.Duration
+	onCompleteChain  []func(result *ProcessResult)
+	onOutput         func(taskID string, line OutputLine)
+	onSpawn          func(info *ProcessInfo)
 }
 
 type runningProcess struct {
@@ -86,14 +87,22 @@ func (m *ProcessManager) SetTimeout(d time.Duration) {
 	m.timeout = d
 }
 
-// OnComplete sets a callback for when processes complete.
+// OnComplete adds a callback for when processes complete.
+// Multiple callbacks can be registered and all will be called in order.
 func (m *ProcessManager) OnComplete(fn func(*ProcessResult)) {
-	m.onComplete = fn
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onCompleteChain = append(m.onCompleteChain, fn)
 }
 
 // OnOutput sets a callback for output lines.
 func (m *ProcessManager) OnOutput(fn func(taskID string, line OutputLine)) {
 	m.onOutput = fn
+}
+
+// OnSpawn sets a callback for when processes are spawned.
+func (m *ProcessManager) OnSpawn(fn func(info *ProcessInfo)) {
+	m.onSpawn = fn
 }
 
 // SpawnConfig contains configuration for spawning an agent.
@@ -204,6 +213,11 @@ func (m *ProcessManager) Spawn(ctx context.Context, cfg SpawnConfig) (*ProcessIn
 		"working_dir", cfg.WorkingDir,
 	)
 
+	// Invoke spawn callback
+	if m.onSpawn != nil {
+		m.onSpawn(&info)
+	}
+
 	return &info, nil
 }
 
@@ -273,8 +287,14 @@ func (m *ProcessManager) monitorProcess(taskID string, proc *runningProcess, ctx
 		"killed", result.Killed,
 	)
 
-	if m.onComplete != nil {
-		m.onComplete(result)
+	// Call all registered completion callbacks
+	m.mu.RLock()
+	callbacks := make([]func(*ProcessResult), len(m.onCompleteChain))
+	copy(callbacks, m.onCompleteChain)
+	m.mu.RUnlock()
+
+	for _, callback := range callbacks {
+		callback(result)
 	}
 }
 

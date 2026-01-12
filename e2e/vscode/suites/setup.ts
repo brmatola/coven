@@ -18,6 +18,8 @@ import {
   createMockAgentConfigurator,
   UIStateVerifier,
   createUIStateVerifier,
+  DialogMockHelper,
+  createDialogMockHelper,
 } from '../helpers';
 
 export interface TestContext {
@@ -31,9 +33,53 @@ export interface TestContext {
   mockAgent: MockAgentConfigurator;
   /** UI state verifier for checking tree view and status bar state */
   ui: UIStateVerifier;
+  /** Dialog mock helper for testing commands with confirmation dialogs */
+  dialogMock: DialogMockHelper;
+  /** Install grimoire fixtures into the workspace's .coven/grimoires/ directory */
+  installGrimoires: (grimoires: string[]) => void;
 }
 
 let testContext: TestContext | null = null;
+
+/**
+ * Get the path to the grimoire fixtures directory.
+ * Works whether running from compiled JS or source TS.
+ */
+function getGrimoireFixturesDir(): string {
+  const outDir = path.resolve(__dirname);
+  // From out/suites, go to fixtures/grimoires
+  if (outDir.includes('/out/')) {
+    return outDir.replace('/out/suites', '/fixtures/grimoires');
+  }
+  // Fallback: relative to source location
+  return path.resolve(__dirname, '..', 'fixtures', 'grimoires');
+}
+
+/**
+ * Install grimoire fixtures into the workspace.
+ * Copies grimoire YAML files from e2e/vscode/fixtures/grimoires/ to .coven/grimoires/.
+ *
+ * @param workspacePath Path to the workspace
+ * @param grimoires Array of grimoire names (without .yaml extension)
+ */
+function installGrimoiresToWorkspace(workspacePath: string, grimoires: string[]): void {
+  const grimoiresDir = path.join(workspacePath, '.coven', 'grimoires');
+  fs.mkdirSync(grimoiresDir, { recursive: true });
+
+  const fixturesDir = getGrimoireFixturesDir();
+
+  for (const grimoire of grimoires) {
+    const srcPath = path.join(fixturesDir, `${grimoire}.yaml`);
+    const destPath = path.join(grimoiresDir, `${grimoire}.yaml`);
+
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      console.log(`Installed grimoire: ${grimoire}`);
+    } else {
+      console.warn(`Grimoire fixture not found: ${srcPath}`);
+    }
+  }
+}
 
 /**
  * Initialize the shared test context.
@@ -95,6 +141,7 @@ export async function initTestContext(): Promise<TestContext> {
   const directClient = new TestDaemonClient(workspacePath);
   const mockAgent = createMockAgentConfigurator(workspacePath);
   const ui = createUIStateVerifier();
+  const dialogMock = createDialogMockHelper();
 
   testContext = {
     workspacePath,
@@ -105,6 +152,8 @@ export async function initTestContext(): Promise<TestContext> {
     cleanup,
     mockAgent,
     ui,
+    dialogMock,
+    installGrimoires: (grimoires: string[]) => installGrimoiresToWorkspace(workspacePath, grimoires),
   };
 
   return testContext;
@@ -333,12 +382,16 @@ export async function cancelAllActiveWorkflows(timeoutMs: number = 15000): Promi
 
 /**
  * Ensure no tasks are running before starting a test.
- * Combines event clearing with workflow cancellation.
+ * Combines event clearing with workflow cancellation and dialog mock reset.
  * Call this in setup() hook for tests that need strict isolation.
  */
 export async function ensureTestIsolation(): Promise<void> {
   clearEvents();
   await cancelAllActiveWorkflows();
+  // Reset dialog mock between tests to ensure no stale responses/invocations
+  if (testContext?.dialogMock) {
+    await testContext.dialogMock.reset();
+  }
 }
 
 /**
@@ -436,19 +489,53 @@ export async function resetForSuite(agentOptions?: MockAgentOptions): Promise<vo
     ctx.mockAgent.configure(agentOptions);
   }
 
-  // Step 5: Restart daemon for clean state
+  // Step 5: Close any existing event listener before daemon restart
+  // This prevents stale SSE connections from the old daemon instance
+  if (ctx.events) {
+    console.log('  Closing stale event listener...');
+    ctx.events.stop();
+    ctx.events = null;
+  }
+
+  // Step 6: Restart daemon for clean state
   console.log('  Restarting daemon for fresh suite...');
   await ctx.daemon.stop();
   await new Promise((resolve) => setTimeout(resolve, 500)); // Let things settle
   await ctx.daemon.start();
 
-  // Step 6: Wait for extension to reconnect
+  // Step 7: Wait for extension to reconnect
   await waitForExtensionConnected();
 
-  // Step 7: Clear any stale events
-  clearEvents();
+  // Step 8: Wait for state initialization (state.snapshot event)
+  // This ensures the extension's cache is populated before tests run
+  await waitForStateInitialized(ctx, 10000);
 
   console.log('Suite reset complete');
+}
+
+/**
+ * Wait for the daemon state to be initialized.
+ * This waits for the extension's cache to receive a state.snapshot event.
+ *
+ * @param ctx The test context
+ * @param timeoutMs Maximum time to wait (default: 10000)
+ */
+async function waitForStateInitialized(ctx: TestContext, timeoutMs: number = 10000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // Check if the extension has received state from daemon
+      const cacheState = await ctx.ui.getCacheState();
+      if (cacheState && (cacheState.tasks || cacheState.workflow || cacheState.agents || cacheState.isInitialized)) {
+        console.log('  State initialized (cache has data)');
+        return;
+      }
+    } catch {
+      // Cache state not available yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  console.warn(`  Warning: State not fully initialized within ${timeoutMs}ms`);
 }
 
 /**

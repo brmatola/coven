@@ -214,22 +214,27 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     const questions = this.cache.getQuestions();
 
     // Active: task IDs with running agents
-    const active = agents
-      .filter(a => a.status === AgentStatus.RUNNING)
-      .map(a => a.task_id);
+    const activeTaskIds = new Set(
+      agents
+        .filter(a => a.status === AgentStatus.RUNNING)
+        .map(a => a.task_id)
+    );
+    const active = Array.from(activeTaskIds);
 
     // Questions: task IDs that have pending questions
     const questionTaskIds = questions.map(q => q.task_id);
 
-    // Ready, Blocked, Completed by task status
+    // Ready: tasks with OPEN status that are NOT active (no running agent)
     const ready = tasks
-      .filter(t => t.status === TaskStatus.OPEN)
+      .filter(t => t.status === TaskStatus.OPEN && !activeTaskIds.has(t.id))
       .map(t => t.id);
 
+    // Blocked: tasks with BLOCKED status
     const blocked = tasks
       .filter(t => t.status === TaskStatus.BLOCKED)
       .map(t => t.id);
 
+    // Completed: tasks with CLOSED status
     const completed = tasks
       .filter(t => t.status === TaskStatus.CLOSED)
       .map(t => t.id);
@@ -343,6 +348,7 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
 
     // 1. Active Workflows section - show running agents with spinner icons
     const activeAgents = agents.filter(a => a.status === AgentStatus.RUNNING);
+    const activeTaskIds = new Set(activeAgents.map(a => a.task_id));
     if (activeAgents.length > 0) {
       items.push(new SectionHeaderItem('active', activeAgents.length, this.expandedSections.has('active')));
     }
@@ -352,8 +358,8 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
       items.push(new SectionHeaderItem('questions', questions.length, this.expandedSections.has('questions')));
     }
 
-    // 3. Ready Tasks - queued and ready to start
-    const readyTasks = tasks.filter(t => t.status === TaskStatus.OPEN);
+    // 3. Ready Tasks - queued and ready to start (excluding tasks with running agents)
+    const readyTasks = tasks.filter(t => t.status === TaskStatus.OPEN && !activeTaskIds.has(t.id));
     if (readyTasks.length > 0) {
       items.push(new SectionHeaderItem('ready', readyTasks.length, this.expandedSections.has('ready')));
     }
@@ -433,8 +439,17 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     if (!this.cache) return [];
 
     const tasks = this.cache.getTasks();
+    const agents = this.cache.getAgents();
+
+    // Get IDs of tasks that have running agents (they should be in Active, not Ready)
+    const activeTaskIds = new Set(
+      agents
+        .filter(a => a.status === AgentStatus.RUNNING)
+        .map(a => a.task_id)
+    );
+
     return tasks
-      .filter(t => t.status === TaskStatus.OPEN)
+      .filter(t => t.status === TaskStatus.OPEN && !activeTaskIds.has(t.id))
       .sort((a, b) => b.priority - a.priority)
       .map(t => new TaskTreeItem(t));
   }

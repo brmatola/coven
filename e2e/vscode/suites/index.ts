@@ -14,30 +14,43 @@ export async function run(): Promise<void> {
 
   // Test execution order (by directory/filename priority):
   // 1. foundation/* - Basic extension activation and connection
-  // 2. session/* - Session lifecycle tests
-  // 3. task/* - Core task workflow tests (CRITICAL)
-  // 4. workflow/* - Multi-step workflow tests
-  // 5. errors/* - Error handling tests
-  // 6. review/* - Review and merge tests
+  // 2. commands/* - Command tests (setup, daemon management)
+  // 3. session/* - Session lifecycle tests
+  // 4. task/* - Core task workflow tests (CRITICAL)
+  // 5. workflow/* - Multi-step workflow tests
+  // 6. panels/* - Panel lifecycle tests
+  // 7. errors/* - Error handling tests
+  // 8. review/* - Review and merge tests
+  // 9. integration/* - Full integration tests
   const testOrder = [
     // Foundation tests first
     'foundation/activation',
     'foundation/connection',
+    // Command tests (basic setup)
+    'commands/setup',
+    'commands/daemon-management',
     // Session tests
     'session/lifecycle',
+    'session/force-stop',
     // Core task tests
     'task/lifecycle',
     'task/questions',
+    'task/creation',
     // Workflow tests
-    'workflow/multi-step',
-    'workflow/panel-content',
+    'workflow/lifecycle',
+    'workflow/concurrent',
+    // Panel tests
+    'panels/panel-lifecycle',
     // Error handling
     'errors/agent-failure',
     'errors/disconnect',
     'errors/timeout',
+    'errors/reconnection',
     // Review workflow
-    'review/merge',
-    'review/panel-content',
+    'review/conflicts',
+    // Integration tests (run last)
+    'integration/happy-path',
+    'integration/question-flow',
   ];
 
   const sortedFiles = files.sort((a, b) => {

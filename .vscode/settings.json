@@ -2,5 +2,6 @@
   "typescript.tsdk": "node_modules/typescript/lib",
   // Note: ${workspaceFolder} isn't expanded by VS Code config API
   // Use absolute path for local development
-  "coven.binaryPath": "/Users/bmatola/repos/coven/build/covend"
+  "coven.binaryPath": "/Users/bmatola/repos/coven/build/covend",
+  "makefile.configureOnOpen": false
 }

@@ -315,7 +315,18 @@ export class StateCache extends EventEmitter {
     eventType: SSEEventType,
     data: Record<string, unknown>
   ): void {
-    const taskId = data.task_id as string;
+    // Agent events may have task_id at top level or inside an 'agent' object
+    // e.g., agent.started has task_id at top, agent.failed/completed have it in agent object
+    let taskId = data.task_id as string | undefined;
+    let agentData = data as unknown as Partial<Agent>;
+
+    // Check if agent data is nested inside an 'agent' property
+    if (!taskId && data.agent && typeof data.agent === 'object') {
+      const nestedAgent = data.agent as Record<string, unknown>;
+      taskId = nestedAgent.task_id as string | undefined;
+      agentData = nestedAgent as unknown as Partial<Agent>;
+    }
+
     if (!taskId) return;
 
     // For output events, we don't update agent state
@@ -326,8 +337,6 @@ export class StateCache extends EventEmitter {
       return;
     }
 
-    // Get or create agent from data
-    const agentData = data as unknown as Partial<Agent>;
     const existingAgent = this.agentsByTaskId.get(taskId);
 
     // Map event type to agent status
@@ -350,6 +359,9 @@ export class StateCache extends EventEmitter {
     }
 
     // Merge with existing or create new agent
+    // For agent.failed events, error message is at top level of data, not in agent object
+    const errorMsg = (data.error as string | undefined) ?? agentData.error ?? existingAgent?.error;
+
     const agent: Agent = {
       task_id: taskId,
       pid: agentData.pid ?? existingAgent?.pid ?? 0,
@@ -359,11 +371,24 @@ export class StateCache extends EventEmitter {
       started_at: agentData.started_at ?? existingAgent?.started_at ?? new Date().toISOString(),
       ended_at: agentData.ended_at ?? existingAgent?.ended_at,
       exit_code: agentData.exit_code ?? existingAgent?.exit_code,
-      error: agentData.error ?? existingAgent?.error,
+      error: errorMsg,
     };
 
     this.agentsByTaskId.set(taskId, agent);
     this.emit('agents.changed', this.getAgents());
+
+    // When an agent completes, fails, or is killed, clear any pending questions for that task
+    if (status === AgentStatus.COMPLETED || status === AgentStatus.FAILED || status === AgentStatus.KILLED) {
+      const originalSize = this.questionsById.size;
+      for (const [questionId, question] of this.questionsById) {
+        if (question.task_id === taskId) {
+          this.questionsById.delete(questionId);
+        }
+      }
+      if (this.questionsById.size < originalSize) {
+        this.emit('questions.changed', this.getQuestions());
+      }
+    }
   }
 
   private handleTasksUpdated(data: Record<string, unknown>): void {
@@ -382,8 +407,17 @@ export class StateCache extends EventEmitter {
 
   private handleQuestionEvent(data: Record<string, unknown>): void {
     // agent.question event contains the question data
-    const question = data as unknown as Question;
-    if (question && question.id) {
+    // The daemon sends question_id but the Question type expects id
+    const questionId = (data.question_id ?? data.id) as string | undefined;
+    if (questionId) {
+      const question: Question = {
+        id: questionId,
+        task_id: data.task_id as string,
+        text: data.text as string,
+        type: data.type as Question['type'],
+        options: data.options as string[] | undefined,
+        context: data.context as Question['context'] | undefined,
+      };
       this.questionsById.set(question.id, question);
       this.emit('questions.changed', this.getQuestions());
     }

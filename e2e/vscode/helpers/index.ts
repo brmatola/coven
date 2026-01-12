@@ -111,3 +111,11 @@ export {
   waitForTaskReady,
   waitForWorkflowDone,
 } from './isolated-context';
+
+// Dialog mock for testing commands with dialogs
+export {
+  DialogMockHelper,
+  DialogResponse,
+  DialogInvocation,
+  createDialogMockHelper,
+} from './dialog-mock';

@@ -314,19 +314,97 @@ export class DaemonClient {
   // ============================================================================
 
   /**
-   * Get workflow changes for review.
+   * Get workflow details by ID.
+   * Uses the generated client's getWorkflowById endpoint.
    */
-  getWorkflowChanges(_workflowId: string): Promise<WorkflowChangesResponse> {
-    // TODO: Map from generated client when available
-    return Promise.reject(new DaemonClientError('request_failed', 'Workflow changes API not yet in generated client'));
+  async getWorkflowById(workflowId: string): Promise<import('@coven/client-ts').WorkflowDetailResponse> {
+    try {
+      const result = this.client.WorkflowsService.getWorkflowById({ id: workflowId });
+      return await result;
+    } catch (error) {
+      throw this.mapError(error);
+    }
+  }
+
+  /**
+   * Get workflow changes for review.
+   * Extracts change information from the workflow detail response.
+   */
+  async getWorkflowChanges(workflowId: string): Promise<WorkflowChangesResponse> {
+    try {
+      const workflow = await this.getWorkflowById(workflowId);
+
+      // Build changes response from available data
+      // Note: The daemon doesn't return detailed file changes yet,
+      // so we return basic info from what's available
+      return {
+        workflow_id: workflow.workflow_id,
+        task_id: workflow.task_id,
+        base_branch: 'main', // TODO: Get from workflow when available
+        head_branch: workflow.worktree_path.split('/').pop() || 'unknown',
+        worktree_path: workflow.worktree_path,
+        files: [], // TODO: Compute from worktree diff when daemon supports it
+        total_lines_added: 0,
+        total_lines_deleted: 0,
+        commit_count: 0,
+      };
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**
    * Get full workflow review data including changes and step outputs.
+   * Aggregates data from the workflow detail response.
    */
-  getWorkflowReview(_workflowId: string): Promise<WorkflowReviewResponse> {
-    // TODO: Map from generated client when available
-    return Promise.reject(new DaemonClientError('not_implemented', 'Workflow review API not yet in generated client'));
+  async getWorkflowReview(workflowId: string): Promise<WorkflowReviewResponse> {
+    try {
+      const workflow = await this.getWorkflowById(workflowId);
+      const changes = await this.getWorkflowChanges(workflowId);
+
+      // Build step outputs array from the step_outputs map
+      const stepOutputs: WorkflowReviewResponse['step_outputs'] = [];
+      if (workflow.step_outputs) {
+        for (const [stepName, output] of Object.entries(workflow.step_outputs)) {
+          if (output !== null) {
+            stepOutputs.push({
+              step_id: stepName,
+              step_name: stepName,
+              summary: output,
+            });
+          }
+        }
+      }
+
+      // Also include completed step results
+      if (workflow.completed_steps) {
+        for (const [stepName, result] of Object.entries(workflow.completed_steps)) {
+          // Skip if already added from step_outputs
+          if (stepOutputs.some(s => s.step_name === stepName)) {
+            continue;
+          }
+          stepOutputs.push({
+            step_id: stepName,
+            step_name: stepName,
+            summary: result.output || (result.success ? 'Completed successfully' : `Failed: ${result.error}`),
+            exit_code: result.success ? 0 : 1,
+          });
+        }
+      }
+
+      return {
+        workflow_id: workflow.workflow_id,
+        task_id: workflow.task_id,
+        task_title: '', // Task title not in workflow response, would need separate call
+        task_description: '',
+        changes,
+        step_outputs: stepOutputs,
+        started_at: workflow.started_at,
+        completed_at: workflow.updated_at,
+      };
+    } catch (error) {
+      throw this.mapError(error);
+    }
   }
 
   /**

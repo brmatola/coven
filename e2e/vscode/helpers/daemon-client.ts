@@ -30,12 +30,14 @@ export interface DaemonAgent {
 }
 
 export interface DaemonWorkflow {
+  workflow_id?: string;
   task_id: string;
   status: string;
   current_step: number;
   grimoire_name?: string;
   worktree_path?: string;
   actions?: string[];
+  available_actions?: string[];
   merge_review?: {
     summary?: string;
     changed_files?: string[];
@@ -44,6 +46,12 @@ export interface DaemonWorkflow {
     name: string;
     status: string;
     output?: string;
+  }>;
+  step_outputs?: Record<string, string | null>;
+  completed_steps?: Record<string, {
+    success: boolean;
+    output?: string;
+    error?: string;
   }>;
 }
 

@@ -101,25 +101,20 @@ suite('Integration - Happy Path', function () {
     await vscode.commands.executeCommand('coven.startTask', taskId);
     console.log('Started task via command');
 
-    // 5. Wait for task to become active (give it a bit more time)
+    // 5. Wait for task to become active
     try {
       await ui.waitForTaskInSection(taskId, 'active', 15000);
       console.log('Task moved to Active section');
     } catch {
-      // Task might not have become active (grimoire/workflow issue)
-      // Check if it's still in ready or moved to blocked
+      // Check what state the task ended up in for better error messages
       const state = await ui.getTreeViewState();
       if (state?.ready.includes(taskId)) {
-        console.log('Task stayed in ready - daemon may not be starting workflows, skipping rest of test');
-        this.skip();
-        return;
+        assert.fail('Task stayed in ready section - daemon did not start the workflow. Check daemon logs.');
       }
       if (state?.blocked.includes(taskId)) {
-        console.log('Task moved to blocked (possible dependency issue), skipping test');
-        this.skip();
-        return;
+        assert.fail('Task moved to blocked section - possible dependency issue or workflow failure.');
       }
-      throw new Error('Task neither active nor in expected fallback state');
+      assert.fail('Task not found in any expected section (ready, active, blocked). Check daemon logs.');
     }
 
     // 6. Verify status bar shows active workflow
@@ -151,28 +146,200 @@ suite('Integration - Happy Path', function () {
     console.log('Integration happy path completed successfully');
   });
 
-  // NOTE: Tests below require grimoire workflow functionality.
-  // They are marked as pending until grimoire workflows are verified to work.
-  // The grimoire workflow system appears to have issues where tasks with
-  // grimoire labels don't start workflows as expected.
+  // Tests for grimoire workflow functionality with merge steps.
 
-  test.skip('Full journey with auto-merge: create -> start -> auto-merge -> complete', async function () {
-    // This test requires grimoire auto-merge functionality
-    // Skip until grimoire workflows are working
+  test('Full journey with auto-merge: create -> start -> auto-merge -> complete', async function () {
+    const ui = ctx.ui;
+    const events = await getEventWaiter();
+
+    // Install auto-merge grimoire
+    ctx.installGrimoires(['auto-merge']);
+    console.log('Installed auto-merge grimoire');
+
+    // Create task with grimoire label
+    const taskTitle = `E2E Auto Merge ${Date.now()}`;
+    const taskId = beads.createTask({
+      title: taskTitle,
+      type: 'task',
+      priority: 2,
+      labels: ['grimoire:auto-merge'],
+    });
+    testTaskIds.push(taskId);
+    console.log(`Created task with auto-merge grimoire: ${taskId}`);
+
+    // Refresh and wait for task
+    await vscode.commands.executeCommand('coven.refreshTasks');
+    await ui.waitForTaskInSection(taskId, 'ready', 15000);
+
+    // Restart daemon to pick up new grimoire
+    await ctx.daemon.restart();
+    await waitForExtensionConnected();
+
+    // Start task
+    await vscode.commands.executeCommand('coven.startTask', taskId);
+    console.log('Started task');
+
+    // Wait for workflow to complete (auto-merge means no review needed)
+    await events.waitForEvent('workflow.completed', 60000);
+    console.log('Workflow completed');
+
+    // Verify task is closed (auto-merge closes the task)
+    const task = beads.getTask(taskId);
+    assert.ok(task, 'Task should exist');
+    assert.equal(task.status, 'closed', 'Task should be closed after auto-merge');
+    console.log('Auto-merge test passed');
   });
 
-  test.skip('Workflow with pending merge blocks for review', async function () {
-    // This test requires grimoire with-merge functionality
-    // Skip until grimoire workflows are working
+  test('Workflow with pending merge blocks for review', async function () {
+    const ui = ctx.ui;
+    const events = await getEventWaiter();
+
+    // Install with-merge grimoire (require_review: true)
+    ctx.installGrimoires(['with-merge']);
+    console.log('Installed with-merge grimoire');
+
+    // Create task with grimoire label
+    const taskTitle = `E2E Pending Merge ${Date.now()}`;
+    const taskId = beads.createTask({
+      title: taskTitle,
+      type: 'task',
+      priority: 2,
+      labels: ['grimoire:with-merge'],
+    });
+    testTaskIds.push(taskId);
+    console.log(`Created task with with-merge grimoire: ${taskId}`);
+
+    // Refresh and wait for task
+    await vscode.commands.executeCommand('coven.refreshTasks');
+    await ui.waitForTaskInSection(taskId, 'ready', 15000);
+
+    // Restart daemon to pick up new grimoire
+    await ctx.daemon.restart();
+    await waitForExtensionConnected();
+
+    // Start task
+    await vscode.commands.executeCommand('coven.startTask', taskId);
+    console.log('Started task');
+
+    // Wait for workflow to reach merge_pending state
+    await events.waitForEvent('workflow.merge_pending', 60000);
+    console.log('Workflow reached pending merge state');
+
+    // Verify task is blocked (pending merge shows as blocked in beads)
+    const task = beads.getTask(taskId);
+    assert.ok(task, 'Task should exist');
+    assert.equal(task.status, 'blocked', 'Task should be blocked while pending merge');
+    console.log('Pending merge test passed');
   });
 
-  test.skip('Approve merge completes workflow', async function () {
-    // This test requires grimoire with-merge functionality
-    // Skip until grimoire workflows are working
+  test('Approve merge completes workflow', async function () {
+    const ui = ctx.ui;
+    const events = await getEventWaiter();
+
+    // Install with-merge grimoire
+    ctx.installGrimoires(['with-merge']);
+
+    // Create task with grimoire label
+    const taskTitle = `E2E Approve Merge ${Date.now()}`;
+    const taskId = beads.createTask({
+      title: taskTitle,
+      type: 'task',
+      priority: 2,
+      labels: ['grimoire:with-merge'],
+    });
+    testTaskIds.push(taskId);
+    console.log(`Created task: ${taskId}`);
+
+    // Refresh and wait for task
+    await vscode.commands.executeCommand('coven.refreshTasks');
+    await ui.waitForTaskInSection(taskId, 'ready', 15000);
+
+    // Restart daemon to pick up grimoire
+    await ctx.daemon.restart();
+    await waitForExtensionConnected();
+
+    // Start task
+    await vscode.commands.executeCommand('coven.startTask', taskId);
+    console.log('Started task');
+
+    // Wait for merge_pending
+    await events.waitForEvent('workflow.merge_pending', 60000);
+    console.log('Workflow pending merge');
+
+    // Get workflow for approval (workflow can be identified by task_id)
+    const { workflows } = await ctx.directClient.getWorkflows();
+    const workflow = workflows.find(w => w.task_id === taskId);
+    assert.ok(workflow, 'Should find workflow for task');
+    assert.equal(workflow.status, 'pending_merge', 'Workflow should be pending merge');
+
+    // Approve the merge (use workflow_id if available, otherwise task_id)
+    const workflowId = workflow.workflow_id || workflow.task_id;
+    await vscode.commands.executeCommand('coven.approveMerge', workflowId);
+    console.log('Approved merge');
+
+    // Wait for completion
+    await events.waitForEvent('workflow.completed', 30000);
+    console.log('Workflow completed');
+
+    // Verify task is closed
+    const task = beads.getTask(taskId);
+    assert.ok(task, 'Task should exist');
+    assert.equal(task.status, 'closed', 'Task should be closed after merge approval');
+    console.log('Approve merge test passed');
   });
 
-  test.skip('Reject merge blocks workflow', async function () {
-    // This test requires grimoire with-merge functionality
-    // Skip until grimoire workflows are working
+  test('Reject merge blocks workflow', async function () {
+    const ui = ctx.ui;
+    const events = await getEventWaiter();
+
+    // Install with-merge grimoire
+    ctx.installGrimoires(['with-merge']);
+
+    // Create task with grimoire label
+    const taskTitle = `E2E Reject Merge ${Date.now()}`;
+    const taskId = beads.createTask({
+      title: taskTitle,
+      type: 'task',
+      priority: 2,
+      labels: ['grimoire:with-merge'],
+    });
+    testTaskIds.push(taskId);
+    console.log(`Created task: ${taskId}`);
+
+    // Refresh and wait for task
+    await vscode.commands.executeCommand('coven.refreshTasks');
+    await ui.waitForTaskInSection(taskId, 'ready', 15000);
+
+    // Restart daemon to pick up grimoire
+    await ctx.daemon.restart();
+    await waitForExtensionConnected();
+
+    // Start task
+    await vscode.commands.executeCommand('coven.startTask', taskId);
+    console.log('Started task');
+
+    // Wait for merge_pending
+    await events.waitForEvent('workflow.merge_pending', 60000);
+    console.log('Workflow pending merge');
+
+    // Get workflow for rejection (workflow can be identified by task_id)
+    const { workflows } = await ctx.directClient.getWorkflows();
+    const workflow = workflows.find(w => w.task_id === taskId);
+    assert.ok(workflow, 'Should find workflow for task');
+
+    // Reject the merge (use workflow_id if available, otherwise task_id)
+    const workflowId = workflow.workflow_id || workflow.task_id;
+    await vscode.commands.executeCommand('coven.rejectMerge', workflowId);
+    console.log('Rejected merge');
+
+    // Wait for blocked event
+    await events.waitForEvent('workflow.blocked', 30000);
+    console.log('Workflow blocked');
+
+    // Verify task is blocked
+    const task = beads.getTask(taskId);
+    assert.ok(task, 'Task should exist');
+    assert.equal(task.status, 'blocked', 'Task should be blocked after merge rejection');
+    console.log('Reject merge test passed');
   });
 });
