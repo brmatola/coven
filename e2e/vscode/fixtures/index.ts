@@ -22,3 +22,10 @@ export {
   // Mock agent utilities
   ensureMockAgentBuilt,
 } from './setup';
+
+export {
+  type TestGrimoire,
+  installTestGrimoires,
+  createTaskWithGrimoire,
+  cleanupTestGrimoires,
+} from './grimoires';

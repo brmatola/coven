@@ -167,6 +167,15 @@ export class DaemonHelper {
   }
 
   /**
+   * Restart the daemon process.
+   * Stops the daemon if running, then starts it again.
+   */
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.start();
+  }
+
+  /**
    * Check if daemon is responding to health checks.
    */
   async isHealthy(): Promise<boolean> {

@@ -1,0 +1,19 @@
+name: auto-merge
+description: Workflow with auto-merge (no review required)
+timeout: 3m
+
+steps:
+  - name: make-changes
+    type: script
+    command: "echo 'Auto-merged content' > auto-output.txt"
+    timeout: 30s
+
+  - name: auto-merge
+    type: merge
+    require_review: false
+    timeout: 1m
+
+  - name: after-merge
+    type: script
+    command: "echo 'After merge completed'"
+    timeout: 30s

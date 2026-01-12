@@ -1,0 +1,14 @@
+name: with-merge
+description: Workflow with file changes and merge step for review testing
+timeout: 5m
+
+steps:
+  - name: make-changes
+    type: script
+    command: "echo 'New content from workflow' > test-output.txt"
+    timeout: 30s
+
+  - name: review-merge
+    type: merge
+    require_review: true
+    timeout: 5m

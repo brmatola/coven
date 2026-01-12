@@ -10,7 +10,26 @@ import { execSync } from 'child_process';
 /**
  * Names of available test grimoires.
  */
-export type TestGrimoire = 'simple-agent' | 'multi-step' | 'with-merge';
+export type TestGrimoire = 'simple-agent' | 'multi-step' | 'with-merge' | 'auto-merge';
+
+/**
+ * Get the fixtures source directory.
+ * When running from compiled JS in out/, we need to go back to the source fixtures.
+ */
+function getFixturesSourceDir(): string {
+  // __dirname is e2e/vscode/out/fixtures when compiled
+  // We need e2e/vscode/fixtures (the source directory with YAML files)
+  const outDir = path.resolve(__dirname);
+
+  // Check if we're in the 'out' directory
+  if (outDir.includes('/out/')) {
+    // Go from out/fixtures to fixtures
+    return outDir.replace('/out/', '/');
+  }
+
+  // Already in source directory
+  return outDir;
+}
 
 /**
  * Install test grimoires into a workspace.
@@ -25,7 +44,7 @@ export function installTestGrimoires(
   const grimoiresDir = path.join(workspacePath, '.coven', 'grimoires');
   fs.mkdirSync(grimoiresDir, { recursive: true });
 
-  const fixturesDir = path.resolve(__dirname, 'grimoires');
+  const fixturesDir = path.join(getFixturesSourceDir(), 'grimoires');
   const toInstall = grimoires ?? ['simple-agent'];
 
   for (const grimoire of toInstall) {
@@ -64,7 +83,11 @@ export function createTaskWithGrimoire(
   );
 
   // Extract task ID from output
-  const match = output.match(/(beads-[a-z0-9]+)/);
+  // Format can be:
+  // - "Created issue: beads-xxx" (old format)
+  // - "✓ Created issue: coven-e2e-xxx-yyy" (new format with checkmark)
+  // Match any alphanumeric ID after "Created issue:"
+  const match = output.match(/Created issue:\s*([a-zA-Z0-9-]+)/);
   if (!match) {
     throw new Error(`Could not parse task ID from: ${output}`);
   }
@@ -84,7 +107,7 @@ export function cleanupTestGrimoires(workspacePath: string): void {
     return;
   }
 
-  const testGrimoires: TestGrimoire[] = ['simple-agent', 'multi-step', 'with-merge'];
+  const testGrimoires: TestGrimoire[] = ['simple-agent', 'multi-step', 'with-merge', 'auto-merge'];
 
   for (const grimoire of testGrimoires) {
     const grimPath = path.join(grimoiresDir, `${grimoire}.yaml`);

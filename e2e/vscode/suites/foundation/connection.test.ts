@@ -59,12 +59,13 @@ suite('Daemon Connection', function () {
       return;
     }
 
-    const state = await ctx.directClient.getState();
-    assert.ok(state, 'Should get state response');
+    const response = await ctx.directClient.getState();
+    assert.ok(response, 'Should get state response');
 
-    // State should have expected fields
-    assert.ok('tasks' in state, 'State should have tasks');
-    assert.ok('agents' in state, 'State should have agents');
+    // StateResponse has { state: DaemonState, timestamp }
+    assert.ok(response.state, 'Response should have state');
+    assert.ok(Array.isArray(response.state.tasks), 'State should have tasks array');
+    assert.ok(response.state.agents !== undefined, 'State should have agents');
   });
 
   test('UI reflects connection status', async function () {
@@ -98,8 +99,10 @@ suite('Daemon Connection', function () {
       return;
     }
 
-    const tasks = await ctx.directClient.getTasks();
-    assert.ok(Array.isArray(tasks), 'Tasks should be an array');
+    // getTasks() returns { tasks: DaemonTask[], count: number }
+    const response = await ctx.directClient.getTasks();
+    assert.ok(response, 'Should get tasks response');
+    assert.ok(Array.isArray(response.tasks), 'Tasks should be an array');
   });
 
   test('Agents endpoint returns array', async function () {
@@ -109,7 +112,9 @@ suite('Daemon Connection', function () {
       return;
     }
 
-    const agents = await ctx.directClient.getAgents();
-    assert.ok(Array.isArray(agents), 'Agents should be an array');
+    // getAgents() returns { agents: DaemonAgent[], count: number }
+    const response = await ctx.directClient.getAgents();
+    assert.ok(response, 'Should get agents response');
+    assert.ok(Array.isArray(response.agents), 'Agents should be an array');
   });
 });

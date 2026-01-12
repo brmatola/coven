@@ -1,0 +1,19 @@
+name: multi-step
+description: Multi-step workflow for testing step progression
+timeout: 5m
+
+steps:
+  - name: setup
+    type: script
+    command: "echo 'Step 1: Setup complete'"
+    timeout: 30s
+
+  - name: execute
+    type: agent
+    spell: "Complete the task"
+    timeout: 2m
+
+  - name: verify
+    type: script
+    command: "echo 'Step 3: Verification complete'"
+    timeout: 30s

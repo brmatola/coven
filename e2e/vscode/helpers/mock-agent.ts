@@ -123,11 +123,8 @@ export class MockAgentConfigurator {
     // Ensure .coven directory exists
     fs.mkdirSync(this.covenDir, { recursive: true });
 
-    // Build command with flags
+    // Build command arguments
     const args = this.buildArgs(options);
-    const agentCommand = args.length > 0
-      ? `${this.mockAgentPath} ${args.join(' ')}`
-      : this.mockAgentPath;
 
     // Read existing config or create new one
     let config: Record<string, unknown> = {};
@@ -139,8 +136,10 @@ export class MockAgentConfigurator {
       }
     }
 
-    // Update agent_command
-    config.agent_command = agentCommand;
+    // Update agent_command and agent_args separately
+    // The daemon expects these as separate fields, not a combined command string
+    config.agent_command = this.mockAgentPath;
+    config.agent_args = args;
 
     // Set reasonable defaults for testing
     if (!config.poll_interval) {

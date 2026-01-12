@@ -29,6 +29,39 @@ export interface DaemonAgent {
   startedAt?: string;
 }
 
+export interface DaemonWorkflow {
+  task_id: string;
+  status: string;
+  current_step: number;
+  grimoire_name?: string;
+  worktree_path?: string;
+  actions?: string[];
+  merge_review?: {
+    summary?: string;
+    changed_files?: string[];
+  };
+  steps?: Array<{
+    name: string;
+    status: string;
+    output?: string;
+  }>;
+}
+
+export interface MergeResult {
+  status: string;
+  has_conflicts?: boolean;
+  conflict_files?: string[];
+  message?: string;
+}
+
+export interface DaemonQuestion {
+  id: string;
+  task_id: string;
+  text: string;
+  options?: string[];
+  answered?: boolean;
+}
+
 export interface DaemonState {
   agents: Record<string, DaemonAgent>;
   tasks: DaemonTask[];
@@ -183,6 +216,89 @@ export class TestDaemonClient {
     } catch {
       // Shutdown may not respond as connection closes
     }
+  }
+
+  /**
+   * Get workflow details.
+   */
+  async getWorkflow(taskId: string): Promise<DaemonWorkflow | null> {
+    try {
+      return await this.request<DaemonWorkflow>('GET', `/workflows/${taskId}`);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get list of workflows.
+   */
+  async getWorkflows(): Promise<{ workflows: DaemonWorkflow[]; count: number }> {
+    return this.request<{ workflows: DaemonWorkflow[]; count: number }>('GET', '/workflows');
+  }
+
+  /**
+   * Cancel a workflow.
+   */
+  async cancelWorkflow(taskId: string): Promise<void> {
+    await this.request<void>('POST', `/workflows/${taskId}/cancel`);
+  }
+
+  /**
+   * Retry a workflow.
+   */
+  async retryWorkflow(taskId: string): Promise<void> {
+    await this.request<void>('POST', `/workflows/${taskId}/retry`);
+  }
+
+  /**
+   * Approve merge for a workflow.
+   */
+  async approveMerge(taskId: string, feedback?: string): Promise<MergeResult> {
+    return this.request<MergeResult>('POST', `/workflows/${taskId}/approve-merge`,
+      feedback ? { feedback } : undefined
+    );
+  }
+
+  /**
+   * Reject merge for a workflow.
+   */
+  async rejectMerge(taskId: string, reason?: string): Promise<void> {
+    await this.request<void>('POST', `/workflows/${taskId}/reject-merge`,
+      reason ? { reason } : undefined
+    );
+  }
+
+  /**
+   * Get questions list.
+   */
+  async getQuestions(): Promise<{ questions: DaemonQuestion[]; count: number }> {
+    return this.request<{ questions: DaemonQuestion[]; count: number }>('GET', '/questions');
+  }
+
+  /**
+   * Wait for a workflow to reach a specific status.
+   */
+  async waitForWorkflowStatus(
+    taskId: string,
+    status: string | string[],
+    timeoutMs: number = 30000
+  ): Promise<DaemonWorkflow> {
+    const statuses = Array.isArray(status) ? status : [status];
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const workflow = await this.getWorkflow(taskId);
+        if (workflow && statuses.includes(workflow.status)) {
+          return workflow;
+        }
+      } catch {
+        // Not ready yet
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error(
+      `Workflow ${taskId} did not reach status ${statuses.join('|')} within ${timeoutMs}ms`
+    );
   }
 
   /**

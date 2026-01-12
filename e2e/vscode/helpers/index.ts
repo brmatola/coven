@@ -45,6 +45,9 @@ export type {
   DaemonHealth,
   DaemonTask,
   DaemonAgent,
+  DaemonWorkflow,
+  DaemonQuestion,
+  MergeResult,
   DaemonState,
   StateResponse,
 } from './daemon-client';
@@ -97,3 +100,14 @@ export {
   delay,
   createTestDisposable,
 } from './vscode';
+
+// Isolated test context (per-suite isolation)
+export {
+  IsolatedTestContext,
+  IsolatedContextOptions,
+  createIsolatedTestContext,
+  getIsolatedEventWaiter,
+  clearIsolatedEvents,
+  waitForTaskReady,
+  waitForWorkflowDone,
+} from './isolated-context';

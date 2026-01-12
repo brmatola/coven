@@ -120,6 +120,26 @@ suite('Agent Failure Handling', function () {
       // Wait for failure
       await events.waitForEvent('agent.failed', 30000);
 
+      // Wait for cache to process the event (race condition fix)
+      // The event waiter receives the SSE event, but the cache update is async
+      const waitForAgentNotRunning = async (timeoutMs: number): Promise<void> => {
+        const endTime = Date.now() + timeoutMs;
+        while (Date.now() < endTime) {
+          const cacheState = await ui.getCacheState();
+          const agents = cacheState?.agents as Array<{ task_id: string; status: string }> | undefined;
+          const runningAgents = agents?.filter(
+            (a) => a.task_id === taskId && a.status === 'running'
+          );
+          if ((runningAgents?.length ?? 0) === 0) {
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('Agent still in running state after timeout');
+      };
+
+      await waitForAgentNotRunning(5000);
+
       // Get cache state to verify no orphaned agents
       const cacheState = await ui.getCacheState();
       const agents = cacheState?.agents as Array<{ task_id: string; status: string }> | undefined;
