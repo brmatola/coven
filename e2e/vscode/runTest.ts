@@ -58,6 +58,24 @@ function createTestWorkspace(): { workspacePath: string; cleanup: () => void } {
     fs.writeFileSync(path.join(covenDir, 'config.json'), JSON.stringify(covenConfig, null, 2));
     console.log('Coven directory initialized');
 
+    // Pre-install all test grimoires so VS Code's daemon has them on startup
+    const grimoiresDir = path.join(covenDir, 'grimoires');
+    fs.mkdirSync(grimoiresDir, { recursive: true });
+
+    // Get grimoire fixtures directory
+    // When compiled, __dirname is 'e2e/vscode/out/', so go up to e2e/vscode then into fixtures
+    const fixturesDir = path.resolve(__dirname, '..', 'fixtures', 'grimoires');
+    console.log(`Looking for grimoires at: ${fixturesDir}`);
+    if (fs.existsSync(fixturesDir)) {
+      const grimoireFiles = fs.readdirSync(fixturesDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+      for (const file of grimoireFiles) {
+        fs.copyFileSync(path.join(fixturesDir, file), path.join(grimoiresDir, file));
+      }
+      console.log(`Pre-installed ${grimoireFiles.length} grimoire(s): ${grimoireFiles.join(', ')}`);
+    } else {
+      console.log('No grimoire fixtures directory found');
+    }
+
     // Find the daemon binary path from repo root
     // From compiled location (e2e/vscode/out/runTest.js), go up 3 levels to repo root
     const repoRoot = path.resolve(__dirname, '..', '..', '..');

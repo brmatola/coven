@@ -1,21 +1,27 @@
-# Design: In-Process Task Store
+# Design: Unified Daemon Store
 
 ## Context
 
-Coven needs a task management layer that:
-1. Survives daemon restarts
-2. Handles concurrent agent access without race conditions
-3. Supports hierarchical task decomposition
-4. Enables sophisticated grimoire routing
+Coven's daemon needs a unified data layer that:
+1. Survives daemon restarts without losing state
+2. Handles concurrent access without race conditions
+3. Provides ACID transactions across related entities
+4. Supports recovery and replay on reconnection
 
-The current beads integration shells out to a CLI, which introduces process coordination overhead and race conditions.
+The current architecture suffers from:
+- Beads CLI shells out for every task operation (race conditions, slow)
+- Agent output in ephemeral memory (lost on restart)
+- Workflow state in separate JSON files (no cross-entity transactions)
+- Questions in memory (lost on restart)
+- Events fire-and-forget (no replay, no audit trail)
 
 ## Goals
 
-- **Atomic operations**: No race conditions when multiple agents claim tasks
-- **Fast**: In-memory with disk persistence, not subprocess calls
-- **Hierarchical**: Tasks form trees (epics → features → tasks → subtasks)
-- **Flexible routing**: Rich grimoire matching beyond simple labels
+- **Single source of truth**: One bbolt database for all daemon metadata
+- **Atomic operations**: No race conditions on claims, status changes
+- **Crash recovery**: Daemon restart recovers full state
+- **Event replay**: Extension can catch up after SSE reconnect
+- **Fast**: In-process queries, no subprocess calls
 - **Testable**: Deterministic behavior for E2E tests
 - **Pure Go**: No CGo dependency for simpler cross-compilation
 
@@ -23,7 +29,8 @@ The current beads integration shells out to a CLI, which introduces process coor
 
 - Syncing with external issue trackers (GitHub Issues, Linear, etc.)
 - Multi-daemon coordination (single daemon per workspace assumed)
-- Real-time collaboration (tasks are daemon-local)
+- Real-time collaboration (state is daemon-local)
+- Storing large output blobs in bbolt (use files instead)
 
 ## Decisions
 
@@ -484,6 +491,206 @@ task_store:
 
 **Rationale**: Soft delete allows recovery of accidentally closed tasks. Hard delete after grace period keeps DB size bounded. bbolt handles page reclamation internally (no explicit VACUUM needed).
 
+### Decision 8: Agent Store
+
+**Choice**: Store agent metadata in `agents` bucket, output in separate files
+
+```go
+// agents bucket: task_id -> JSON(Agent)
+type Agent struct {
+    TaskID      string     `json:"task_id"`
+    StepTaskID  string     `json:"step_task_id,omitempty"` // for multi-step workflows
+    Status      string     `json:"status"`  // starting, running, completed, failed, killed
+    Worktree    string     `json:"worktree"`
+    Branch      string     `json:"branch"`
+    PID         int        `json:"pid,omitempty"`
+    ExitCode    *int       `json:"exit_code,omitempty"`
+    Error       string     `json:"error,omitempty"`
+    OutputFile  string     `json:"output_file"`  // path to .coven/output/{taskId}.jsonl
+    LineCount   int64      `json:"line_count"`   // total output lines
+    LastSeq     uint64     `json:"last_seq"`     // sequence for delta queries
+    StartedAt   time.Time  `json:"started_at"`
+    EndedAt     *time.Time `json:"ended_at,omitempty"`
+}
+```
+
+**Status state machine**:
+```
+starting → running → completed
+                  → failed
+                  → killed
+```
+
+**Output file format** (`.coven/output/{taskId}.jsonl`):
+```jsonl
+{"seq":1,"ts":"2024-01-15T10:00:00Z","stream":"stdout","data":"Starting task..."}
+{"seq":2,"ts":"2024-01-15T10:00:01Z","stream":"stdout","data":"Reading file..."}
+{"seq":3,"ts":"2024-01-15T10:00:02Z","stream":"stderr","data":"Warning: deprecated API"}
+```
+
+**Key behaviors**:
+- Agent record created atomically with task claim
+- Output appended to JSONL file (no buffering loss)
+- `LineCount` and `LastSeq` updated periodically (batch updates to reduce writes)
+- Output file deleted when agent record is purged
+
+**Rationale**: Output can be 10MB+ per agent. Storing in bbolt would bloat the DB and cause write contention. JSONL files are:
+- Append-only (fast writes)
+- Streamable (tail -f equivalent via file watching)
+- Easy to clean up (just delete the file)
+
+### Decision 9: Workflow Store
+
+**Choice**: Store workflow state in `workflows` bucket
+
+```go
+// workflows bucket: task_id -> JSON(WorkflowState)
+type WorkflowState struct {
+    TaskID          string                  `json:"task_id"`
+    WorkflowID      string                  `json:"workflow_id"`  // unique execution ID
+    GrimoireName    string                  `json:"grimoire_name"`
+    CurrentStep     int                     `json:"current_step"`
+    Status          string                  `json:"status"`  // running, pending_merge, blocked, completed, cancelled
+    CompletedSteps  map[string]*StepResult  `json:"completed_steps"`
+    StepOutputs     map[string]interface{}  `json:"step_outputs"`  // template variables
+    ActiveAgentID   string                  `json:"active_agent_id,omitempty"`
+    Error           string                  `json:"error,omitempty"`
+    BlockedReason   string                  `json:"blocked_reason,omitempty"`
+    StartedAt       time.Time               `json:"started_at"`
+    UpdatedAt       time.Time               `json:"updated_at"`
+    CompletedAt     *time.Time              `json:"completed_at,omitempty"`
+}
+
+type StepResult struct {
+    Name      string        `json:"name"`
+    Type      string        `json:"type"`  // agent, script, loop, merge
+    Success   bool          `json:"success"`
+    Skipped   bool          `json:"skipped"`
+    Output    interface{}   `json:"output,omitempty"`
+    ExitCode  *int          `json:"exit_code,omitempty"`
+    Error     string        `json:"error,omitempty"`
+    Duration  time.Duration `json:"duration_ms"`
+    Action    string        `json:"action,omitempty"`  // continue, exit_loop, block, fail
+}
+```
+
+**Key behaviors**:
+- Workflow state updated after each step completes
+- `StepOutputs` contains template variables for subsequent steps
+- `ActiveAgentID` enables daemon to reconnect to running agent on restart
+- Workflow retention: completed workflows deleted after 7 days
+
+**Cross-entity transaction example**:
+```go
+func (s *Store) ClaimTaskAndStartWorkflow(ctx context.Context, taskID, agentID, grimoire string) error {
+    return s.db.Update(func(tx *bbolt.Tx) error {
+        // 1. Claim task
+        if err := s.claimTaskTx(tx, taskID, agentID); err != nil {
+            return err
+        }
+        // 2. Create agent record
+        if err := s.createAgentTx(tx, taskID, agentID); err != nil {
+            return err
+        }
+        // 3. Create workflow state
+        if err := s.createWorkflowTx(tx, taskID, grimoire); err != nil {
+            return err
+        }
+        return nil
+    })
+}
+```
+
+**Rationale**: Single transaction ensures consistency. If any step fails, nothing is committed. No partial states possible.
+
+### Decision 10: Question Store
+
+**Choice**: Store questions in `questions` bucket
+
+```go
+// questions bucket: question_id -> JSON(Question)
+type Question struct {
+    ID          string    `json:"id"`
+    TaskID      string    `json:"task_id"`
+    AgentID     string    `json:"agent_id"`
+    Type        string    `json:"type"`  // clarification, permission, decision, blocked
+    Prompt      string    `json:"prompt"`
+    Options     []string  `json:"options,omitempty"`
+    Status      string    `json:"status"`  // pending, answered, resolved
+    Response    string    `json:"response,omitempty"`
+    RespondedAt *time.Time `json:"responded_at,omitempty"`
+    CreatedAt   time.Time  `json:"created_at"`
+}
+
+// Secondary index: task_questions bucket for lookup by task
+// task_questions: task_id -> JSON([]question_id)
+```
+
+**Key behaviors**:
+- Question created when agent asks via output parsing
+- `pending` questions presented to user in extension
+- Response written to agent stdin AND stored in question record
+- Questions deleted when agent record is purged
+
+**Rationale**: Questions survive daemon restart. If daemon crashes while user is considering a response, the question reappears on restart.
+
+### Decision 11: Event Log
+
+**Choice**: Store events in `events` bucket with TTL-based cleanup
+
+```go
+// events bucket: {entity_type}:{entity_id}:{timestamp} -> JSON(Event)
+// Example keys: "task:task-123:2024-01-15T10:00:00Z"
+//               "agent:task-123:2024-01-15T10:00:01Z"
+//               "workflow:task-123:2024-01-15T10:00:02Z"
+type Event struct {
+    ID        string                 `json:"id"`
+    Type      string                 `json:"type"`  // task.created, agent.started, workflow.step.completed, etc.
+    EntityID  string                 `json:"entity_id"`
+    Timestamp time.Time              `json:"timestamp"`
+    Data      map[string]interface{} `json:"data"`
+}
+```
+
+**Key behaviors**:
+- Events written to store before broadcasting via SSE
+- Prefix scan enables "get all events for entity X since time Y"
+- Events older than retention period (default: 24h) are purged
+- Extension requests `GET /events?since={timestamp}&entity={id}` on SSE reconnect
+
+**Event replay API**:
+```
+GET /events?since=2024-01-15T10:00:00Z
+GET /events?since=2024-01-15T10:00:00Z&entity=task-123
+GET /events?since=2024-01-15T10:00:00Z&type=agent.*
+```
+
+**Rationale**: SSE is fire-and-forget. If extension disconnects and reconnects, it has no way to know what happened. Event log enables catch-up, eliminating cache drift.
+
+### Decision 12: Unified Bucket Structure
+
+**Choice**: Single bbolt database with well-defined buckets
+
+```
+.coven/coven.db
+├── tasks           task_id -> JSON(Task)
+├── tags            task_id -> JSON([]string)
+├── children        parent_id -> JSON([]child_id)
+├── task_history    task_id/timestamp -> JSON(HistoryEntry)
+├── agents          task_id -> JSON(Agent)
+├── workflows       task_id -> JSON(WorkflowState)
+├── questions       question_id -> JSON(Question)
+├── task_questions  task_id -> JSON([]question_id)
+├── events          entity_type:entity_id:timestamp -> JSON(Event)
+└── meta            singleton keys (last_cleanup, schema_version, etc.)
+
+.coven/output/
+├── {taskId}.jsonl  Agent stdout/stderr (append-only)
+└── ...
+```
+
+**Rationale**: Clear separation of concerns. Each bucket has a single responsibility. Prefix-based keys in `events` bucket enable efficient range scans.
+
 ## Risks / Trade-offs
 
 ### Risk: Data Loss on Corruption
@@ -511,9 +718,38 @@ Cannot run ad-hoc SQL queries for debugging.
 
 **Mitigation**: Add CLI commands for common queries (`coven tasks list`, `coven tasks tree <id>`). For debugging, use `bbolt` CLI or build an export-to-JSON utility.
 
+### Risk: Output File Accumulation
+Agent output files can accumulate if retention cleanup fails.
+
+**Mitigation**: Output files are linked to agent records. Cleanup deletes both atomically. Add monitoring for `.coven/output/` directory size.
+
+### Risk: Event Log Growth
+High-activity sessions could generate many events.
+
+**Mitigation**: 24h retention by default. Events are small (~500 bytes each). Even 10,000 events/day = ~5MB. Cleanup runs on daemon startup and periodically.
+
+### Trade-off: Output Separate from Metadata
+Output in files, metadata in bbolt creates two things to coordinate.
+
+**Justification**: Output can be 10MB+. bbolt serializes writes. Storing output in bbolt would:
+1. Bloat the database
+2. Cause write contention during high-output agents
+3. Slow down all other operations
+
+The file approach is simpler and more efficient.
+
 ## Implementation Plan
 
-1. Add `internal/taskstore/` with bbolt-backed Store implementation
+### Phase 1: Core Store Infrastructure
+
+1. Create `internal/store/` package structure
+   - `store.go` - Store type, Open/Close, bucket initialization
+   - `errors.go` - Sentinel errors (ErrNotFound, ErrAlreadyClaimed, etc.)
+   - `migrations.go` - Schema versioning and migrations
+
+### Phase 2: Task Store (Original Scope)
+
+2. Implement task operations in `store/tasks.go`
    - Task CRUD operations
    - Claiming/releasing with atomic transactions
    - Tree operations (subtree, ancestors, reparent)
@@ -521,7 +757,7 @@ Cannot run ad-hoc SQL queries for debugging.
    - History logging
    - Retention/cleanup
 
-2. Add `internal/api/tasks/` HTTP handlers
+3. Add `internal/api/tasks/` HTTP handlers
    - CRUD: POST/GET/PATCH/DELETE /api/tasks
    - Lifecycle: /claim, /release, /complete, /block, /unblock
    - Hierarchy: /subtree, /ancestors, /children, /reparent
@@ -530,22 +766,99 @@ Cannot run ad-hoc SQL queries for debugging.
    - Bulk: POST /api/tasks/bulk
    - History: GET /api/tasks/:id/history
 
-3. Add matcher config loading to `internal/workflow/`
+4. Add matcher config loading to `internal/workflow/`
    - YAML parser for grimoire-matchers.yaml
    - Matcher evaluation engine with doublestar glob
    - Hot reload support
 
-4. Update scheduler to use task store
-   - Replace beads client calls with taskstore calls
-   - Add periodic stale claim recovery
+### Phase 3: Agent Store (Extended Scope)
 
-5. Remove `internal/beads/` package
+5. Implement agent operations in `store/agents.go`
+   - Agent CRUD with status transitions
+   - Output file management (create, track metadata, delete)
+   - Link to task records
 
-6. Remove beads poller from daemon startup
+6. Create output file infrastructure
+   - `internal/output/writer.go` - JSONL file writer
+   - `internal/output/reader.go` - JSONL file reader with `since` support
+   - Wire ProcessManager to write output to files
 
-7. (Future) Add CLI wrapper for task API
-   - `coven task create`, `coven task list`, etc.
-   - For agent use when HTTP calls are awkward
+7. Update agent API handlers
+   - `/agents/{id}/output` reads from file
+   - Support `?since={seq}` parameter for deltas
+
+### Phase 4: Workflow Store (Extended Scope)
+
+8. Implement workflow operations in `store/workflows.go`
+   - Workflow CRUD with status transitions
+   - Step result storage
+   - Template variable storage (StepOutputs)
+
+9. Update workflow engine
+   - Remove `StatePersister` (replaced by store)
+   - Remove `.coven/workflows/*.json` file handling
+   - Use store for all state persistence
+
+### Phase 5: Question Store (Extended Scope)
+
+10. Implement question operations in `store/questions.go`
+    - Question CRUD with status transitions
+    - Secondary index (task_questions) for lookup by task
+    - Link to agent records
+
+11. Update question API handlers
+    - Remove in-memory question store
+    - Read/write from unified store
+
+### Phase 6: Event Log (Extended Scope)
+
+12. Implement event operations in `store/events.go`
+    - Event creation with entity-prefixed keys
+    - Range queries by entity and timestamp
+    - TTL-based cleanup
+
+13. Add event replay API
+    - `GET /events?since={timestamp}` endpoint
+    - Support entity and type filtering
+
+14. Update event broker
+    - Write to store before SSE broadcast
+    - Extension uses replay API on reconnect
+
+### Phase 7: Integration & Cleanup
+
+15. Update scheduler to use unified store
+    - Replace beads client calls with store calls
+    - Add periodic stale claim recovery
+    - Add periodic retention cleanup
+
+16. Remove deprecated code
+    - `internal/beads/` package
+    - `internal/state/store.go`
+    - `internal/questions/store.go`
+    - `internal/agent/buffer.go`
+    - `internal/workflow/state.go`
+
+17. Update daemon initialization
+    - Initialize unified store
+    - Remove beads poller
+    - Add retention cleanup on startup
+
+### Phase 8: Migration & Testing
+
+18. Add migration support
+    - `coven migrate-from-beads` command
+    - Migrate existing `.coven/state.json` to store
+    - Migrate existing `.coven/workflows/*.json` to store
+
+19. Update E2E tests
+    - All tests use unified store
+    - Add concurrency tests
+    - Add crash recovery tests
+
+20. (Future) Add CLI wrapper for store operations
+    - `coven task create`, `coven task list`, etc.
+    - For agent use when HTTP calls are awkward
 
 ## Answered Questions
 
@@ -557,3 +870,28 @@ Cannot run ad-hoc SQL queries for debugging.
 
 ### Q: How should subtask completion affect parent task status?
 **A**: No automatic propagation. Parent status is independent. Reasoning: a parent epic shouldn't auto-close just because one subtask finished. Users can build this into grimoires if desired.
+
+### Q: Should agent output be stored in bbolt or files?
+**A**: Files. Agent output can be 10MB+ and is write-heavy during execution. Storing in bbolt would bloat the database and cause write contention. JSONL files are append-only, streamable, and easy to clean up.
+
+### Q: How long should events be retained?
+**A**: 24 hours by default, configurable. This is enough for SSE reconnection catch-up. Events are small (~500 bytes), so even high-activity sessions won't cause issues.
+
+### Q: Should we support multiple concurrent workflows per task?
+**A**: No. One workflow per task at a time. The `workflows` bucket uses `task_id` as the key. Starting a new workflow for a task replaces any existing workflow.
+
+### Q: What happens to questions if daemon restarts?
+**A**: Questions survive restart. They're stored in the `questions` bucket. On restart, pending questions are re-presented to the user via SSE events.
+
+### Q: Should we use a single bbolt database or multiple?
+**A**: Single database (`.coven/coven.db`). Benefits:
+- Cross-entity transactions (claim task + create agent atomically)
+- Simpler deployment (one file)
+- Easier backup/restore
+- No coordination between multiple DBs
+
+### Q: How do we handle daemon restart with a running agent?
+**A**: Agent record has `PID` and `Status=running`. On restart:
+1. Check if process with that PID is still running (and is a claude process)
+2. If yes, reconnect to output stream
+3. If no, mark agent as failed and notify user of orphaned work

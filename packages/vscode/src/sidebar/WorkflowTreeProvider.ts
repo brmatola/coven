@@ -346,11 +346,19 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     const questions = this.cache.getQuestions();
     const agents = this.cache.getAgents();
 
-    // 1. Active Workflows section - show running agents with spinner icons
+    // 1. Active Workflows section - show running agents AND in_progress tasks
     const activeAgents = agents.filter(a => a.status === AgentStatus.RUNNING);
-    const activeTaskIds = new Set(activeAgents.map(a => a.task_id));
-    if (activeAgents.length > 0) {
-      items.push(new SectionHeaderItem('active', activeAgents.length, this.expandedSections.has('active')));
+    const activeAgentTaskIds = new Set(activeAgents.map(a => a.task_id));
+    // Also include tasks with IN_PROGRESS status (even if agent isn't running)
+    const inProgressTasks = tasks.filter(t => t.status === TaskStatus.IN_PROGRESS);
+    const activeCount = activeAgents.length + inProgressTasks.filter(t => !activeAgentTaskIds.has(t.id)).length;
+    // Build set of all active task IDs (used for filtering other sections)
+    const activeTaskIds = new Set([
+      ...activeAgentTaskIds,
+      ...inProgressTasks.map(t => t.id)
+    ]);
+    if (activeCount > 0) {
+      items.push(new SectionHeaderItem('active', activeCount, this.expandedSections.has('active')));
     }
 
     // 2. Questions section - workflows blocked on human input
@@ -409,15 +417,24 @@ export class WorkflowTreeProvider implements vscode.TreeDataProvider<WorkflowTre
     const items: WorkflowTreeItem[] = [];
     const agents = this.cache.getAgents();
     const tasks = this.cache.getTasks();
+    const runningAgents = agents.filter(a => a.status === AgentStatus.RUNNING);
+    const agentTaskIds = new Set(runningAgents.map(a => a.task_id));
 
     // Show running agents with their tasks
-    for (const agent of agents) {
-      if (agent.status === AgentStatus.RUNNING) {
-        const task = tasks.find(t => t.id === agent.task_id);
-        if (task) {
-          items.push(new TaskTreeItem(task, agent));
-        }
+    for (const agent of runningAgents) {
+      const task = tasks.find(t => t.id === agent.task_id);
+      if (task) {
+        items.push(new TaskTreeItem(task, agent));
       }
+    }
+
+    // Also show IN_PROGRESS tasks that don't have a running agent
+    // (e.g., workflow is in_progress but agent isn't running)
+    const inProgressWithoutAgent = tasks.filter(
+      t => t.status === TaskStatus.IN_PROGRESS && !agentTaskIds.has(t.id)
+    );
+    for (const task of inProgressWithoutAgent) {
+      items.push(new TaskTreeItem(task));
     }
 
     return items;
@@ -586,7 +603,7 @@ export class TaskTreeItem extends WorkflowTreeItem {
     if (task.status === TaskStatus.IN_PROGRESS && task.started_at) {
       parts.push(formatElapsedTime(task.started_at as number));
     }
-    if (task.status === TaskStatus.BLOCKED && task.depends_on?.length && task.depends_on.length > 0) {
+    if (task.status === TaskStatus.BLOCKED && task.depends_on && task.depends_on.length > 0) {
       parts.push(`blocked by ${task.depends_on.length}`);
     }
     if (task.priority >= 3) {

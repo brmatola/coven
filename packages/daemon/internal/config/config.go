@@ -15,7 +15,7 @@ type Config struct {
 	// AgentCommand is the command to run for agents (default: claude).
 	AgentCommand string `json:"agent_command"`
 
-	// AgentArgs are the arguments to pass to the agent command (default: ["-p"]).
+	// AgentArgs are the arguments to pass to the agent command (default: ["-p", "--output-format", "stream-json", "--verbose"]).
 	AgentArgs []string `json:"agent_args"`
 
 	// MaxConcurrentAgents is the maximum number of concurrent agents.
@@ -30,7 +30,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		PollInterval:        1,
 		AgentCommand:        "claude",
-		AgentArgs:           []string{"-p"},
+		AgentArgs:           []string{"-p", "--output-format", "stream-json", "--verbose"},
 		MaxConcurrentAgents: 3,
 		LogLevel:            "info",
 	}

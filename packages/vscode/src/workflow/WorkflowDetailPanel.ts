@@ -36,28 +36,23 @@ interface WorkflowStatusEventData {
 
 /**
  * SSE event data for agent output
+ * Matches the daemon's SSE event structure from @coven/client-ts
  */
 interface AgentOutputEventData {
-  agentId: string;
-  taskId: string;
-  chunk: string;
+  task_id: string;
+  output: string;
 }
 
 /**
- * SSE event data for agent spawned
+ * SSE event data for agent spawned/completed
+ * Matches the daemon's Agent type with snake_case fields
  */
-interface AgentSpawnedEventData {
-  agentId: string;
-  taskId: string;
-}
-
-/**
- * SSE event data for agent completed/failed
- */
-interface AgentCompletedEventData {
-  agentId: string;
-  taskId: string;
-  exitCode?: number;
+interface AgentEventData {
+  task_id: string;
+  step_task_id?: string;
+  pid: number;
+  status: string;
+  exit_code?: number;
   error?: string;
 }
 
@@ -199,15 +194,16 @@ export class WorkflowDetailPanel extends WebviewPanel<
         case 'task.failed':
           this.handleStepStatusEvent(event.data as WorkflowStepEventData);
           break;
-        case 'agent.spawned':
-          this.handleAgentSpawned(event.data as AgentSpawnedEventData);
+        case 'agent.started':
+          this.handleAgentSpawned(event.data as AgentEventData);
           break;
         case 'agent.output':
           this.handleAgentOutput(event.data as AgentOutputEventData);
           break;
         case 'agent.completed':
         case 'agent.failed':
-          this.handleAgentCompleted(event.data as AgentCompletedEventData);
+        case 'agent.killed':
+          this.handleAgentCompleted(event.data as AgentEventData);
           break;
       }
     };
@@ -262,12 +258,15 @@ export class WorkflowDetailPanel extends WebviewPanel<
     }
   }
 
-  private handleAgentSpawned(data: AgentSpawnedEventData): void {
+  private handleAgentSpawned(data: AgentEventData): void {
+    // Use step_task_id for matching (e.g., "beads-abc-step-0")
+    const stepTaskId = data.step_task_id || data.task_id;
+
     // Track the agent-task mapping
-    this.taskAgentMap.set(data.taskId, data.agentId);
+    this.taskAgentMap.set(stepTaskId, String(data.pid));
 
     // If this is the selected step, start streaming
-    if (this.outputState.stepId === data.taskId) {
+    if (this.outputState.stepId === stepTaskId) {
       this.outputState = {
         ...this.outputState,
         lines: [],
@@ -280,14 +279,14 @@ export class WorkflowDetailPanel extends WebviewPanel<
 
   private handleAgentOutput(data: AgentOutputEventData): void {
     // Only process if this is for the selected step
-    if (this.outputState.stepId !== data.taskId) {
+    if (this.outputState.stepId !== data.task_id) {
       return;
     }
 
-    // Append chunk to output lines
+    // Append output to output lines
     // Split by newlines to maintain line structure
     const existingText = this.outputState.lines.join('\n');
-    const newText = existingText + data.chunk;
+    const newText = existingText + data.output;
     const newLines = newText.split('\n');
 
     this.outputState = {
@@ -299,14 +298,15 @@ export class WorkflowDetailPanel extends WebviewPanel<
     this.sendState();
   }
 
-  private handleAgentCompleted(data: AgentCompletedEventData): void {
+  private handleAgentCompleted(data: AgentEventData): void {
+    // Use step_task_id for matching
+    const stepTaskId = data.step_task_id || data.task_id;
+
     // Clean up agent mapping
-    if (this.taskAgentMap.get(data.taskId) === data.agentId) {
-      this.taskAgentMap.delete(data.taskId);
-    }
+    this.taskAgentMap.delete(stepTaskId);
 
     // If this is the selected step, stop streaming
-    if (this.outputState.stepId === data.taskId) {
+    if (this.outputState.stepId === stepTaskId) {
       this.outputState = {
         ...this.outputState,
         isStreaming: false,
@@ -373,6 +373,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
           is_loop: boolean;
           max_iterations?: number;
           error?: string;
+          step_task_id?: string;
         };
         return {
           id: step.id,
@@ -382,6 +383,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
           isLoop: step.is_loop,
           loopProgress: step.max_iterations ? { current: 0, total: step.max_iterations } : undefined,
           error: step.error,
+          stepTaskId: step.step_task_id,
         };
       });
 
@@ -542,8 +544,10 @@ export class WorkflowDetailPanel extends WebviewPanel<
     }
 
     try {
-      // In a full implementation, we'd call: await this.client.cancelWorkflow(this.workflowId);
-      void vscode.window.showInformationMessage('Workflow cancellation requested');
+      await this.client.post(`/workflows/${encodeURIComponent(this.workflowId)}/cancel`, {});
+      void vscode.window.showInformationMessage('Workflow cancelled');
+      // Refresh workflow state
+      await this.fetchWorkflow();
     } catch (error) {
       await vscode.window.showErrorMessage(
         `Failed to cancel workflow: ${error instanceof Error ? error.message : String(error)}`
@@ -600,9 +604,13 @@ export class WorkflowDetailPanel extends WebviewPanel<
       return;
     }
 
+    // Use stepTaskId for SSE event matching (e.g., "beads-abc-step-0")
+    // Fall back to stepId if stepTaskId not available
+    const effectiveStepId = step.stepTaskId || stepId;
+
     // Update output state to show loading
     this.outputState = {
-      stepId,
+      stepId: effectiveStepId,
       lines: [],
       isLoading: true,
       isStreaming: false,
@@ -611,7 +619,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
     this.sendState();
 
     // Check if there's an active agent for this step
-    const isActiveAgent = this.taskAgentMap.has(stepId);
+    const isActiveAgent = this.taskAgentMap.has(effectiveStepId);
 
     if (isActiveAgent) {
       // Agent is running - will receive output via SSE
@@ -623,7 +631,7 @@ export class WorkflowDetailPanel extends WebviewPanel<
       this.sendState();
     } else {
       // Fetch historical output
-      await this.fetchStepOutput(stepId);
+      await this.fetchStepOutput(effectiveStepId);
     }
   }
 

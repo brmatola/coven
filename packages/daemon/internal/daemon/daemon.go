@@ -154,6 +154,13 @@ func New(workspace, version string) (*Daemon, error) {
 		// Parse the step task ID to get the main task ID
 		mainTaskID, _ := questions.ParseStepTaskID(taskID)
 
+		// Parse stream-json output to extract text content
+		// This handles claude's --output-format stream-json output
+		text, hasContent := agent.ParseStreamJSONOutput(line.Data)
+		if !hasContent {
+			return // Skip lines without meaningful content
+		}
+
 		// Create detection context
 		ctx := questions.DetectionContext{
 			TaskID:     mainTaskID,
@@ -163,9 +170,9 @@ func New(workspace, version string) (*Daemon, error) {
 		// TODO: Get workflow context from scheduler if available
 		// For now, workflow context is set when we have it
 
-		// Check for questions
-		questionDetector.ProcessLine(ctx, line.Stream, line.Data, line.Sequence)
-		eventBroker.EmitAgentOutput(taskID, line.Data)
+		// Check for questions (using parsed text)
+		questionDetector.ProcessLine(ctx, line.Stream, text, line.Sequence)
+		eventBroker.EmitAgentOutput(taskID, text)
 	})
 
 	processManager.OnSpawn(func(info *agent.ProcessInfo) {
@@ -395,6 +402,7 @@ func (d *Daemon) registerHandlers() {
 
 	// Workflow handlers
 	workflowHandlers := scheduler.NewWorkflowHandlers(d.store, d.scheduler, d.covenDir)
+	workflowHandlers.SetEventEmitter(d.eventBroker)
 	workflowHandlers.Register(d.server)
 
 	// SSE event stream

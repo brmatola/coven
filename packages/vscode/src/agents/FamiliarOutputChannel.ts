@@ -13,11 +13,11 @@ interface AgentSpawnedData {
 
 /**
  * SSE event data for agent output
+ * Matches daemon's SSE event structure from @coven/client-ts
  */
 interface AgentOutputData {
-  agent_id: string;
   task_id: string;
-  chunk: string;
+  output: string;
 }
 
 /**
@@ -238,13 +238,14 @@ export class FamiliarOutputChannel {
   }
 
   private handleAgentOutput(data: AgentOutputData): void {
-    // Only append output if it's for the active agent or a known task
+    // Only append output if it's for a known task or the active task
     if (data.task_id && this.channels.has(data.task_id)) {
       const channel = this.getOrCreateChannel(data.task_id);
-      channel.append(data.chunk);
-    } else if (data.agent_id === this.activeAgentId && this.activeTaskId) {
+      channel.append(data.output);
+    } else if (this.activeTaskId) {
+      // Fall back to active task if task_id not in channels
       const channel = this.getOrCreateChannel(this.activeTaskId);
-      channel.append(data.chunk);
+      channel.append(data.output);
     }
   }
 

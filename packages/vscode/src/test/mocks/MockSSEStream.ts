@@ -352,7 +352,7 @@ export const SSESequences = {
   agentOutput(taskId: string, lines: string[]): SSEEvent[] {
     return lines.map((line, i) => ({
       type: 'agent.output' as SSEEventType,
-      data: { task_id: taskId, line },
+      data: { task_id: taskId, output: line },
       timestamp: Date.now() + i,
     }));
   },

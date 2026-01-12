@@ -865,8 +865,8 @@ describe('WorkflowDetailPanel', () => {
 
         // Emit agent.spawned event for the selected step
         mockSSEClient.emit('event', {
-          type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-2' },
+          type: 'agent.started',
+          data: { task_id: 'task-2', step_task_id: 'task-2', pid: 1234, status: 'running' },
           timestamp: Date.now(),
         });
 
@@ -900,8 +900,8 @@ describe('WorkflowDetailPanel', () => {
 
         // Emit agent.spawned for different task
         mockSSEClient.emit('event', {
-          type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-3' },
+          type: 'agent.started',
+          data: { task_id: 'task-3', step_task_id: 'task-3', pid: 1234, status: 'running' },
           timestamp: Date.now(),
         });
 
@@ -923,8 +923,8 @@ describe('WorkflowDetailPanel', () => {
         });
 
         mockSSEClient.emit('event', {
-          type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-2' },
+          type: 'agent.started',
+          data: { task_id: 'task-2', step_task_id: 'task-2', pid: 1234, status: 'running' },
           timestamp: Date.now(),
         });
 
@@ -933,7 +933,7 @@ describe('WorkflowDetailPanel', () => {
         // Emit output
         mockSSEClient.emit('event', {
           type: 'agent.output',
-          data: { agentId: 'agent-1', taskId: 'task-2', chunk: 'Hello\nWorld' },
+          data: { task_id: 'task-2', output: 'Hello\nWorld' },
           timestamp: Date.now(),
         });
 
@@ -976,7 +976,7 @@ describe('WorkflowDetailPanel', () => {
         // Emit output for different task
         mockSSEClient.emit('event', {
           type: 'agent.output',
-          data: { agentId: 'agent-1', taskId: 'task-2', chunk: 'Should be ignored' },
+          data: { task_id: 'task-2', output: 'Should be ignored' },
           timestamp: Date.now(),
         });
 
@@ -998,8 +998,8 @@ describe('WorkflowDetailPanel', () => {
         });
 
         mockSSEClient.emit('event', {
-          type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-2' },
+          type: 'agent.started',
+          data: { task_id: 'task-2', step_task_id: 'task-2', pid: 1234, status: 'running' },
           timestamp: Date.now(),
         });
 
@@ -1037,8 +1037,8 @@ describe('WorkflowDetailPanel', () => {
         });
 
         mockSSEClient.emit('event', {
-          type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-2' },
+          type: 'agent.started',
+          data: { task_id: 'task-2', step_task_id: 'task-2', pid: 1234, status: 'running' },
           timestamp: Date.now(),
         });
 
@@ -1176,8 +1176,8 @@ describe('WorkflowDetailPanel', () => {
 
         // Simulate agent spawning before step selection
         mockSSEClient.emit('event', {
-          type: 'agent.spawned',
-          data: { agentId: 'agent-1', taskId: 'task-2' },
+          type: 'agent.started',
+          data: { task_id: 'task-2', step_task_id: 'task-2', pid: 1234, status: 'running' },
           timestamp: Date.now(),
         });
 

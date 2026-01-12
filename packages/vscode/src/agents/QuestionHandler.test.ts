@@ -381,7 +381,7 @@ describe('QuestionHandler', () => {
       it('should ignore unknown event types', () => {
         const event: SSEEvent = {
           type: 'agent.output',
-          data: { chunk: 'output' },
+          data: { task_id: 'task-1', output: 'output' },
           timestamp: Date.now(),
         };
 

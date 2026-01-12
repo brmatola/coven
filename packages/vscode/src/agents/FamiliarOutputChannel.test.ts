@@ -230,7 +230,7 @@ describe('FamiliarOutputChannel', () => {
 
         const event: SSEEvent = {
           type: 'agent.output',
-          data: { agent_id: 'agent-1', task_id: 'task-123', chunk: 'Hello world' },
+          data: { task_id: 'task-123', output: 'Hello world' },
           timestamp: Date.now(),
         };
 
@@ -240,8 +240,8 @@ describe('FamiliarOutputChannel', () => {
         expect(channel.append).toHaveBeenCalledWith('Hello world');
       });
 
-      it('should append output using active agent if no direct task channel', () => {
-        // First spawn an agent to set active agent
+      it('should append output using active task if task_id not in channels', () => {
+        // First spawn an agent to set active task
         const spawnEvent: SSEEvent = {
           type: 'agent.spawned',
           data: { agent_id: 'agent-1', task_id: 'task-123' },
@@ -252,10 +252,10 @@ describe('FamiliarOutputChannel', () => {
         const channel = outputChannel.getOrCreateChannel('task-123');
         vi.clearAllMocks();
 
-        // Now emit output without task_id (will use activeTaskId)
+        // Now emit output with task_id not in channels (will use activeTaskId)
         const outputEvent: SSEEvent = {
           type: 'agent.output',
-          data: { agent_id: 'agent-1', task_id: '', chunk: 'Output' },
+          data: { task_id: 'unknown-task', output: 'Output' },
           timestamp: Date.now(),
         };
 
@@ -265,10 +265,10 @@ describe('FamiliarOutputChannel', () => {
         expect(channel.append).toHaveBeenCalledWith('Output');
       });
 
-      it('should ignore output for unknown agent/task', () => {
+      it('should ignore output when no active task and task not in channels', () => {
         const event: SSEEvent = {
           type: 'agent.output',
-          data: { agent_id: 'unknown', task_id: '', chunk: 'Hello' },
+          data: { task_id: 'unknown', output: 'Hello' },
           timestamp: Date.now(),
         };
 

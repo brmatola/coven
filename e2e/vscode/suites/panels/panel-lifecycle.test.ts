@@ -129,9 +129,11 @@ suite('Panel Lifecycle', function () {
     testTaskIds.push(taskId);
     console.log(`Created task: ${taskId}`);
 
-    // Refresh to load task
+    // Refresh to load task and wait for it in both tree view and beadsTaskSource cache
     await vscode.commands.executeCommand('coven.refreshTasks');
     await ctx.ui.waitForTaskInSection(taskId, 'ready', 15000);
+    await waitForTaskInBeadsCache(taskId);
+    console.log('Task in beadsTaskSource cache');
 
     // Open task detail panel
     await vscode.commands.executeCommand('coven.showTaskDetail', taskId);
@@ -169,10 +171,13 @@ suite('Panel Lifecycle', function () {
     testTaskIds.push(task1Id, task2Id);
     console.log(`Created tasks: ${task1Id}, ${task2Id}`);
 
-    // Refresh to load tasks
+    // Refresh to load tasks and wait for them in beadsTaskSource cache
     await vscode.commands.executeCommand('coven.refreshTasks');
     await ctx.ui.waitForTaskInSection(task1Id, 'ready', 15000);
     await ctx.ui.waitForTaskInSection(task2Id, 'ready', 15000);
+    await waitForTaskInBeadsCache(task1Id);
+    await waitForTaskInBeadsCache(task2Id);
+    console.log('Both tasks in beadsTaskSource cache');
 
     // Open first task detail panel
     await vscode.commands.executeCommand('coven.showTaskDetail', task1Id);
@@ -202,9 +207,10 @@ suite('Panel Lifecycle', function () {
     const taskId = beads.createTask({ title: taskTitle, type: 'task', priority: 2 });
     testTaskIds.push(taskId);
 
-    // Refresh to load task
+    // Refresh to load task and wait for it in beadsTaskSource cache
     await vscode.commands.executeCommand('coven.refreshTasks');
     await ctx.ui.waitForTaskInSection(taskId, 'ready', 15000);
+    await waitForTaskInBeadsCache(taskId);
 
     // Open task detail panel
     await vscode.commands.executeCommand('coven.showTaskDetail', taskId);
@@ -245,6 +251,7 @@ suite('Panel Lifecycle', function () {
 
     await vscode.commands.executeCommand('coven.refreshTasks');
     await ctx.ui.waitForTaskInSection(taskId, 'ready', 15000);
+    await waitForTaskInBeadsCache(taskId);
 
     await vscode.commands.executeCommand('coven.showTaskDetail', taskId);
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -267,4 +274,21 @@ function countAllTabs(): number {
     count += group.tabs.length;
   }
   return count;
+}
+
+/**
+ * Wait for a task to be available in beadsTaskSource cache.
+ */
+async function waitForTaskInBeadsCache(taskId: string, timeoutMs = 10000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    // Force sync to refresh cache
+    await vscode.commands.executeCommand('coven._syncBeadsTasks');
+    const task = await vscode.commands.executeCommand('coven._getBeadsTask', taskId);
+    if (task) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  throw new Error(`Task ${taskId} not found in beadsTaskSource cache within ${timeoutMs}ms`);
 }

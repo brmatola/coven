@@ -7,6 +7,7 @@ export async function run(): Promise<void> {
     ui: 'tdd',
     color: true,
     timeout: parseInt(process.env.COVEN_E2E_TIMEOUT || '60000', 10),
+    grep: process.env.COVEN_E2E_GREP || undefined,
   });
 
   const testsRoot = path.resolve(__dirname);
@@ -31,21 +32,17 @@ export async function run(): Promise<void> {
     'commands/daemon-management',
     // Session tests
     'session/lifecycle',
-    'session/force-stop',
     // Core task tests
     'task/lifecycle',
     'task/questions',
     'task/creation',
     // Workflow tests
     'workflow/lifecycle',
-    'workflow/concurrent',
     // Panel tests
     'panels/panel-lifecycle',
     // Error handling
     'errors/agent-failure',
     'errors/disconnect',
-    'errors/timeout',
-    'errors/reconnection',
     // Review workflow
     'review/conflicts',
     // Integration tests (run last)

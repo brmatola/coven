@@ -24,6 +24,8 @@ export interface WorkflowStep {
     current: number;
     total: number;
   };
+  /** Composite task ID for SSE event matching (e.g., task-123-step-0) */
+  stepTaskId?: string;
 }
 
 /**

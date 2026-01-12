@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,7 +13,14 @@ import (
 	"github.com/coven/daemon/internal/grimoire"
 	"github.com/coven/daemon/internal/state"
 	"github.com/coven/daemon/internal/workflow"
+	"github.com/coven/daemon/pkg/types"
 )
+
+// EventEmitter interface for emitting SSE events
+type EventEmitter interface {
+	EmitTasksUpdated(tasks []types.Task)
+	EmitWorkflowCancelled(workflowID, taskID string)
+}
 
 // WorkflowHandlers provides HTTP handlers for workflow operations.
 type WorkflowHandlers struct {
@@ -21,6 +29,7 @@ type WorkflowHandlers struct {
 	statePersister  *workflow.StatePersister
 	grimoireLoader  *grimoire.Loader
 	covenDir        string
+	eventEmitter    EventEmitter
 }
 
 // NewWorkflowHandlers creates new workflow handlers.
@@ -32,6 +41,11 @@ func NewWorkflowHandlers(store *state.Store, scheduler *Scheduler, covenDir stri
 		grimoireLoader:  grimoire.NewLoader(covenDir),
 		covenDir:        covenDir,
 	}
+}
+
+// SetEventEmitter sets the event emitter for broadcasting state changes.
+func (h *WorkflowHandlers) SetEventEmitter(emitter EventEmitter) {
+	h.eventEmitter = emitter
 }
 
 // Register registers workflow handlers with the server.
@@ -132,6 +146,7 @@ type StepInfo struct {
 	MaxIter     int    `json:"max_iterations,omitempty"`
 	CurrentIter int    `json:"current_iteration,omitempty"`
 	Error       string `json:"error,omitempty"`
+	StepTaskID  string `json:"step_task_id,omitempty"` // Composite ID for SSE event matching: {task_id}-step-{index}
 }
 
 // WorkflowDetailResponse is the response for GET /workflows/:id.
@@ -274,15 +289,21 @@ func (h *WorkflowHandlers) buildStepInfo(state *workflow.WorkflowState) []StepIn
 	}
 
 	var steps []StepInfo
-	h.flattenSteps(g.Steps, state, 0, &steps)
+	stepIndex := 0
+	h.flattenSteps(g.Steps, state, 0, &steps, &stepIndex)
 	return steps
 }
 
 // flattenSteps recursively flattens grimoire steps with status info.
-func (h *WorkflowHandlers) flattenSteps(grimoireSteps []grimoire.Step, state *workflow.WorkflowState, depth int, out *[]StepInfo) {
+// stepIndex is a pointer to track global step numbering for step_task_id generation.
+func (h *WorkflowHandlers) flattenSteps(grimoireSteps []grimoire.Step, state *workflow.WorkflowState, depth int, out *[]StepInfo, stepIndex *int) {
 	for i, step := range grimoireSteps {
 		stepID := step.Name
 		status := "pending"
+
+		// Generate step_task_id for SSE event matching
+		stepTaskID := fmt.Sprintf("%s-step-%d", state.TaskID, *stepIndex)
+		*stepIndex++
 
 		// Check if this step is completed
 		if result, ok := state.CompletedSteps[stepID]; ok {
@@ -303,12 +324,13 @@ func (h *WorkflowHandlers) flattenSteps(grimoireSteps []grimoire.Step, state *wo
 		}
 
 		info := StepInfo{
-			ID:     stepID,
-			Name:   step.Name,
-			Type:   string(step.Type),
-			Status: status,
-			Depth:  depth,
-			IsLoop: step.Type == grimoire.StepTypeLoop,
+			ID:         stepID,
+			Name:       step.Name,
+			Type:       string(step.Type),
+			Status:     status,
+			Depth:      depth,
+			IsLoop:     step.Type == grimoire.StepTypeLoop,
+			StepTaskID: stepTaskID,
 		}
 
 		if step.Type == grimoire.StepTypeLoop {
@@ -319,7 +341,7 @@ func (h *WorkflowHandlers) flattenSteps(grimoireSteps []grimoire.Step, state *wo
 
 		// Recurse into loop steps
 		if step.Type == grimoire.StepTypeLoop && len(step.Steps) > 0 {
-			h.flattenSteps(step.Steps, state, depth+1, out)
+			h.flattenSteps(step.Steps, state, depth+1, out, stepIndex)
 		}
 	}
 }
@@ -426,6 +448,14 @@ func (h *WorkflowHandlers) handleCancelWorkflow(w http.ResponseWriter, r *http.R
 
 	// Update task status back to open
 	h.store.UpdateTaskStatus(state.TaskID, "open")
+
+	// Emit events to notify clients
+	if h.eventEmitter != nil {
+		// Get updated tasks and emit
+		tasks := h.store.GetTasks()
+		h.eventEmitter.EmitTasksUpdated(tasks)
+		h.eventEmitter.EmitWorkflowCancelled(state.WorkflowID, state.TaskID)
+	}
 
 	api.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":      "cancelled",

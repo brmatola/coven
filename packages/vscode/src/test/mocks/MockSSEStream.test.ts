@@ -332,7 +332,7 @@ describe('MockSSEStream', () => {
 
         expect(events).toHaveLength(3);
         events.forEach((e) => expect(e.type).toBe('agent.output'));
-        expect(events[0].data).toMatchObject({ task_id: 'task-1', line: 'Line 1' });
+        expect(events[0].data).toMatchObject({ task_id: 'task-1', output: 'Line 1' });
       });
     });
 

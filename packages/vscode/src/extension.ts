@@ -27,6 +27,7 @@ import { detectCoven } from './setup/detection';
 import {
   stopDaemon,
   restartDaemon,
+  initializeWorkspace,
   DaemonCommandDependencies,
 } from './commands/daemon';
 import {
@@ -105,7 +106,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('coven.retryWorkflow', retryWorkflow),
     vscode.commands.registerCommand('coven.approveMerge', approveMerge),
     vscode.commands.registerCommand('coven.rejectMerge', rejectMerge),
-    vscode.commands.registerCommand('coven.showWorkflowDetail', showWorkflowDetail)
+    vscode.commands.registerCommand('coven.showWorkflowDetail', showWorkflowDetail),
+    vscode.commands.registerCommand('coven.initializeWorkspace', async () => {
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        await vscode.window.showErrorMessage('Coven: No workspace folder open');
+        return;
+      }
+      await initializeWorkspace(workspaceFolders[0].uri.fsPath);
+    })
   );
 
   // Register setup commands (coven.initGit, coven.initBeads, etc.)
@@ -158,6 +167,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }),
       vscode.commands.registerCommand('coven._resetDialogMock', () => {
         dialogMock.reset();
+      }),
+      // BeadsTaskSource commands for E2E testing
+      vscode.commands.registerCommand('coven._getBeadsTask', (taskId: string) => {
+        return beadsTaskSource?.getTask(taskId) ?? null;
+      }),
+      vscode.commands.registerCommand('coven._syncBeadsTasks', async () => {
+        if (beadsTaskSource) {
+          await beadsTaskSource.sync();
+        }
       })
     );
   }

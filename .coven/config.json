@@ -1,5 +1,5 @@
 {
-  "maxConcurrentAgents": 3,
+  "maxConcurrentAgents": 1,
   "worktreeBasePath": ".coven/worktrees",
   "beadsSyncIntervalMs": 30000,
   "agentTimeoutMs": 600000,
